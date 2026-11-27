@@ -24,7 +24,10 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.agents.annotation import skill
+from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig, TaskConfig
 from dimos.core import global_config as global_config_module
+from dimos.core.coordination import blueprints
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
@@ -34,6 +37,7 @@ from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 from dimos.robot import get_all_blueprints
+from dimos.utils import data
 from experimental.gateway import introspect
 from experimental.gateway.introspect import (
     Cache,
@@ -47,6 +51,7 @@ from experimental.gateway.introspect import (
     spec_topic,
     targets,
 )
+from experimental.gateway.launches import module_flags
 
 
 def test_spec_topic_reads_lcm_and_zenoh_specs() -> None:
@@ -68,6 +73,7 @@ class RightCamera(Module):
 def test_remapped_streams_show_their_wired_topic() -> None:
     blueprint = (
         autoconnect(LeftCamera.blueprint(), RightCamera.blueprint())
+        .solidify()
         .remappings(
             [
                 (LeftCamera, "jpeg_out", "head_left_color"),
@@ -101,6 +107,15 @@ class Dog(Module):
     def trick(self, name: Literal["sit", "jump"]) -> str:
         """Do a trick."""
         return name
+
+
+def test_config_from_a_checkout_where_autoconnect_returns_a_concrete_blueprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dog = Dog.blueprint()
+    monkeypatch.setattr(get_all_blueprints, "get_by_name", lambda name: dog)
+    monkeypatch.setattr(blueprints, "autoconnect", lambda part: part)
+    assert list(introspect.config("demo")["modules"]) == ["dog"]
 
 
 def test_a_modules_own_rpcs_are_listed_with_a_skill_flag() -> None:
@@ -189,6 +204,61 @@ def test_a_blueprints_source_is_found_without_importing_its_missing_dependencies
     for name, line in (("unitree-go2", 7), ("go2-connection", 4)):
         found = asyncio.run(run_child(tmp_path, ["source", name], python=sys.executable))
         assert found == {"name": name, "file": "dimos/robot/go2/blueprints.py", "line": line}
+
+
+class SceneConfig(ModuleConfig):
+    scene: Path = Field(default_factory=lambda: data.LfsPath("arm/scene.xml"))
+
+
+class Scene(Module):
+    config: SceneConfig
+
+
+def test_scene_paths_stay_lazy_when_reading_and_editing_config(mocker: MockerFixture) -> None:
+    fetch = mocker.patch.object(data, "get_data", side_effect=AssertionError("asset read"))
+    scene = Scene.blueprint(scene=data.LfsPath("arm/grasp.xml"))
+    mocker.patch.object(get_all_blueprints, "get_by_name", return_value=scene)
+
+    field = introspect.config("scene")["modules"]["scene"]["args"]["scene"]
+    assert (field["default"], field["value"], field["json_compatible"]) == (
+        "arm/scene.xml",
+        "arm/grasp.xml",
+        True,
+    )
+    flags = module_flags({"scene": {"scene": "custom.xml"}})
+    parsed = BlueprintConfigParser(scene).parse(flags, environ={})
+    assert parsed.module_kwargs("scene")["scene"] == Path("custom.xml")
+    fetch.assert_not_called()
+
+
+def test_task_config_shows_nested_model_assets_offline(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    fetch = mocker.patch.object(data, "get_data", side_effect=AssertionError("asset read"))
+    task = TaskConfig(name="policy", params={"model_path": data.LfsPath("groot")})
+    blueprint = ControlCoordinator.blueprint(tasks=[task])
+    mocker.patch.object(get_all_blueprints, "get_by_name", return_value=blueprint)
+
+    fields = introspect.config("policy")["modules"][ControlCoordinator.name]["args"]
+    assert fields["tasks"]["value"][0]["params"] == {"model_path": "groot"}
+    assert not fields["tasks"]["json_compatible"]
+    assert fields["tick_rate"]["json_compatible"]
+    flags = module_flags({ControlCoordinator.name: {"tick_rate": 99}})
+    kwargs = (
+        BlueprintConfigParser(blueprint)
+        .parse(flags, environ={})
+        .module_kwargs(ControlCoordinator.name)
+    )
+    config = ControlCoordinatorConfig(**kwargs)
+    assert config.tick_rate == 99
+    path = config.tasks[0].params["model_path"]
+    fetch.assert_not_called()
+    asset = tmp_path / "model"
+    asset.write_text("weights")
+    fetch.side_effect = None
+    fetch.return_value = asset
+    assert path.read_text() == "weights"
+    fetch.assert_called_once_with("groot")
 
 
 class NeedsArgsConfig(ModuleConfig):

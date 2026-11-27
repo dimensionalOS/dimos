@@ -22,6 +22,7 @@ import numpy as np
 from PIL import Image as PILImage
 import pytest
 
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -288,7 +289,7 @@ def test_one_bridge_wires_to_whatever_the_robot_provides(robot: str, connected: 
     module, attr = all_blueprints[robot].split(":")
     provided = {
         (s.name, s.type, s.direction)
-        for atom in getattr(import_module(module), attr).blueprints
+        for atom in autoconnect(getattr(import_module(module), attr)).solidify().blueprints
         for s in atom.streams
     }
     bridge = {

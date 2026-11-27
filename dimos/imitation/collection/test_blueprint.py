@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 
+from dimos.control.contract.keys import SEPARATOR
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
@@ -38,7 +39,11 @@ AGGREGATE = "coordinator_joint_state"
 
 @pytest.mark.parametrize(
     "blueprint",
-    [learning_collect_webxr_xarm7, learning_collect_webxr_piper, unitree_g1_teleop],
+    [
+        learning_collect_webxr_xarm7.solidify(),
+        learning_collect_webxr_piper.solidify(),
+        unitree_g1_teleop.solidify(),
+    ],
 )
 def test_shipped_collection_monitor_configuration_is_valid(blueprint: Blueprint) -> None:
     monitor = next(
@@ -54,7 +59,7 @@ def test_shipped_collection_monitor_configuration_is_valid(blueprint: Blueprint)
 
 @pytest.mark.parametrize(
     "blueprint",
-    [learning_collect_webxr_xarm7, learning_collect_webxr_piper],
+    [learning_collect_webxr_xarm7.solidify(), learning_collect_webxr_piper.solidify()],
 )
 def test_collection_uses_sqlite_without_tf(blueprint: Blueprint) -> None:
     recorder = next(
@@ -69,14 +74,26 @@ def test_collection_uses_sqlite_without_tf(blueprint: Blueprint) -> None:
     coordinator = next(
         atom for atom in blueprint.active_blueprints if atom.name == "ControlCoordinator"
     )
-    joints = [joint for hardware in coordinator.kwargs["hardware"] for joint in hardware.joints]
+    joints = [
+        *(
+            joint
+            for hardware in coordinator.kwargs.get("hardware", [])
+            for joint in hardware.joints
+        ),
+        *(
+            joint if SEPARATOR in joint else f"{connection.source}{SEPARATOR}{joint}"
+            for connection in coordinator.kwargs.get("connections", [])
+            for joint in connection.joint_commands
+        ),
+    ]
+    assert joints
     assert schema.observation["state"].names == joints
     assert schema.observation["state"].shape == (len(joints),)
 
 
 @pytest.mark.parametrize(
     "blueprint",
-    [learning_collect_webxr_xarm7, learning_collect_webxr_piper],
+    [learning_collect_webxr_xarm7.solidify(), learning_collect_webxr_piper.solidify()],
 )
 def test_collect_stops_after_producers(blueprint: Blueprint) -> None:
     assert issubclass(blueprint.active_blueprints[0].module, CollectionModule)
@@ -84,7 +101,7 @@ def test_collect_stops_after_producers(blueprint: Blueprint) -> None:
 
 @pytest.mark.parametrize(
     "blueprint",
-    [learning_collect_webxr_xarm7, learning_collect_webxr_piper],
+    [learning_collect_webxr_xarm7.solidify(), learning_collect_webxr_piper.solidify()],
 )
 def test_episode_monitor_stops_after_input_producers(blueprint: Blueprint) -> None:
     assert blueprint.active_blueprints[1].module is EpisodeMonitorModule
@@ -92,7 +109,7 @@ def test_episode_monitor_stops_after_input_producers(blueprint: Blueprint) -> No
 
 @pytest.mark.parametrize(
     "blueprint",
-    [learning_collect_webxr_xarm7, learning_collect_webxr_piper],
+    [learning_collect_webxr_xarm7.solidify(), learning_collect_webxr_piper.solidify()],
 )
 def test_collection_status_is_wired_to_webxr_hud(blueprint: Blueprint) -> None:
     hud = next(atom for atom in blueprint.blueprints if atom.module is ArmTeleopModule)
@@ -114,7 +131,7 @@ def _joint_streams(blueprint: Blueprint) -> dict[tuple[str, str], str]:
 
 @pytest.mark.parametrize(
     "blueprint",
-    [learning_collect_webxr_xarm7, learning_collect_webxr_piper],
+    [learning_collect_webxr_xarm7.solidify(), learning_collect_webxr_piper.solidify()],
 )
 def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
     streams = _joint_streams(blueprint)
@@ -125,14 +142,20 @@ def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
     assert streams[("ControlCoordinator", AGGREGATE)] == AGGREGATE
 
 
-@pytest.mark.parametrize("blueprint", [learning_collect_webxr_xarm7, learning_collect_webxr_piper])
+@pytest.mark.parametrize(
+    ("blueprint", "required"),
+    [
+        (learning_collect_webxr_xarm7.solidify(), ["--xarmconnection.ip", "192.0.2.1"]),
+        (learning_collect_webxr_piper.solidify(), ["--piperconnection.can-port", "can0"]),
+    ],
+)
 @pytest.mark.parametrize("dimension,value", [("width", "640"), ("height", "360")])
 def test_collection_rejects_camera_dimensions_that_disagree_with_saved_schema(
-    blueprint, dimension, value
+    blueprint, required, dimension, value
 ):
     parser = BlueprintConfigParser(blueprint)
     with pytest.raises(BlueprintConfigError, match=dimension):
-        parser.parse([f"--RealSenseCamera.{dimension}", value], environ={})
+        parser.parse([*required, f"--RealSenseCamera.{dimension}", value], environ={})
 
 
 @pytest.mark.parametrize("name", ["collection-recorder", "collection-module"])

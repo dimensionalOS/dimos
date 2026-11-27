@@ -15,12 +15,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 import math
 from typing import Any, cast
 
 import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -95,3 +96,51 @@ def test_a_box_on_a_moving_frame_follows_it(
     _place_tool(module, Vector3(2.0, 0.0, 0.0), math.pi / 2, ts=2.0)
     _feed(module, cloud)
     np.testing.assert_allclose(sent[-1].points_f32(), [[1.0, 0.2, 0.0], [1.2, 0.0, 0.0]])
+
+
+@pytest.fixture
+def make_module() -> Iterator[Callable[..., tuple[PointCloudBoxFilter, list[PointCloud2]]]]:
+    """A box filter with the given config and the clouds it sends, disposed afterwards."""
+    made: list[PointCloudBoxFilter] = []
+
+    def make(**config: Any) -> tuple[PointCloudBoxFilter, list[PointCloud2]]:
+        instance = PointCloudBoxFilter(**config)
+        cast("dict[str, Any]", instance.__dict__)["_tf"] = MultiTBuffer()
+        clouds: list[PointCloud2] = []
+        instance.filtered_cloud.subscribe(clouds.append)
+        made.append(instance)
+        return instance, clouds
+
+    yield make
+    for instance in made:
+        cast("dict[str, Any]", instance.__dict__)["_tf"] = None
+        instance.dispose()
+
+
+def test_points_outside_the_workspace_are_left_out(
+    make_module: Callable[..., tuple[PointCloudBoxFilter, list[PointCloud2]]],
+) -> None:
+    module, sent = make_module(keep_within_m=1.0)
+
+    _feed(module, _cloud([[0.5, 0.0, 0.0], [0.0, 0.0, -0.99], [1.2, 0.0, 0.0]]))
+
+    np.testing.assert_allclose(sent[-1].points_f32(), [[0.5, 0.0, 0.0], [0.0, 0.0, -0.99]])
+
+
+def test_the_workspace_rides_on_its_frame(
+    make_module: Callable[..., tuple[PointCloudBoxFilter, list[PointCloud2]]],
+    mocker: MockerFixture,
+) -> None:
+    module, sent = make_module(keep_within_m=0.5, keep_within_frame="tool")
+    warning = mocker.patch("dimos.mapping.pointclouds.box_filter.logger.warning")
+    cloud = _cloud([[0.1, 0.0, 0.0], [2.1, 0.0, 0.0]])
+
+    # Its frame unknown, the workspace keeps every distance, and says so once.
+    _feed(module, cloud)
+    _feed(module, cloud)
+    assert len(sent[-1].points_f32()) == 2
+    assert warning.call_count == 1
+
+    _place_tool(module, Vector3(2.0, 0.0, 0.0), 0.0, ts=1.0)
+    _feed(module, cloud)
+    np.testing.assert_allclose(sent[-1].points_f32(), [[2.1, 0.0, 0.0]])

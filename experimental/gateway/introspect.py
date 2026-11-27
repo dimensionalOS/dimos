@@ -18,11 +18,13 @@ import asyncio
 from collections import Counter, defaultdict
 from collections.abc import Awaitable, Callable
 import contextlib
+from dataclasses import fields as dataclass_fields, is_dataclass
 import enum
 import functools
 import importlib
 import importlib.util
 import inspect
+import io
 import json
 import os
 from pathlib import Path
@@ -48,6 +50,14 @@ class Cache:
 
     def forget(self, key: str) -> None:
         self.entries.pop(key, None)
+
+    def forget_name(self, name: str) -> None:
+        """Every introspection of one blueprint or module (its blueprint, config, source...), from any checkout."""
+        self.entries = {
+            key: entry
+            for key, entry in self.entries.items()
+            if key.split("\t")[0].split(" ")[1:2] != [name]
+        }
 
     async def get(self, key: str, ttl: float, compute: Callable[[], Awaitable[Any]]) -> Any:
         # keys include request args, so expired entries go or they pile up for days
@@ -149,6 +159,36 @@ def type_name(kind: Any) -> str:
     module = getattr(kind, "__module__", "")
     name = getattr(kind, "__qualname__", None) or getattr(kind, "__name__", None) or repr(kind)
     return str(name) if module in ("builtins", "") else f"{module}.{name}"
+
+
+def catalog_value(value: Any) -> tuple[Any, bool]:
+    """Preview packaged paths by name. Only project containers that hold one."""
+    from pydantic import BaseModel
+
+    found = False
+
+    def preview(item: Any) -> Any:
+        nonlocal found
+        if isinstance(item, Path):
+            from dimos.utils.data import LfsPath
+
+            if isinstance(item, LfsPath):
+                found = True
+                # Instance operations resolve the file. Older served checkouts also store its name here.
+                return Path(object.__getattribute__(item, "_lfs_filename"))
+            return item
+        if isinstance(item, BaseModel):
+            item = dict(item)
+        elif is_dataclass(item) and not isinstance(item, type):
+            item = {field.name: getattr(item, field.name) for field in dataclass_fields(item)}
+        if isinstance(item, dict):
+            return {key: preview(child) for key, child in item.items()}
+        if isinstance(item, (list, tuple)):
+            return [preview(child) for child in item]
+        return item
+
+    result = preview(value)
+    return (result if found else value), found
 
 
 def jsonable(value: Any) -> Any:
@@ -327,10 +367,20 @@ def blueprint_modules(blueprint: Any, registry_names: dict[str, str]) -> list[di
     ]
 
 
+def solid_blueprint(blueprint: Any) -> Any:
+    """Resolve choices in the worker, where DimOS is installed."""
+    # DimOS is optional in the gateway process.
+    from dimos.core.coordination.blueprints import autoconnect
+
+    composed = autoconnect(blueprint)
+    # Before blueprint choices, autoconnect returned the concrete blueprint directly.
+    return composed.solidify() if hasattr(composed, "solidify") else composed
+
+
 def blueprint_detail(name: str) -> dict[str, Any]:
     from dimos.robot.get_all_blueprints import get_by_name
 
-    blueprint = get_by_name(name)
+    blueprint = solid_blueprint(get_by_name(name))
     modules = []
     for atom, entry in zip(
         blueprint.active_blueprints, blueprint_modules(blueprint, {}), strict=True
@@ -429,12 +479,15 @@ def field_args(
 ) -> dict[str, dict[str, Any]]:
     """Each config field's type, default, description and choices, by name; `value` is what the blueprint itself sets."""
     args = {}
+    values = values or {}
     for name, field in fields.items():
         required, kind = field.is_required(), field.annotation
         try:
             default = None if required else field.get_default(call_default_factory=True)
         except Exception:  # a default factory is the module's own code
             default = None
+        default, default_assets = catalog_value(default)
+        value, value_assets = catalog_value(values.get(name))
         entry = {
             "type": type_name(kind) if isinstance(kind, type) else str(kind).replace("typing.", ""),
             "default": jsonable(default),
@@ -444,7 +497,7 @@ def field_args(
                 is_secret_name(name)
                 or secret_annotation(kind)
                 or secret_value(default)
-                or secret_value((values or {}).get(name))
+                or secret_value(value)
             ),
             "base": name in base,
         }
@@ -452,11 +505,19 @@ def field_args(
         if options is not None:
             entry["choices"] = options
         schema = field_schema(kind)
-        entry["json_compatible"] = schema is not None and json_safe(kind, default)
+        effective, has_assets = (
+            (value, value_assets) if name in values else (default, default_assets)
+        )
+        # Reposting a collection of asset names would turn untouched lazy references into local paths.
+        entry["json_compatible"] = (
+            schema is not None
+            and (not has_assets or isinstance(effective, Path))
+            and json_safe(kind, effective if default_assets else default)
+        )
         if schema is not None:
             entry["schema"] = schema
-        if values and name in values:
-            entry["value"] = jsonable(values[name])
+        if name in values:
+            entry["value"] = jsonable(value)
         args[name] = entry
     return args
 
@@ -491,7 +552,7 @@ def targets(name: str, global_values: dict[str, Any] | None = None) -> dict[str,
     global_config.update(
         **{key: value for key, value in (global_values or {}).items() if value is not None}
     )
-    return target_paths(parser_schema(get_by_name(name)))
+    return target_paths(parser_schema(solid_blueprint(get_by_name(name))))
 
 
 def module_args(module: Any, values: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
@@ -516,7 +577,7 @@ def config(name: str) -> dict[str, Any]:
     from dimos.core.module import ModuleConfig
     from dimos.robot.get_all_blueprints import get_by_name
 
-    schema = parser_schema(get_by_name(name))
+    schema = parser_schema(solid_blueprint(get_by_name(name)))
     modules: dict[str, Any] = {}
     for module in schema.modules:
         atom = module.atom
@@ -646,7 +707,9 @@ def scan(request: Any) -> dict[str, Any]:
             "builtin": ref is not None,
         }
         try:
-            blueprint = load_blueprint(name) if ref is not None else get_by_name(name)
+            blueprint = solid_blueprint(
+                load_blueprint(name) if ref is not None else get_by_name(name)
+            )
             file = ref.split(":")[0] if ref else None
             doc = first_line(importlib.import_module(file)) if file and per_file[file] == 1 else ""
             modules = blueprint_modules(blueprint, registry_names)
@@ -714,6 +777,37 @@ def packages() -> dict[str, Any]:
     }
 
 
+class _ValidatedError(Exception):
+    """Raised where `dimos run` has checked the whole command and would start the run."""
+
+
+def validate_launch(request: dict[str, Any]) -> dict[str, Any]:
+    """Run the checkout's own `dimos run` on a launch's argv up to the start; `rejected` is its refusal."""
+    # this child serves one request, so the launch environment can go in before the CLI loads .env
+    os.environ.update(request["env"])
+    from dimos.cli.dimos import main, normalize_argv
+    from dimos.core import run_registry
+
+    def validated() -> int:
+        raise _ValidatedError
+
+    # run() calls cleanup_stale once every check has passed, before it registers or spawns anything
+    run_registry.cleanup_stale = validated
+    output = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            main(normalize_argv(["dimos", *request["argv"]])[1:], prog_name="dimos")
+    except _ValidatedError:
+        return {}
+    except SystemExit as exit_:
+        if not exit_.code:
+            return {"rejected": "dimos run finished without reaching its start"}
+        lines = [line for line in output.getvalue().splitlines() if line.strip()]
+        error = next((line for line in reversed(lines) if line.startswith("Error")), None)
+        return {"rejected": error or (lines[-1] if lines else f"dimos run exited {exit_.code}")}
+    return {"rejected": "dimos run finished without reaching its start"}
+
+
 def main(argv: list[str]) -> None:
     request = json.loads(sys.stdin.read() or "null")
     commands: dict[str, Callable[..., dict[str, Any]]] = {
@@ -721,6 +815,7 @@ def main(argv: list[str]) -> None:
         "source": lambda name: {"name": name, **blueprint_source(name)},
         "config": config,
         "targets": targets,
+        "validate_launch": validate_launch,
         "module": module,
         "module_config": module_config,
         "list": blueprint_list,
@@ -730,7 +825,9 @@ def main(argv: list[str]) -> None:
     try:
         command = commands[argv[0]]
         result = (
-            command(*argv[1:], request) if argv[0] in {"scan", "targets"} else command(*argv[1:])
+            command(*argv[1:], request)
+            if argv[0] in {"scan", "targets", "validate_launch"}
+            else command(*argv[1:])
         )
     except Exception as error:
         result = {"error": f"{type(error).__name__}: {error}"}

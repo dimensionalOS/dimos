@@ -23,8 +23,8 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--record-encoding-threads` | INT | unset (Rust uses `4`) | Native encoding workers; valid only with `--record-engine rust` |
 | `--viewer` | `rerun\|none` | `rerun` | Visualization backend |
 | `--n-workers` | INT | `2` | Number of forkserver workers |
-| `--transport` | `lcm\|zenoh` | `zenoh` | Transport backend for streams, RPC, and TF. Zenoh is the default on every platform and is pinned to localhost until you pass `--robot-ip` or enable scouting. Set `DIMOS_TRANSPORT` (env var or `.env`) to switch every process at once. Standalone CLIs like `humancli`, `agentspy`, and `dtop`, which also accept `--transport`. |
-| `--dtop` / `--no-dtop` | bool | `False` | Enable live resource monitor overlay |
+| `--transport` | `lcm\|zenoh` | `zenoh` | Transport backend for streams, RPC, and TF. Zenoh is the default on every platform and is pinned to localhost until you pass `--robot-ip` or enable scouting. Set `DIMOS_TRANSPORT` (env var or `.env`) to switch every process at once. Standalone CLIs like `humancli`, `agentspy`, and `dtop` also accept `--transport`. |
+| `--dtop` / `--no-dtop` | bool | `False` | Publish live resource stats for `dtop` |
 | `--robot-model` | TEXT | `None` | Robot model identifier |
 | `--robot-width` | FLOAT | `0.3` | Robot width in meters, shared by the navigation and patrol modules |
 | `--robot-rotation-diameter` | FLOAT | `0.6` | Robot rotation diameter in meters |
@@ -68,7 +68,7 @@ Start one or more robot blueprints. Built-in dimOS blueprints use bare names suc
 such as `my-robot-stack.go2`.
 
 ```bash
-dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module>]... [--<config-field> <value> ...]
+dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module>]... [--choice NAME=OPTION]... [--<config-field> <value> ...]
 ```
 
 | Option | Description |
@@ -76,6 +76,7 @@ dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module>]... [--<c
 | `--config`, `-c` | Path to a JSON configuration file; dynamic flags override its values |
 | `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
 | `--disable` | A module to exclude, by its registry name such as `speak-skill`; repeat the flag for each module |
+| `--choice` | Select a named blueprint alternative with `NAME=OPTION`; repeat for multiple choices. Choices without defaults are required. See [Choices](/docs/usage/blueprints.md#choices). |
 | `--<config-field>` | Set a blueprint configuration field using its kebab-case name, for example `--voxel-size=1`; qualify ambiguous fields as `--pgovoxelmapper.voxel-size=1` |
 | `--local-relay` | Start a relay on this machine and open the cockpit in the browser (see [Web](/docs/web/index.md)) |
 | `--relay-url` | Connect the robot to a relay started elsewhere, by its HTTP URL. `--relay-ca` adds a private CA and `--relay-key` the robot's key (see [Bridge](/docs/web/bridge.md#robot-side-options)) |
@@ -140,8 +141,8 @@ When `--daemon` is used, the process:
 
 #### Adding a New Blueprint
 
-For an in-repository dimOS blueprint, define a module-level `Blueprint` variable and
-regenerate the built-in registry:
+For an in-repository dimOS blueprint, define a module-level `Blueprint` or
+`MetaBlueprint` variable and regenerate the built-in registry:
 
 ```bash
 pytest dimos/robot/test_all_blueprints_generation.py
@@ -487,17 +488,19 @@ agentspy
 
 ### `dtop`
 
-Live resource monitor TUI: CPU, memory, and process stats. The cockpit shows the same data on its Stats tab (`Stats()` in `cockpit(pages=[...])`), which switches the monitor on by itself. Can also be activated during a run with `--dtop`:
+Live resource monitor TUI: CPU, memory, and process stats. The cockpit shows the same data on its Stats tab (`Stats()` in `cockpit(pages=[...])`), which switches the monitor on by itself. For the TUI, start the run with `--dtop` so that it publishes the stats:
 
 ```bash
 dimos --dtop run unitree-go2
 ```
 
-Or run standalone:
+Then open the monitor in another terminal (`dimos top` is the same command, `q` quits):
 
 ```bash
 dtop
 ```
+
+Without `--dtop` on the run, the monitor only shows a hint to add it. A stack started with `--transport lcm` needs `dtop --transport lcm`.
 
 ### `dimos rerun-bridge`
 

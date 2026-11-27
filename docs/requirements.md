@@ -12,9 +12,11 @@ Supported Python versions are 3.10 (3.10.12 or newer), 3.11 (3.11.4 or newer), a
 | CPU | 8-core Intel / AMD | 12+ cores |
 | RAM | 16 GB | 32 GB+ |
 | Disk | 10 GB SSD | 25 GB+ SSD |
-| OS | Ubuntu 22.04, macOS 14+ | Ubuntu 24.04 |
+| OS | Ubuntu 22.04, macOS 14+ | Ubuntu 26.04 for most installs, Ubuntu 24.04 for ROS 2 binary packages |
 
 > GPU is optional for basic robot control. Required for perception, VLMs, and AI features.
+
+For `ROSTransport`, use Ubuntu 24.04 with ROS 2 Jazzy. Its packaged `rclpy` extension targets CPython 3.12, the version the dimOS installer provisions. On Ubuntu 26.04, ROS 2 Lyrical's `rclpy` targets CPython 3.14, outside the supported dimOS Python range. See the [ROS 2 guidance on Python binary compatibility](https://github.com/ros2/ros2_documentation/blob/jazzy/source/How-To-Guides/Using-Python-Packages.rst).
 
 ## Tested Configurations
 
@@ -44,13 +46,13 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 | `perception` | Object detection, VLMs, tracking | ultralytics, transformers, moondream | **Yes** |
 | `visualization` | Rerun viewer + bridge | rerun-sdk, dimos-viewer | No |
 | `web` | FastAPI web interface, audio | fastapi, uvicorn, av | No |
-| `sim` | MuJoCo simulation | mujoco, playground, pygame | No |
+| `sim` | MuJoCo simulation | mujoco, mjcf-to-urdf, pygame | No |
 | `unitree` | Unitree Go2 / G1 support | unitree-webrtc-connect | No |
 | `unitree-dds` | Unitree DDS bridge (superset of 'unitree') | unitree-sdk2py, cyclonedds | No |
 | `drone` | DJI Tello / MAVLink drones | pymavlink | No |
 | `manipulation` | Arm planning + control | Drake, piper-sdk, xarm-sdk | No |
 | `mapping` | GTSAM-backed pose graph optimization (relocalization) | gtsam-extended | No |
-| `cuda` | GPU inference backends | cupy, onnxruntime-gpu | **Yes** |
+| `cuda` | GPU inference and mesh generation | onnxruntime-gpu, warp-lang | **Yes** |
 | `cpu` | CPU inference backend | onnxruntime | No |
 | `misc` | Extra models, embeddings, hardware SDKs | edgetam, timm, xarm-sdk | Varies |
 | `base` | Standard stack (agents + web + viz) | langchain, fastapi, rerun-sdk | No |

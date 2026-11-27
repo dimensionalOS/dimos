@@ -17,7 +17,10 @@ import subprocess
 
 from dimos.utils.deno import DENO_VERSION, ensure_deno  # noqa: F401
 
-_PLAYWRIGHT_PACKAGE = "npm:playwright@1.58.2"
+# Keep in step with misc/DimSim/cli/deno.json: the launcher there must find the
+# Chromium revision installed here. 1.61.0 is the first release with builds for
+# Ubuntu 26.04.
+_PLAYWRIGHT_PACKAGE = "npm:playwright@1.61.0"
 
 
 def ensure_playwright_chromium(deno_path: str) -> None:
