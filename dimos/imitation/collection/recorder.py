@@ -92,6 +92,7 @@ class CollectionModuleConfig(RustRecorderConfig):
             store = RustSqliteStoreConfig(kind="sqlite", path=str(self.recording / "recording.db"))
         else:
             store = RustMcapStoreConfig(
+                kind="mcap",
                 path=str(self.recording / "recording.mcap"),
                 attachments=[
                     RustMcapAttachment(
