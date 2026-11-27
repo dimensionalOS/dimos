@@ -141,13 +141,7 @@ def detections_from_results(
     return ImageDetections2D(image=image, detections=detections)
 
 
-def bbox_from_result(
-    result: Results,
-    idx: int,
-    image: Image,
-    *,
-    detection_type: type[Detection2DBBox] = Detection2DBBox,
-) -> Detection2DBBox:
+def bbox_from_result(result: Results, idx: int, image: Image) -> Detection2DBBox:
     """Create Detection2DBBox from ultralytics Results object.
 
     Args:
@@ -186,7 +180,7 @@ def bbox_from_result(
     if hasattr(result.boxes, "id") and result.boxes.id is not None:
         track_id = int(result.boxes.id[idx].cpu())
 
-    return detection_type(
+    return Detection2DBBox(
         bbox=bbox,
         track_id=track_id,
         class_id=class_id,
@@ -197,13 +191,7 @@ def bbox_from_result(
     )
 
 
-def person_from_result(
-    result: Results,
-    idx: int,
-    image: Image,
-    *,
-    detection_type: type[Detection2DPerson] = Detection2DPerson,
-) -> Detection2DPerson:
+def person_from_result(result: Results, idx: int, image: Image) -> Detection2DPerson:
     """Create Detection2DPerson from ultralytics Results object with pose keypoints.
 
     Args:
@@ -279,7 +267,7 @@ def person_from_result(
     # Get class name
     name = result.names.get(class_id, "person") if hasattr(result, "names") else "person"
 
-    return detection_type(
+    return Detection2DPerson(
         # Detection2DBBox fields
         bbox=bbox,
         track_id=track_id,
@@ -298,13 +286,7 @@ def person_from_result(
     )
 
 
-def seg_from_result(
-    result: Results,
-    idx: int,
-    image: Image,
-    *,
-    detection_type: type[Detection2DSeg] = Detection2DSeg,
-) -> Detection2DSeg:
+def seg_from_result(result: Results, idx: int, image: Image) -> Detection2DSeg:
     """Create Detection2DSeg from ultralytics Results object with segmentation mask.
 
     Args:
@@ -367,7 +349,7 @@ def seg_from_result(
         # Binarize mask
         mask = (mask_np > 0.5).astype(np.uint8) * 255
 
-    return detection_type(
+    return Detection2DSeg(
         bbox=bbox,
         track_id=track_id,
         class_id=class_id,

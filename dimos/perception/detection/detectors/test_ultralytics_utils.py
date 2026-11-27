@@ -18,18 +18,13 @@ import sys
 from typing import Any
 from zipfile import ZipFile
 
-import numpy as np
 import pytest
-import torch
 
 from dimos.models.segmentation.yoloe import YoloeBoxSegmenter
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.detection.detectors import ultralytics_utils
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector
-from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 
 
 @pytest.mark.parametrize(
@@ -81,27 +76,6 @@ def test_missing_custom_checkpoint_is_not_downloaded(in_directory: bool, tmp_pat
         ultralytics_utils.checkpoint_path(*args)
 
     assert list(tmp_path.iterdir()) == []
-
-
-@pytest.mark.self_hosted
-def test_legacy_person_and_image_converters() -> None:
-    # Only the self-hosted jobs install the optional Ultralytics result type.
-    from ultralytics.engine.results import Results
-
-    image = Image(data=np.zeros((16, 16, 3), dtype=np.uint8), format=ImageFormat.RGB)
-    result = Results(
-        image.data,
-        path="frame",
-        names={0: "person"},
-        boxes=torch.tensor([[1.0, 2.0, 10.0, 12.0, 0.75, 0.0]]),
-        keypoints=torch.ones(1, 17, 3),
-    )
-    person = Detection2DPerson.from_yolo(result, 0, image)
-    (detection,) = ImageDetections2D.from_ultralytics_result(image, [result]).detections
-
-    assert isinstance(detection, Detection2DPerson)
-    assert person.bbox == detection.bbox == (1.0, 2.0, 10.0, 12.0)
-    assert person.confidence == detection.confidence == 0.75
 
 
 @pytest.mark.self_hosted
