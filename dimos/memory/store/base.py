@@ -119,13 +119,13 @@ class Store(Configurable, CompositeResource):
         duration: float | None = None,
         from_timestamp: float | None = None,
         loop: bool = False,
+        buffer_size: int = 128,
+        lag_warning: float = 0.5,
     ) -> Replay:
-        """Open a time-bounded replay view over this store with a shared anchor.
+        """Open a time-bounded replay view over this store.
 
-        The returned :class:`Replay` pins a single wall-clock anchor on first
-        subscribe so that ``replay.streams.lidar.observable()`` and
-        ``replay.streams.odom.observable()`` advance together rather than
-        each re-anchoring on their own ``first_ts``.
+        Play streams of the returned :class:`Replay` with :meth:`Replay.playback`,
+        which publishes them as one chronological timeline.
         """
         from dimos.memory.replay import Replay
 
@@ -136,6 +136,8 @@ class Store(Configurable, CompositeResource):
             duration=duration,
             from_timestamp=from_timestamp,
             loop=loop,
+            buffer_size=buffer_size,
+            lag_warning=lag_warning,
         )
 
     @staticmethod

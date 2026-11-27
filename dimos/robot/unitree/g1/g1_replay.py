@@ -23,9 +23,11 @@ from pydantic import Field
 from reactivex import timer
 
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import Out
 from dimos.memory.cli.dataset import open_store, resolve_dataset
+from dimos.memory.playback_module import PlaybackModule, PlaybackModuleConfig
+from dimos.memory.replay import Playback
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.base import Store
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -50,16 +52,12 @@ def _default_g1_dataset(model: dict[str, Any]) -> str:
     return replay_db
 
 
-class G1ReplayConfig(ModuleConfig):
+class G1ReplayConfig(PlaybackModuleConfig):
     dataset: str = Field(default_factory=_default_g1_dataset)
-    speed: float = 1.0
-    loop: bool = False
-    seek: float | None = None
-    duration: float | None = None
     replay_lidar: bool = False
 
 
-class G1Replay(Module):
+class G1Replay(PlaybackModule):
     """Replays a G1 recording (SQLite or MCAP) onto the live G1 stream names."""
 
     config: G1ReplayConfig
@@ -74,20 +72,14 @@ class G1Replay(Module):
     tf: Out[TFMessage]
 
     _store: Store | None = None
+    _first_infos: list[tuple[Out[CameraInfo], CameraInfo]] = []
 
-    @rpc
-    def start(self) -> None:
-        super().start()
+    def open_playback(self) -> Playback:
         path = resolve_dataset(self.config.dataset)
         store = open_store(path)
         store.start()
         self._store = store
-        replay = store.replay(
-            speed=self.config.speed,
-            loop=self.config.loop,
-            seek=self.config.seek,
-            duration=self.config.duration,
-        )
+        replay = self.replay_of(store)
         available = set(replay.list_streams())
         streams: dict[str, ReplayStream[Any]] = {}
         for name in self.outputs:
@@ -98,19 +90,12 @@ class G1Replay(Module):
 
         progress = ReplayProgress(str(path))
         progress.start(replay, streams.values())
-        starts = [t for s in streams.values() if (t := s.first_ts()) is not None]
-        replay.pin_anchor(min(starts) if starts else None)
-
-        for info_name in ("realsense_camera_info", "realsense_depth_camera_info"):
-            if info_name in streams:
-                first_info = streams[info_name].first()
-                if first_info is not None:
-                    port = getattr(self, info_name)
-                    port.publish(first_info)
-                    self.register_disposable(
-                        timer(0.5).subscribe(partial(_publish_once, port, first_info))
-                    )
-
+        playback = replay.playback()
+        self._first_infos = [
+            (getattr(self, name), first)
+            for name in ("realsense_camera_info", "realsense_depth_camera_info")
+            if name in streams and (first := streams[name].first()) is not None
+        ]
         for name, stream in streams.items():
             port = getattr(self, name)
             logger.info(
@@ -120,8 +105,18 @@ class G1Replay(Module):
                 stream.count(),
                 self.config.speed,
             )
-            self.register_disposable(progress.track(stream.observable()).subscribe(port.publish))
+            frames = playback.add(stream)
+            self.register_disposable(progress.track(frames).subscribe(port.publish))
         progress.seal()
+        return playback
+
+    @rpc
+    def on_system_modules_ready(self, modules: list[RPCClient]) -> None:
+        for port, first_info in self._first_infos:
+            port.publish(first_info)
+            self.register_disposable(timer(0.5).subscribe(partial(_publish_once, port, first_info)))
+        self._first_infos = []
+        super().on_system_modules_ready(modules)
 
     @rpc
     def stop(self) -> None:

@@ -61,6 +61,7 @@ def test_module_publishes_recorded_messages(recording: str) -> None:
     module.outputs["odom"].subscribe(lambda m: got["odom"].append(m.ts))
     module.outputs["goal"].subscribe(lambda m: got["goal"].append(m.ts))
     module.start()
+    module.on_system_modules_ready([])
     deadline = time.time() + 5
     while time.time() < deadline and len(got["odom"]) < 3:
         time.sleep(0.01)
@@ -73,13 +74,16 @@ def test_stop_waits_for_in_flight_decode(recording: str, monkeypatch: pytest.Mon
     entered = threading.Event()
     release = threading.Event()
     decoded = threading.Event()
-    stopping = threading.Event()
-    subscriptions_disposed = threading.Event()
-    stopped = threading.Event()
+    disposed = threading.Event()
     errors: list[Exception] = []
     decode = ReplayStream._decode
+    calls = 0
 
     def held_decode(self: ReplayStream[Any], obs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:  # the frame start() buffers
+            return decode(self, obs)
         entered.set()
         try:
             assert release.wait(5), "decode was not released"
@@ -91,33 +95,23 @@ def test_stop_waits_for_in_flight_decode(recording: str, monkeypatch: pytest.Mon
             raise
 
     monkeypatch.setattr(ReplayStream, "_decode", held_decode)
-    module = replay_module(recording, topics="odom")(dataset=recording, topics="odom")
-    module.register_disposable(Disposable(stopping.set))
-
-    def stop() -> None:
-        try:
-            module.stop()
-        except Exception as exc:
-            errors.append(exc)
-        finally:
-            stopped.set()
-
-    thread = threading.Thread(target=stop)
+    module = replay_module(recording, topics="odom")(
+        dataset=recording, topics="odom", buffer_size=1
+    )
+    module.register_disposable(Disposable(disposed.set))
+    stopper = threading.Thread(target=module.stop)
     try:
         module.start()
-        module.register_disposable(Disposable(subscriptions_disposed.set))
-        assert entered.wait(5), "no emission reached decode"
-        thread.start()
-        assert stopping.wait(5), "stop did not reach subscription disposal"
-        assert not subscriptions_disposed.wait(0.1), "disposal did not wait for the active decode"
+        assert entered.wait(5), "the reader did not decode ahead of the buffer"
+        stopper.start()
+        assert not disposed.wait(0.1), "stop disposed before the in-flight decode finished"
     finally:
         release.set()
-        if thread.ident is not None:
-            thread.join(timeout=5)
+        if stopper.ident is not None:
+            stopper.join(timeout=5)
         module.stop()
 
-    assert stopped.is_set()
-    assert subscriptions_disposed.is_set()
+    assert disposed.is_set()
     assert decoded.is_set()
     assert errors == []
     with SqliteStore(path=recording) as store:
@@ -197,6 +191,7 @@ def test_single_timestamp_stream_is_republished_and_not_the_anchor(tmp_path: Pat
     for name in got:
         module.outputs[name].subscribe(count(name))
     module.start()
+    module.on_system_modules_ready([])
     deadline = time.time() + 5
     while time.time() < deadline and (got["camera_info"] < 2 or got["odom"] < 1):
         time.sleep(0.05)
@@ -205,16 +200,15 @@ def test_single_timestamp_stream_is_republished_and_not_the_anchor(tmp_path: Pat
     assert got["odom"] == 1  # arrived within the 5 s deadline, not 39 s later
 
 
-def test_slow_first_decode_does_not_skip_other_streams(
+def test_slow_decode_delays_later_frames_but_drops_none(
     recording: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Anchor is pinned after setup; a stream that is slow to prime must not make later streams late."""
     from dimos.memory import replay as replay_mod
 
     real = replay_mod.ReplayStream._decode
 
     def slow(self: Any, obs: Any) -> Any:
-        if obs.ts == 1.05:  # the goal frame, subscribed first (sorted order)
+        if obs.ts == 1.05:  # the goal frame, before the last two odom frames
             time.sleep(0.2)
         return real(self, obs)
 
@@ -224,6 +218,7 @@ def test_slow_first_decode_does_not_skip_other_streams(
     module.outputs["odom"].subscribe(lambda m: got["odom"].append(m.ts))
     module.outputs["goal"].subscribe(lambda m: got["goal"].append(m.ts))
     module.start()
+    module.on_system_modules_ready([])
     deadline = time.time() + 5
     while time.time() < deadline and (len(got["odom"]) < 3 or not got["goal"]):
         time.sleep(0.01)
@@ -232,11 +227,11 @@ def test_slow_first_decode_does_not_skip_other_streams(
 
 
 def test_slow_stream_setup_does_not_skip_the_first_frames(recording: str) -> None:
-    """Slow setup should not lose initial frames."""
+    """Setup slower than the recording's first frames loses none of them."""
     real = ReplayStream._base_stream
 
     def slow(self: Any) -> Any:
-        time.sleep(0.1)  # twice the late tolerance, on every query a subscribe makes
+        time.sleep(0.1)  # longer than the recording, on every query
         return real(self)
 
     got: dict[str, list[float]] = {"odom": [], "goal": []}
@@ -245,6 +240,7 @@ def test_slow_stream_setup_does_not_skip_the_first_frames(recording: str) -> Non
         module.outputs["odom"].subscribe(lambda m: got["odom"].append(m.ts))
         module.outputs["goal"].subscribe(lambda m: got["goal"].append(m.ts))
         module.start()
+        module.on_system_modules_ready([])
     deadline = time.time() + 5
     while time.time() < deadline and (len(got["odom"]) < 3 or not got["goal"]):
         time.sleep(0.01)
@@ -281,10 +277,19 @@ def test_replay_logs_source_and_finishes_after_all_timed_streams(recording, mock
             info = store.stream("camera_info", PoseStamped)
             for _ in range(2):
                 info.append(PoseStamped(ts=0.0), ts=0.0)
-    scheduler = TestScheduler()
-    mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
     log = mocker.patch("dimos.memory.replay_progress.logger")
     module = replay_module(recording)(dataset=recording)
+    odom: list[float] = []
+    odom_at_finish: list[int] = []
+    finished = threading.Event()
+
+    def on_info(message: str, **_fields: Any) -> None:
+        if message == "Replay finished":
+            odom_at_finish.append(len(odom))
+            finished.set()
+
+    log.info.side_effect = on_info
+    module.outputs["odom"].subscribe(lambda m: odom.append(m.ts))
     try:
         module.start()
         log.info.assert_called_once_with(
@@ -295,10 +300,10 @@ def test_replay_logs_source_and_finishes_after_all_timed_streams(recording, mock
             speed=1.0,
             loop=False,
         )
-        scheduler.advance_by(0.1)  # goal has ended; odom still has a frame to publish
-        assert log.info.call_count == 1
-        scheduler.advance_by(1)
+        module.on_system_modules_ready([])
+        assert finished.wait(5)
         assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=recording)]
+        assert odom_at_finish == [3]  # not when goal ended, with odom frames still to come
     finally:
         module.stop()
 
@@ -316,6 +321,7 @@ def test_replay_with_only_static_metadata_reports_completion(recording, mocker):
     module = replay_module(recording, topics="camera_info")(dataset=recording, topics="camera_info")
     received = []
     with Disposable(module.outputs["camera_info"].subscribe(received.append)), module:
+        module.on_system_modules_ready([])
         scheduler.advance_by(2)
     assert [message.ts for message in received] == [0.0, 0.0]
     assert log.info.call_args_list == [

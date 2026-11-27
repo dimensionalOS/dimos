@@ -26,12 +26,11 @@ from typing import Any
 from reactivex.disposable import CompositeDisposable
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.relocalization.module import PremapModule
-from dimos.memory.replay import ReplayStream
+from dimos.memory.playback_module import PlaybackModule, PlaybackModuleConfig
+from dimos.memory.replay import Playback, ReplayStream
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -42,24 +41,19 @@ from dimos.visualization.vis_module import vis_module
 WORLD = "odom"
 
 
-class RecordingPlayerConfig(ModuleConfig):
+class RecordingPlayerConfig(PlaybackModuleConfig):
     dataset: str = "go2_mid360_sf_office_outdoors_2026-05-29"  # recording stem or path; `.db`, LFS-fetched on miss
     stream: str = "pointlio_lidar"
-    speed: float = 1.0
-    seek: float | None = None
-    duration: float | None = None
 
 
-class RecordingPlayer(Module):
+class RecordingPlayer(PlaybackModule):
     """Replay a recording's lidar and tf exactly as the sensors published them."""
 
     config: RecordingPlayerConfig
     lidar: Out[PointCloud2]
     tf: Out[TFMessage]
 
-    @rpc
-    def start(self) -> None:
-        super().start()
+    def open_playback(self) -> Playback:
         path = resolve_named_path(self.config.dataset, ".db")
         store = SqliteStore(path=str(path), must_exist=True)
         subscriptions = CompositeDisposable()
@@ -67,18 +61,16 @@ class RecordingPlayer(Module):
         # even when stop() is called concurrently or setup fails partway through.
         self.register_disposable(CompositeDisposable(subscriptions, store))
         store.start()
-        replay = store.replay(
-            speed=self.config.speed,
-            seek=self.config.seek,
-            duration=self.config.duration,
-        )
+        replay = self.replay_of(store)
         lidar: ReplayStream[PointCloud2] = replay.stream(self.config.stream)
         tf: ReplayStream[TFMessage] = replay.stream("tf")
         progress = ReplayProgress(str(path))
         progress.start(replay, [lidar, tf])
-        subscriptions.add(progress.track(lidar.observable()).subscribe(self.lidar.publish))
-        subscriptions.add(progress.track(tf.observable()).subscribe(self.tf.publish))
+        playback = replay.playback()
+        subscriptions.add(progress.track(playback.add(lidar)).subscribe(self.lidar.publish))
+        subscriptions.add(progress.track(playback.add(tf)).subscribe(self.tf.publish))
         progress.seal()
+        return playback
 
 
 def _fine_points(cloud: Any) -> Any:

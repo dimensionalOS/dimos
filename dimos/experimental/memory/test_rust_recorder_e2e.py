@@ -23,6 +23,7 @@ import select
 import signal
 import socket
 import subprocess
+import threading
 import time
 from typing import cast
 import uuid
@@ -30,7 +31,6 @@ import uuid
 from mcap.reader import make_reader
 import numpy as np
 import pytest
-from reactivex.testing import TestScheduler
 from typer.testing import CliRunner
 
 from dimos.constants import DIMOS_PROJECT_ROOT
@@ -618,12 +618,7 @@ def test_native_json_events_replay_to_the_live_quest_hud(
 ):
     artifact = _capture_native_artifact(tmp_path, rust_recorder_executable, store_kind, monkeypatch)
     received = []
-    scheduler = TestScheduler()
-    # Replay intentionally skips late subscribers. Keep its clock and scheduler
-    # together so host setup latency cannot skip the first status at 100x speed.
-    clock = mocker.patch("dimos.memory.replay.time")
-    clock.time.side_effect = lambda: scheduler.clock
-    mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
+    both = threading.Event()
     with ExitStack() as cleanup:
         hud = WebXRTeleopModule()
         cleanup.callback(hud.stop)
@@ -632,12 +627,15 @@ def test_native_json_events_replay_to_the_live_quest_hud(
 
         def broadcast(text):
             received.append(json.loads(text))
+            if len(received) == 2:
+                both.set()
 
         mocker.patch.object(hud, "_broadcast_text", side_effect=broadcast)
         subscription = replay.outputs["status"].subscribe(hud._on_episode_status)
         cleanup.callback(subscription)
         replay.start()
-        scheduler.advance_to(1.0)
+        replay.on_system_modules_ready([])
+        assert both.wait(5)
         assert [(p["ts"], p["last_event"]) for p in received] == [(12.0, "start"), (13.0, "save")]
         assert received[-1]["type"] == "episode_status"
         assert received[-1]["episodes_saved"] == 1

@@ -36,10 +36,11 @@ import sys
 import threading
 from typing import Any
 
-from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
+from reactivex.disposable import CompositeDisposable
+
 from dimos.core.stream import Out
-from dimos.memory.replay import ReplayStream
+from dimos.memory.playback_module import PlaybackModule, PlaybackModuleConfig
+from dimos.memory.replay import Playback, ReplayStream
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -56,14 +57,11 @@ XARM_DATASET = (
 )
 
 
-class DepthCameraFeedConfig(ModuleConfig):
+class DepthCameraFeedConfig(PlaybackModuleConfig):
     dataset: str = XARM_DATASET
-    speed: float = 1.0
-    seek: float | None = None
-    duration: float | None = None
 
 
-class DepthCameraFeed(Module):
+class DepthCameraFeed(PlaybackModule):
     """Replay a recording's colour, depth, camera_info and tf as the sensors published them."""
 
     config: DepthCameraFeedConfig
@@ -73,31 +71,33 @@ class DepthCameraFeed(Module):
     camera_info: Out[CameraInfo]
     tf: Out[TFMessage]
 
-    @rpc
-    def start(self) -> None:
-        super().start()
+    def open_playback(self) -> Playback:
         given = Path(self.config.dataset)
         path = given if given.exists() else get_data(self.config.dataset)
-        store = self.register_disposable(SqliteStore(path=str(path), must_exist=True))
+        store = SqliteStore(path=str(path), must_exist=True)
+        subscriptions = CompositeDisposable()
+        # One disposer stops the playback before closing its store.
+        self.register_disposable(CompositeDisposable(subscriptions, store))
         store.start()
-        replay = store.replay(
-            speed=self.config.speed, seek=self.config.seek, duration=self.config.duration
-        )
+        replay = self.replay_of(store)
         ports: dict[str, Out[Any]] = {
             "color_image": self.color_image,
             "depth_image": self.depth_image,
             "camera_info": self.camera_info,
             "tf": self.tf,
         }
+        streams: dict[str, ReplayStream[Any]] = {name: replay.stream(name) for name in ports}
         progress = ReplayProgress(str(path))
-        progress.start(replay, (replay.stream(name) for name in ports))
+        progress.start(replay, streams.values())
+        playback = replay.playback()
         for name, port in ports.items():
-            stream: ReplayStream[Any] = replay.stream(name)
             logger.info(
-                f"feed: {path.name}:{name} ({stream.count()} frames at {self.config.speed}x)"
+                f"feed: {path.name}:{name} ({streams[name].count()} frames at {self.config.speed}x)"
             )
-            self.register_disposable(progress.track(stream.observable()).subscribe(port.publish))
+            frames = playback.add(streams[name])
+            subscriptions.add(progress.track(frames).subscribe(port.publish))
         progress.seal()
+        return playback
 
 
 xarm_feed = DepthCameraFeed.blueprint()
@@ -121,6 +121,7 @@ def main() -> int:
     for name, port in feed.outputs.items():
         feed.set_transport(name, make_transport(f"/{name}", port.type))
     feed.start()
+    feed.on_system_modules_ready([])
     try:
         threading.Event().wait()
     except KeyboardInterrupt:

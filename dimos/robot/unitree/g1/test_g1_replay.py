@@ -17,7 +17,6 @@ import threading
 
 from mcap.writer import Writer
 import pytest
-from reactivex.testing import TestScheduler
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -63,6 +62,7 @@ def test_replays_odometry_from_sqlite_and_mcap(tmp_path: Path, suffix: str) -> N
     replay.pointlio_odometry.subscribe(on_odometry)
     try:
         replay.start()
+        replay.on_system_modules_ready([])
         assert published.wait(5.0)
     finally:
         replay.stop()
@@ -75,10 +75,12 @@ def test_replay_logs_source_duration_and_completion(tmp_path, mocker):
         odom = store.stream("pointlio_odometry", Odometry)
         for ts in (1.0, 2.0):
             odom.append(Odometry(ts=ts), ts=ts)
-    scheduler = TestScheduler()
-    mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
     log = mocker.patch("dimos.memory.replay_progress.logger")
-    with G1Replay(dataset=str(path)):
+    finished = threading.Event()
+    log.info.side_effect = lambda message, **_fields: (
+        finished.set() if message == "Replay finished" else None
+    )
+    with G1Replay(dataset=str(path)) as replay:
         log.info.assert_called_once_with(
             "Replay started",
             source=str(path),
@@ -87,5 +89,6 @@ def test_replay_logs_source_duration_and_completion(tmp_path, mocker):
             speed=1.0,
             loop=False,
         )
-        scheduler.advance_by(5)
+        replay.on_system_modules_ready([])
+        assert finished.wait(5)
         assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=str(path))]

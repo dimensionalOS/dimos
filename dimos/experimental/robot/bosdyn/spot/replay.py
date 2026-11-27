@@ -26,20 +26,20 @@ which accumulates it and is equally happy on a live robot.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 import math
 from pathlib import Path
+from typing import Any
 
 from reactivex.disposable import CompositeDisposable
 
 from dimos.constants import RECORDINGS_DIR
-from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.experimental.robot.bosdyn.spot.config import (
     CAMERA_STREAM_SUFFIXES,
     FRONT_CAMERA_ROTATE_UPRIGHT,
 )
-from dimos.memory.replay import resolve_db_path
+from dimos.memory.playback_module import PlaybackModule, PlaybackModuleConfig
+from dimos.memory.replay import Playback, ReplayStream, resolve_db_path
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -71,7 +71,7 @@ _OPTICAL_FRAME_ROLL_TURNS = {
 }
 
 
-class SpotReplayConfig(ModuleConfig):
+class SpotReplayConfig(PlaybackModuleConfig):
     """Where to read the recording from and how to play it back."""
 
     # An on-disk path, or the name of a dataset to pull from LFS (e.g.
@@ -79,10 +79,7 @@ class SpotReplayConfig(ModuleConfig):
     db_path: str = ""
     dataset_dir: str = str(RECORDINGS_DIR / "spot")
 
-    speed: float = 1.0
     loop: bool = True
-    seek: float | None = None
-    duration: float | None = None
 
     # Roll the front optical tf frames upright at replay time. Off by default:
     # recordings are expected to already store upright front frames. Turn on to
@@ -90,7 +87,7 @@ class SpotReplayConfig(ModuleConfig):
     roll_front_frames: bool = False
 
 
-class SpotReplay(Module):
+class SpotReplay(PlaybackModule):
     """Replays Spot's fisheye + depth cameras, odometry, and tf from a recording."""
 
     config: SpotReplayConfig
@@ -143,7 +140,7 @@ class SpotReplay(Module):
             ts=transform.ts,
         )
 
-    async def main(self) -> AsyncIterator[None]:
+    def open_playback(self) -> Playback:
         db_path = self._resolve_db_path()
 
         store = SqliteStore(path=str(db_path), must_exist=True)
@@ -153,34 +150,25 @@ class SpotReplay(Module):
         self.register_disposable(CompositeDisposable(subscriptions, store))
         store.start()
 
-        replay = store.replay(
-            speed=self.config.speed,
-            loop=self.config.loop,
-            seek=self.config.seek,
-            duration=self.config.duration,
-        )
+        replay = self.replay_of(store)
         available = set(replay.list_streams())
-        progress = ReplayProgress(str(db_path))
-        progress.start(
-            replay, (replay.stream(n) for n in [*_PLAYBACK_STREAMS, "tf"] if n in available)
-        )
-
         for name in _PLAYBACK_STREAMS:
             if name not in available:
                 logger.warning(f"Spot replay: stream {name!r} missing from recording; skipping")
-                continue
-            subscriptions.add(
-                progress.track(replay.stream(name).observable()).subscribe(
-                    getattr(self, name).publish
-                )
-            )
-
-        if "tf" in available:
-            subscriptions.add(
-                progress.track(replay.stream("tf").observable()).subscribe(self._republish_tf)
-            )
-        else:
+        if "tf" not in available:
             logger.warning("Spot replay: no tf stream in recording; 3D frames will be missing")
-
+        handlers = {
+            **{name: getattr(self, name).publish for name in _PLAYBACK_STREAMS},
+            "tf": self._republish_tf,
+        }
+        streams: list[ReplayStream[Any]] = [
+            replay.stream(name) for name in handlers if name in available
+        ]
+        progress = ReplayProgress(str(db_path))
+        progress.start(replay, streams)
+        playback = replay.playback()
+        for stream in streams:
+            frames = playback.add(stream)
+            subscriptions.add(progress.track(frames).subscribe(handlers[stream.name]))
         progress.seal()
-        yield
+        return playback

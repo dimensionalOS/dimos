@@ -18,11 +18,13 @@ import gc
 from pathlib import Path
 import sqlite3
 import threading
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from pytest_mock import MockerFixture
-from reactivex.testing import TestScheduler
 
+from dimos.memory.replay import Replay, ReplayStream
 from dimos.memory.store.base import Store
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.memory import MemoryStore
@@ -71,19 +73,35 @@ def corrupt_recording(request: pytest.FixtureRequest, tmp_path: Path) -> Iterato
             yield store
 
 
-@pytest.mark.parametrize("virtual", [False, True], ids=["timer", "virtual"])
+def _play_until_terminal(
+    replay: Replay, stream: ReplayStream[Any]
+) -> tuple[list[Any], list[Exception], MagicMock]:
+    """Play *stream* alone until it errors or completes; its frames, errors and on_completed."""
+    playback = replay.playback()
+    received: list[Any] = []
+    errors: list[Exception] = []
+    finished = threading.Event()
+    completed = MagicMock(side_effect=finished.set)
+
+    def on_error(error: Exception) -> None:
+        errors.append(error)
+        finished.set()
+
+    playback.add(stream).subscribe(received.append, on_error, completed)
+    playback.play()
+    assert finished.wait(5), "replay did not deliver a terminal event"
+    playback.stop()
+    return received, errors, completed
+
+
 @pytest.mark.parametrize("loop", [False, True])
-def test_corrupt_payload_closes_iterator_and_reports_one_error(
-    corrupt_recording: Store, virtual: bool, loop: bool, mocker: MockerFixture
+def test_corrupt_payload_reports_one_error(
+    corrupt_recording: Store, loop: bool, mocker: MockerFixture
 ) -> None:
-    scheduler = TestScheduler() if virtual else None
-    stream = corrupt_recording.replay(loop=loop).stream("pose")
+    replay = corrupt_recording.replay(loop=loop, speed=10.0)
+    stream = replay.stream("pose")
     base = stream._base_stream
     closed = threading.Event()
-    finished = threading.Event()
-    received: list[PoseStamped] = []
-    errors: list[Exception] = []
-    completed = mocker.Mock(side_effect=finished.set)
 
     def rows() -> Iterator[Observation[PoseStamped]]:
         try:
@@ -92,41 +110,29 @@ def test_corrupt_payload_closes_iterator_and_reports_one_error(
             closed.set()
 
     mocker.patch.object(stream, "_base_stream", side_effect=rows)
-
-    def on_error(error: Exception) -> None:
-        errors.append(error)
-        assert closed.is_set()
-        corrupt_recording.stop()
-        finished.set()
-
-    with stream.observable().subscribe(received.append, on_error, completed, scheduler=scheduler):
-        if scheduler is not None:
-            scheduler.advance_by(1)
-        assert finished.wait(2), "replay did not deliver a terminal event"
+    received, errors, completed = _play_until_terminal(replay, stream)
 
     assert [pose.ts for pose in received] == [1.0]
     assert len(errors) == 1
     assert isinstance(errors[0], ValueError)
     assert str(errors[0]) == "Decode error"
     completed.assert_not_called()
+    assert closed.is_set()
+    corrupt_recording.stop()
     # A retained exception must not keep a cursor alive past store shutdown.
     # Collect it here so late cursor cleanup failures are caught by pytest.
     errors.clear()
     gc.collect()
 
 
-@pytest.mark.parametrize("phase", ["initial", "skip", "scheduled"])
+@pytest.mark.parametrize("phase", ["first", "next"])
 def test_read_failure_reports_one_error(phase: str, mocker: MockerFixture) -> None:
-    scheduler = TestScheduler()
     error = OSError("recording read failed")
     closed = threading.Event()
-    received: list[int] = []
-    on_error = mocker.Mock()
-    completed = mocker.Mock()
 
     def rows() -> Iterator[Observation[int]]:
         try:
-            if phase != "initial":
+            if phase == "next":
                 yield Observation(id=0, ts=1.0, _data=42)
             raise error
         finally:
@@ -134,53 +140,63 @@ def test_read_failure_reports_one_error(phase: str, mocker: MockerFixture) -> No
 
     with MemoryStore() as store:
         replay = store.replay(loop=True)
-        if phase == "skip":
-            replay.pin_anchor(10.0)
         stream = replay.stream("pose")
         mocker.patch.object(stream, "_base_stream", side_effect=rows)
-        with stream.observable().subscribe(
-            received.append, on_error, completed, scheduler=scheduler
-        ):
-            scheduler.advance_by(10)
+        received, errors, completed = _play_until_terminal(replay, stream)
 
-    assert received == ([42] if phase == "scheduled" else [])
-    on_error.assert_called_once_with(error)
+    assert received == ([42] if phase == "next" else [])
+    assert errors == [error]
     completed.assert_not_called()
     assert closed.is_set()
 
 
 @pytest.mark.parametrize("fail_at", [0, 1])
-def test_autocast_failure_closes_retained_iterator(fail_at: int, mocker: MockerFixture) -> None:
-    scheduler = TestScheduler()
+def test_autocast_failure_reports_one_error(fail_at: int, mocker: MockerFixture) -> None:
     error = ValueError("cannot convert frame")
-    received: list[int] = []
-    closed = mocker.Mock()
-    completed = mocker.Mock()
+    closed = threading.Event()
 
     def rows() -> Iterator[Observation[int]]:
         try:
             for value in range(3):
-                yield Observation(id=value, ts=float(value), _data=value)
+                yield Observation(id=value, ts=1.0 + value * 0.01, _data=value)
         finally:
-            closed()
+            closed.set()
 
     def autocast(value: int) -> int:
         if value == fail_at:
             raise error
         return value
 
-    def on_error(error: Exception) -> None:
-        closed.assert_called_once_with()
-
-    error_handler = mocker.Mock(side_effect=on_error)
-    with MemoryStore() as store, closing(rows()) as iterator:
-        stream = store.replay(loop=True).stream("pose", autocast=autocast)
-        mocker.patch.object(stream, "_base_stream", return_value=iterator)
-        with stream.observable().subscribe(
-            received.append, error_handler, completed, scheduler=scheduler
-        ):
-            scheduler.advance_by(10)
+    with MemoryStore() as store:
+        replay = store.replay(loop=True)
+        stream = replay.stream("pose", autocast=autocast)
+        mocker.patch.object(stream, "_base_stream", side_effect=rows)
+        received, errors, completed = _play_until_terminal(replay, stream)
 
     assert received == list(range(fail_at))
-    error_handler.assert_called_once_with(error)
+    assert errors == [error]
     completed.assert_not_called()
+    assert closed.is_set()
+
+
+def test_failed_stream_leaves_the_others_playing(mocker: MockerFixture) -> None:
+    with MemoryStore() as store:
+        for name in ("broken", "odom"):
+            recorded = store.stream(name, int)
+            for value in range(3):
+                recorded.append(value, ts=1.0 + value * 0.01)
+        replay = store.replay()
+        broken = replay.stream("broken")
+        mocker.patch.object(broken, "_base_stream", side_effect=OSError("recording read failed"))
+        playback = replay.playback()
+        errors: list[Exception] = []
+        odom: list[int] = []
+        done = threading.Event()
+        playback.add(broken).subscribe(on_error=errors.append)
+        playback.add(replay.stream("odom")).subscribe(odom.append, on_completed=done.set)
+        playback.play()
+        assert done.wait(5)
+        playback.stop()
+
+    assert [str(error) for error in errors] == ["recording read failed"]
+    assert odom == [0, 1, 2]

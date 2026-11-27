@@ -675,19 +675,20 @@ def test_replay_opens_recording_and_emits_typed_odometry(
     if dataset_kind == "named-sqlite":
         monkeypatch.chdir(tmp_path)
         dataset = "recording"
-    scheduler = TestScheduler()
     received = []
     errors = []
     completed = []
+    finished = threading.Event()
+
+    def on_completed() -> None:
+        completed.append(True)
+        finished.set()
+
     with go2_conn.ReplayConnection(dataset=dataset, seek=1.0, duration=0.25) as conn:
-        with conn.odom_stream().subscribe(
-            received.append,
-            errors.append,
-            lambda: completed.append(True),
-            scheduler=scheduler,
-        ):
+        with conn.odom_stream().subscribe(received.append, errors.append, on_completed):
             conn.seal_subscriptions()
-            scheduler.advance_by(1.0)
+            conn.play()
+            assert finished.wait(5)
         assert errors == []
         assert completed == [True]
         assert [value.lcm_encode() for value in received] == [values[1].lcm_encode()]
@@ -731,13 +732,14 @@ def test_replay_metadata_only_opens_selected_streams(tmp_path, mocker, payload_m
             "WHERE name = 'color_image'",
             (payload_module,),
         )
-    scheduler = TestScheduler()
     received = []
+    finished = threading.Event()
     log = mocker.patch("dimos.memory.replay_progress.logger")
     with go2_conn.ReplayConnection(dataset=str(path)) as conn:
-        with conn.odom_stream().subscribe(received.append, scheduler=scheduler):
+        with conn.odom_stream().subscribe(received.append, on_completed=finished.set):
             conn.seal_subscriptions()
-            scheduler.advance_by(5)
+            conn.play()
+            assert finished.wait(5)
             conn.seal_subscriptions()
     assert [message.ts for message in received] == [10.0, 11.0]
     assert log.info.call_args_list == [
@@ -767,18 +769,29 @@ def test_replay_loop_cli_controls_repeated_playback(tmp_path, mocker, loop):
     cfg = ConnectionConfig(
         g=GlobalConfig(**parsed.global_config_values()), **parsed.module_kwargs("go2connection")
     )
-    scheduler = TestScheduler()
-    mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
     log = mocker.patch("dimos.memory.replay_progress.logger")
+    finished = threading.Event()
+    log.info.side_effect = lambda message, **_fields: (
+        finished.set() if message == "Replay finished" else None
+    )
     module = GO2Connection(g=cfg.g, replay_loop=cfg.replay_loop, lidar=False, camera=False)
     mocker.patch.object(module.cmd_vel, "subscribe", return_value=mocker.Mock())
     mocker.patch.object(module.velocity_command, "subscribe", return_value=mocker.Mock())
     module.set_transport("odom", mocker.Mock())
     received = []
+    third = threading.Event()
+
+    def on_odom(msg: PoseStamped) -> None:
+        received.append(msg.ts)
+        if len(received) == 3:
+            third.set()
+
     try:
-        with Disposable(module.odom.subscribe(lambda msg: received.append(msg.ts))):
+        with Disposable(module.odom.subscribe(on_odom)):
             module.start()
-            scheduler.advance_by(10)
+            module.on_system_modules_ready([])
+            # A loop starts over 1.05 s after its last frame; a single pass finishes.
+            assert (third if loop else finished).wait(5)
     finally:
         module.stop()
     assert received[:2] == [1.0, 2.0]

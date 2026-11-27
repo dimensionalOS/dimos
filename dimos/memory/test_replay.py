@@ -66,17 +66,6 @@ def test_seek_filters_frames_before_offset(sqlite_store: SqliteStore) -> None:
     assert [ts for ts, _ in pairs] == pytest.approx([100.2, 100.3], abs=1e-6)
 
 
-def test_seek_anchor_pins_to_offset(sqlite_store: SqliteStore) -> None:
-    _populate(sqlite_store, "lidar", [100.0, 100.1, 100.2, 100.3])
-    replay = sqlite_store.replay(seek=0.2)
-    # Pin the anchor directly via the public path the observable would take.
-    first_ts = replay.streams.lidar.first_ts()
-    assert first_ts is not None
-    assert first_ts == pytest.approx(100.2, abs=1e-6)
-    _, replay_t0 = replay._resolve_anchor(first_ts)
-    assert replay_t0 == pytest.approx(100.2, abs=1e-6)
-
-
 def test_duration_bounds_window(sqlite_store: SqliteStore) -> None:
     _populate(sqlite_store, "lidar", [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3])
     replay = sqlite_store.replay(duration=0.12)
@@ -101,50 +90,3 @@ def test_replay_stream_count_respects_seek(sqlite_store: SqliteStore) -> None:
     _populate(sqlite_store, "lidar", [0.0, 1.0, 2.0, 3.0])
     replay = sqlite_store.replay(seek=1.0)
     assert replay.streams.lidar.count() == 3
-
-
-def test_anchor_is_shared_across_streams(sqlite_store: SqliteStore) -> None:
-    _populate(sqlite_store, "lidar", [0.0, 0.1])
-    _populate(sqlite_store, "odom", [0.0, 0.1])
-    replay = sqlite_store.replay()
-    a1 = replay._resolve_anchor(0.0)
-    a2 = replay._resolve_anchor(0.0)
-    assert a1 is a2 or a1 == a2
-
-
-def test_anchor_reset_forgets_pin(sqlite_store: SqliteStore) -> None:
-    _populate(sqlite_store, "lidar", [0.0, 0.1])
-    replay = sqlite_store.replay()
-    replay._resolve_anchor(0.0)
-    assert replay._anchor is not None
-    replay.reset_anchor()
-    assert replay._anchor is None
-
-
-def test_replay_anchor_thread_safe(sqlite_store: SqliteStore) -> None:
-    """Concurrent _resolve_anchor calls return the same anchor — no torn state."""
-    import threading
-
-    _populate(sqlite_store, "lidar", [0.0, 0.1, 0.2])
-    _populate(sqlite_store, "odom", [0.0, 0.1, 0.2])
-    replay = sqlite_store.replay()
-
-    n_workers = 8
-    barrier = threading.Barrier(n_workers)
-    anchors: list[tuple[float, float]] = []
-    anchors_lock = threading.Lock()
-
-    def race() -> None:
-        barrier.wait()  # release all workers at once
-        a = replay._resolve_anchor(0.0)
-        with anchors_lock:
-            anchors.append(a)
-
-    threads = [threading.Thread(target=race) for _ in range(n_workers)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=1.0)
-
-    assert len(anchors) == n_workers
-    assert all(a == anchors[0] for a in anchors)

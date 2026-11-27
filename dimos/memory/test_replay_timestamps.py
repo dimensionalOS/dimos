@@ -106,12 +106,3 @@ def test_duration_uses_earliest_source_timestamp(recording: Store) -> None:
     replay = recording.replay(duration=0.015)
 
     assert [ts for ts, _ in replay.stream("odom").iterate_ts()] == [10.0, 10.01]
-
-
-def test_pin_anchor_uses_earliest_source_timestamp(recording: Store) -> None:
-    replay = recording.replay()
-
-    replay.pin_anchor()
-
-    assert replay._anchor is not None
-    assert replay._anchor[1] == 10.0

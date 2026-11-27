@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from concurrent.futures import ThreadPoolExecutor
+import threading
 
 import pytest
 from reactivex import Subject, empty
@@ -100,8 +101,13 @@ def test_empty_recording_logs_zero_duration_and_completion(mocker):
         replay = store.replay()
         stream = replay.stream("odom")
         progress.start(replay, [stream])
-        with progress.track(stream.observable()).subscribe():
+        playback = replay.playback()
+        finished = threading.Event()
+        with progress.track(playback.add(stream)).subscribe(on_completed=finished.set):
             progress.seal()
+            playback.play()
+            assert finished.wait(5)
+        playback.stop()
     assert log.info.call_args_list == [
         mocker.call(
             "Replay started",

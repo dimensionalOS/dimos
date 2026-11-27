@@ -37,9 +37,10 @@ from dimos.control.contract.convert import joint_state_to_values
 from dimos.control.contract.keys import Interface
 from dimos.core.core import rpc
 from dimos.core.resource import CompositeResource
+from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
 from dimos.memory.cli.dataset import open_store, resolve_dataset
-from dimos.memory.replay import Replay, ReplayStream
+from dimos.memory.replay import Playback, Replay, ReplayStream
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -285,11 +286,11 @@ class ReplayConnection(CompositeResource):
         self._progress = ReplayProgress(dataset, on_complete=self._on_complete)
         self._replay_path: str | None = None
         self._pending_streams: list[ReplayStream[Any]] = []
+        self._playback: Playback | None = None
 
     @cached_property
     def replay(self) -> Replay:
-        # One shared store + Replay so lidar/odom/video advance against the
-        # same wall-clock anchor on subscribe.
+        # One shared store + Replay, played as one timeline so lidar/odom/video stay in order.
         path = resolve_dataset(self.dataset)
         self._replay_path = str(path.resolve())
         store = self.register_disposable(open_store(path))
@@ -298,6 +299,12 @@ class ReplayConnection(CompositeResource):
 
     def start(self) -> None:
         pass
+
+    def stop(self) -> None:
+        # Stop reading before the store closes.
+        if self._playback is not None:
+            self._playback.stop()
+        super().stop()
 
     def standup(self) -> bool:
         return True
@@ -341,17 +348,26 @@ class ReplayConnection(CompositeResource):
         return self._progress.track(source)
 
     def _replay_observable(self, stream: ReplayStream[_T]) -> Observable[_T]:
+        if self._playback is None:
+            self._playback = self.replay.playback()
         self._pending_streams.append(stream)
-        return self._tracked(stream.observable())
+        return self._tracked(self._playback.add(stream))
 
     def seal_subscriptions(self) -> None:
-        """Mark the subscription set complete so end-of-playback can be reported."""
+        """Mark the subscription set complete and buffer the first frames."""
         if self._pending_streams:
             # Only inspect selected streams: unused recordings may depend on
             # unavailable payload types or contain unrelated timestamp ranges.
             self._progress.start(self.replay, self._pending_streams, path=self._replay_path)
             self._pending_streams.clear()
         self._progress.seal()
+        if self._playback is not None:
+            self._playback.load()
+
+    def play(self) -> None:
+        """Start the clock: every subscriber is listening."""
+        if self._playback is not None:
+            self._playback.play()
 
     def _on_complete(self) -> None:
         if self._exit_on_complete:
@@ -553,6 +569,13 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
 
     def halt(self) -> None:
         self.connection.stop_movement()
+
+    @rpc
+    def on_system_modules_ready(self, _modules: list[RPCClient]) -> None:
+        # Every module has started, so every subscriber is listening for the first frame.
+        connection = getattr(self, "connection", None)
+        if isinstance(connection, ReplayConnection):
+            connection.play()
 
     @rpc
     def stop(self) -> None:

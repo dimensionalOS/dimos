@@ -31,9 +31,11 @@ from reactivex import interval
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import Out
 from dimos.memory.cli.dataset import open_dataset, open_store, resolve_dataset, stream_payload_types
+from dimos.memory.playback_module import PlaybackModule, PlaybackModuleConfig
+from dimos.memory.replay import Playback
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.base import Store
 from dimos.memory.tap import check_topics, matching
@@ -41,21 +43,15 @@ from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from reactivex import Observable
-
     from dimos.memory.replay import Replay, ReplayStream
     from dimos.msgs.protocol import DimosMsg
 
 logger = setup_logger()
 
 
-class ReplayModuleConfig(ModuleConfig):
+class ReplayModuleConfig(PlaybackModuleConfig):
     dataset: str = ""
     topics: str = "*"
-    speed: float = 1.0
-    loop: bool = False
-    seek: float | None = None
-    duration: float | None = None
 
 
 def dataset_path(name: str, *, explicit: bool = True) -> str:
@@ -93,13 +89,14 @@ def stream_types_of(dataset: str) -> dict[str, type]:
         store.stop()
 
 
-class ReplayModule(Module):
+class ReplayModule(PlaybackModule):
     """Publishes every ``Out`` port from the recording at recorded timing."""
 
     config: ReplayModuleConfig
     stream_types: dict[str, type] = {}  # set by replay_module()
     topics: str = "*"  # set by replay_module(); carried to workers via the blueprint kwargs
     _store: Store | None = None
+    _static: list[tuple[Out[Any], Any]] = []
 
     @classproperty
     def blueprint(cls) -> Any:  # noqa: N805
@@ -123,50 +120,41 @@ class ReplayModule(Module):
             if name not in existing:
                 setattr(self, name, Out(types[name], name, self))
 
-    @rpc
-    def start(self) -> None:
-        super().start()
+    def open_playback(self) -> Playback:
         if not self.config.dataset:
             raise ValueError("no recording: pass --replay-db <memory.db>")
         path = resolve_dataset(self.config.dataset)
         store: Store = open_store(path)
         store.start()
         self._store = store
-        replay: Replay = store.replay(
-            speed=self.config.speed,
-            loop=self.config.loop,
-            seek=self.config.seek,
-            duration=self.config.duration,
-        )
-        # Open every stream before pinning the anchor, so setup time does not
-        # put the playback behind the wall clock from the start.
+        replay: Replay = self.replay_of(store)
         streams: dict[str, ReplayStream[DimosMsg]] = {
             name: replay.stream(name) for name in self.outputs
         }
         # A stream whose rows all carry one timestamp (camera_info recorded from a
         # constant stamped at import, often long before the run) is republished at
-        # 1 Hz instead of replayed, and does not set the anchor: otherwise the replay
-        # would spend that lead time emitting nothing.
+        # 1 Hz instead of replayed, and does not start the timeline: otherwise the
+        # replay would spend that lead time emitting nothing.
         static = {n for n, s in streams.items() if s.count() > 1 and s.first_ts() == s.last_ts()}
-        timed_starts = [t for n, s in streams.items() if n not in static and (t := s.first_ts())]
+        timed = [s for n, s in streams.items() if n not in static]
         progress = ReplayProgress(str(path))
-        progress.start(replay, (s for n, s in streams.items() if n not in static))
-        replay.pin_anchor(min(timed_starts) if timed_starts else None)
-        port: Out[DimosMsg]
+        progress.start(replay, timed)
+        playback = replay.playback()
+        self._static = [(self.outputs[n], streams[n].first()) for n in static]
         for name, port in self.outputs.items():
-            stream = streams[name]
             logger.info("Replaying %s -> %s", name, port)
-            if name in static:
-                self.register_disposable(
-                    interval(1.0).subscribe(partial(_republish, port, stream.first()))
-                )
-                continue
-            # Not a late subscriber, just behind by the setup of the streams
-            # subscribed before it, which on a loaded machine exceeds the
-            # late tolerance and would drop its first frames.
-            timed: Observable[DimosMsg] = stream.observable(skip_late=False)
-            self.register_disposable(progress.track(timed).subscribe(port.publish))
+            if name not in static:
+                timed_frames = playback.add(streams[name])
+                self.register_disposable(progress.track(timed_frames).subscribe(port.publish))
         progress.seal()
+        return playback
+
+    @rpc
+    def on_system_modules_ready(self, modules: list[RPCClient]) -> None:
+        for port, msg in self._static:
+            self.register_disposable(interval(1.0).subscribe(partial(_republish, port, msg)))
+        self._static = []
+        super().on_system_modules_ready(modules)
 
     @rpc
     def stop(self) -> None:
