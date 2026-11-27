@@ -15,6 +15,7 @@
 from collections.abc import Callable
 from contextlib import ExitStack, closing
 from pathlib import Path
+import time
 from typing import Any
 
 import numpy as np
@@ -23,15 +24,22 @@ from pytest_mock import MockerFixture
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
-from dimos.core.stream import Transport
+from dimos.core.stream import In, Transport
 from dimos.experimental.memory import rust_cli_recorder
 from dimos.memory import tap
+from dimos.memory.module import Recorder
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
+from dimos.memory.type import recording
+from dimos.msgs.control_msgs.ControlValues import ControlValues
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.JointCommand import JointCommand
+from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
 
 class _Transport(Transport[Any]):
@@ -207,3 +215,119 @@ def test_recording_delegates_to_rust_session(
     make_plan.assert_called_once_with(transports)
     create_session.assert_called_once_with("plan")
     session.stop.assert_called_once_with()
+
+
+def test_records_tf_and_odom_at_source_time(sqlite_store):
+    ts = 42.25
+    older = Transform(ts=ts, frame_id="base", child_frame_id="sensor")
+    batches = [
+        TFMessage(Transform(ts=ts + 1.0, child_frame_id="base"), older),
+        TFMessage(Transform(ts=ts + 2.0, child_frame_id="base"), older),
+    ]
+    with closing(TransportRecorder(sqlite_store)) as recorder, ExitStack() as subscriptions:
+        tf_transport, odom_transport = _Transport(), _Transport()
+        for name, msg_type, transport in [
+            ("tf", TFMessage, tf_transport),
+            ("odom", PoseStamped, odom_transport),
+        ]:
+            unsubscribe = recorder.tap(name, msg_type, transport)
+            assert unsubscribe is not None
+            subscriptions.callback(unsubscribe)
+        for batch in batches:
+            tf_transport.publish(batch)
+        odom_transport.publish(PoseStamped(ts=ts))
+
+    rows = sqlite_store.stream("tf", TFMessage).order_by("id").to_list()
+    assert [row.ts for row in rows] == [ts + 1.0, ts, ts + 2.0, ts]
+    assert [row.data.lcm_encode() for row in rows] == [
+        TFMessage(transform).lcm_encode() for batch in batches for transform in batch
+    ]
+    assert sqlite_store.stream("odom", PoseStamped).first().ts == ts
+    # Repeated older members must not make the changing TF stream look static.
+    replay = sqlite_store.replay().stream("tf")
+    assert (replay.first_ts(), replay.last_ts()) == (ts, ts + 2.0)
+
+
+def test_unstamped_messages_index_at_arrival_and_warn_once_per_topic(sqlite_store, mocker):
+    warning = mocker.patch.object(recording.logger, "warning")
+    before = time.time()
+    with closing(TransportRecorder(sqlite_store)) as recorder:
+        odom, notes, frames = _Transport(), _Transport(), _Transport()
+        recorder.tap("odom", PoseStamped, odom)
+        recorder.tap("notes", String, notes)
+        recorder.tap("tf", TFMessage, frames)
+        for _ in range(2):
+            odom.publish(PoseStamped(ts=0.0))
+        notes.publish(String("unstamped"))
+        frames.publish(TFMessage(Transform(ts=0.0), Transform(ts=42.25)))
+    after = time.time()
+
+    odom_rows = sqlite_store.stream("odom", PoseStamped).to_list()
+    assert len(odom_rows) == 2
+    assert all(before <= row.ts <= after and row.data.ts == 0.0 for row in odom_rows)
+    assert before <= sqlite_store.stream("notes", String).first().ts <= after
+    tf_rows = sqlite_store.stream("tf", TFMessage).order_by("id").to_list()
+    assert before <= tf_rows[0].ts <= after
+    assert tf_rows[1].ts == 42.25
+    assert sorted(call.args[1] for call in warning.call_args_list) == ["notes", "odom", "tf"]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        Header(0.25),
+        JointCommand(timestamp=0.25),
+        ControlValues("test", source_ts=0.25),
+    ],
+)
+def test_tap_records_types_that_keep_their_stamp_under_another_name(sqlite_store, message):
+    transport = _Transport()
+    with closing(TransportRecorder(sqlite_store)) as recorder:
+        recorder.tap("samples", type(message), transport)
+        transport.publish(message)
+    assert sqlite_store.stream("samples", type(message)).first().ts == 0.25
+
+
+class _SourceRecorder(Recorder):
+    odom: In[PoseStamped]
+    frames: In[TFMessage]
+
+
+def test_module_recorder_preserves_source_and_arrival_clocks(tmp_path, mocker, wait_until):
+    path = tmp_path / "memory.db"
+    mocker.patch.object(ZenohRPC, "start")
+    mocker.patch.object(ZenohRPC, "serve_module_rpc")
+    module = _SourceRecorder(
+        db_path=path,
+        record_tf=True,
+        poseless_streams=["frames", "odom"],
+        rpc_transport=ZenohRPC,
+    )
+    module.odom.transport = _Transport()
+    module.frames.transport = _Transport()
+    module.tf.transport = _Transport()
+    with module:
+        module.odom.transport.publish(PoseStamped(ts=0.0))
+        batch = TFMessage(
+            Transform(ts=0.0, frame_id="world", child_frame_id="base"),
+            Transform(ts=42.25, frame_id="base", child_frame_id="camera"),
+        )
+        module.frames.transport.publish(batch)
+        module.tf.transport.publish(batch)
+        wait_until(
+            lambda: module.store.stream("odom").count() == 1
+            and module.store.stream("frames").count() == 2,
+            timeout=3,
+        )
+    with SqliteStore(path=str(path), must_exist=True) as store:
+        odom = store.stream("odom").first()
+        assert odom.ts == odom.tags["reception_ts"]
+        assert odom.data.ts == 0.0
+        frames = store.stream("frames").order_by("id").to_list()
+        assert [row.ts for row in frames] == [frames[0].tags["reception_ts"], 42.25]
+        assert [row.data.transforms[0].ts for row in frames] == [0.0, 42.25]
+        assert frames[0].tags["reception_ts"] == frames[1].tags["reception_ts"]
+        dedicated = store.stream("tf", TFMessage).order_by("id").to_list()
+        assert [row.data.transforms[0].ts for row in dedicated] == [0.0, 42.25]
+        assert dedicated[1].ts == 42.25
+        assert dedicated[0].ts > 42.25

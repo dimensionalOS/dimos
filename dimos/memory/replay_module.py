@@ -27,8 +27,6 @@ from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, Any
 
-from reactivex import interval
-
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -143,24 +141,14 @@ class ReplayModule(Module):
         streams: dict[str, ReplayStream[DimosMsg]] = {
             name: replay.stream(name) for name in self.outputs
         }
-        # A stream whose rows all carry one timestamp (camera_info recorded from a
-        # constant stamped at import, often long before the run) is republished at
-        # 1 Hz instead of replayed, and does not set the anchor: otherwise the replay
-        # would spend that lead time emitting nothing.
-        static = {n for n, s in streams.items() if s.count() > 1 and s.first_ts() == s.last_ts()}
-        timed_starts = [t for n, s in streams.items() if n not in static and (t := s.first_ts())]
+        starts = [ts for stream in streams.values() if (ts := stream.first_ts()) is not None]
+
         progress = ReplayProgress(str(path))
-        progress.start(replay, (s for n, s in streams.items() if n not in static))
-        replay.pin_anchor(min(timed_starts) if timed_starts else None)
-        port: Out[DimosMsg]
-        for name, port in self.outputs.items():
-            stream = streams[name]
+        progress.start(replay, streams.values())
+        replay.pin_anchor(min(starts) if starts else None)
+        for name, stream in streams.items():
+            port = self.outputs[name]
             logger.info("Replaying %s -> %s", name, port)
-            if name in static:
-                self.register_disposable(
-                    interval(1.0).subscribe(partial(_republish, port, stream.first()))
-                )
-                continue
             # Not a late subscriber, just behind by the setup of the streams
             # subscribed before it, which on a loaded machine exceeds the
             # late tolerance and would drop its first frames.
@@ -174,10 +162,6 @@ class ReplayModule(Module):
         if self._store is not None:
             self._store.stop()
             self._store = None
-
-
-def _republish(port: Out[Any], msg: Any, _tick: int) -> None:
-    port.publish(msg)
 
 
 def _port_names(topics: str, types: dict[str, type]) -> list[str]:

@@ -34,7 +34,7 @@ from dimos.core.stream import In
 from dimos.memory.store.null import NullStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
-from dimos.memory.type.recording import OnExisting
+from dimos.memory.type.recording import OnExisting, SourceStamps
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
@@ -344,18 +344,22 @@ class Recorder(MemoryModule):
         and registers the subscription for cleanup on stop().
         """
 
+        source_stamps = SourceStamps()
+
         async def on_msg(stamped: tuple[float, Any]) -> None:
             recv_ts, msg = stamped
-            ts = self._resolve_ts(name, msg)
-            pose = await self._resolve_pose(name, msg, ts)
-            if not pose and name not in self.config.poseless_streams:
-                logger.warning(
-                    "[%s] No pose for time %s (msg ts: %s), storing without pose",
-                    name,
-                    ts,
-                    getattr(msg, "ts", None),
-                )
-            stream.append(msg, ts=ts, pose=pose, tags={"reception_ts": recv_ts})
+            for payload, ts in source_stamps.rows(
+                name, msg, reception_ts=recv_ts, ts=self._resolve_ts(name, msg)
+            ):
+                pose = await self._resolve_pose(name, payload, ts)
+                if not pose and name not in self.config.poseless_streams:
+                    logger.warning(
+                        "[%s] No pose for time %s (msg ts: %s), storing without pose",
+                        name,
+                        ts,
+                        getattr(payload, "ts", None),
+                    )
+                stream.append(payload, ts=ts, pose=pose, tags={"reception_ts": recv_ts})
 
         # Stamp arrival time before the coalescing dispatch queue.
         stamped = input_topic.pure_observable().pipe(ops.map(lambda msg: (time.time(), msg)))
@@ -373,9 +377,9 @@ class Recorder(MemoryModule):
         for stream in targets.intersection(self.store.list_streams()):
             self.store.delete_stream(stream)
 
-    def _resolve_ts(self, name: str, msg: Any) -> float:
-        """Timestamp to record *msg* at. Override to re-base onto another clock."""
-        return getattr(msg, "ts", None) or time.time()
+    def _resolve_ts(self, name: str, msg: Any) -> float | None:
+        """Source time to record *msg* at, None for unstamped. Override to re-base onto another clock."""
+        return getattr(msg, "ts", None)
 
     async def _resolve_pose(self, name: str, msg: Any, ts: float) -> Pose | None:
         """Pose to anchor *msg* with.
@@ -412,11 +416,14 @@ class Recorder(MemoryModule):
             logger.warning("Recorder: tf port has no transport — not recording tf")
             return
         tf_stream = self.store.stream("tf", TFMessage)
+        source_stamps = SourceStamps()
 
         def on_tf(msg: TFMessage) -> None:
+            if not msg.transforms:
+                return
             try:
-                for transform in msg.transforms:
-                    tf_stream.append(TFMessage(transform), ts=transform.ts, pose=None)
+                for payload, ts in source_stamps.rows("tf", msg, reception_ts=time.time()):
+                    tf_stream.append(payload, ts=ts, pose=None)
             except sqlite3.ProgrammingError:
                 # A late LCM callback raced teardown and hit the closed store.
                 pass

@@ -19,7 +19,7 @@ from typing import Any
 from unittest import mock
 
 import pytest
-from reactivex import interval
+from pytest_mock import MockerFixture
 from reactivex.disposable import Disposable
 from reactivex.testing import TestScheduler
 
@@ -28,6 +28,8 @@ from dimos.memory.replay import ReplayStream
 from dimos.memory.replay_module import replay_module
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 @pytest.fixture
@@ -175,34 +177,102 @@ def test_subclass_payload_gets_the_base_port_type(tmp_path: Path) -> None:
     assert replay_module(str(path)).__annotations__ == {"odom": Out[PoseStamped]}
 
 
-def test_single_timestamp_stream_is_republished_and_not_the_anchor(tmp_path: Path) -> None:
-    """camera_info stamped at import sits 39 s before the run; the run must start at odom."""
+def _publications(module: Any) -> list[tuple[str, Any]]:
+    """Every message the module publishes, in order, with its port name."""
+    published: list[tuple[str, Any]] = []
+    for name, port in module.outputs.items():
+        port.subscribe(lambda msg, name=name: published.append((name, msg)))
+    return published
+
+
+def _replay_to_the_end(module: Any, mocker: MockerFixture, wait_until: Any) -> None:
+    log = mocker.patch("dimos.memory.replay_progress.logger")
+    try:
+        module.start()
+        wait_until(
+            lambda: any(c.args[:1] == ("Replay finished",) for c in log.info.mock_calls), timeout=5
+        )
+    finally:
+        module.stop()
+
+
+def _tf_recording(path: Path) -> None:
+    """A moving world -> base edge on tf, and base -> camera / lidar mounts on tf_static."""
+    with SqliteStore(path=str(path)) as store:
+        tf = store.stream("tf", TFMessage)
+        for ts in (1000.0, 1001.0):
+            tf.append(TFMessage(Transform(frame_id="world", child_frame_id="base", ts=ts)), ts=ts)
+        tf_static = store.stream("tf_static", TFMessage)
+        for child, ts in (("camera", 1000.25), ("lidar", 1000.5)):
+            transform = Transform(frame_id="base", child_frame_id=child, ts=ts)
+            tf_static.append(TFMessage(transform), ts=ts)
+
+
+def test_static_tf_replays_as_recorded(tmp_path: Path, wait_until: Any) -> None:
     path = tmp_path / "memory.db"
-    store = SqliteStore(path=str(path))
-    store.start()
-    info = store.stream("camera_info", PoseStamped)
-    for _ in range(3):
-        info.append(PoseStamped(ts=1.0), ts=1.0)
-    store.stream("odom", PoseStamped).append(PoseStamped(ts=40.0), ts=40.0)
-    store.stop()
-    module = replay_module(str(path))(dataset=str(path))
-    got: dict[str, int] = {"camera_info": 0, "odom": 0}
+    _tf_recording(path)
+    # Slow enough that the 0.25 s gaps between streams keep their order.
+    module = replay_module(str(path))(dataset=str(path), loop=True, speed=1.0)
+    published = _publications(module)
+    try:
+        module.start()
+        wait_until(lambda: len(published) >= 8, timeout=5)
+    finally:
+        module.stop()
+    edges = [(name, [t.child_frame_id for t in msg.transforms]) for name, msg in published]
+    one_pass = [
+        ("tf", ["base"]),
+        ("tf_static", ["camera"]),
+        ("tf_static", ["lidar"]),
+        ("tf", ["base"]),
+    ]
+    assert edges[:8] == one_pass * 2
 
-    def count(name: str) -> Any:
-        def on_next(_m: Any) -> None:
-            got[name] += 1
 
-        return on_next
+@pytest.mark.parametrize(
+    ("seek", "duration", "expected_odom", "expected_tf"),
+    [
+        (None, 1.0, [999.5, 1000.0], [1000.0]),
+        (0.5, None, [1000.0, 1001.0], [1000.0, 1001.0]),
+        (990.0, 1.0, [], []),
+    ],
+)
+def test_window_is_measured_from_the_first_timed_row(
+    tmp_path: Path,
+    mocker: MockerFixture,
+    wait_until: Any,
+    seek: float | None,
+    duration: float | None,
+    expected_odom: list[float],
+    expected_tf: list[float],
+) -> None:
+    # Odometry starts half a second before the moving tf.
+    path = tmp_path / "memory.db"
+    _tf_recording(path)
+    with SqliteStore(path=str(path)) as store:
+        for ts in (999.5, 1000.0, 1001.0):
+            store.stream("odom", PoseStamped).append(PoseStamped(ts=ts), ts=ts)
+    module = replay_module(str(path))(dataset=str(path), seek=seek, duration=duration, speed=20.0)
+    published = _publications(module)
+    _replay_to_the_end(module, mocker, wait_until)
+    assert [msg.ts for name, msg in published if name == "odom"] == expected_odom
+    tf = [t for name, msg in published if name == "tf" for t in msg.transforms]
+    assert [t.ts for t in tf] == expected_tf
 
-    for name in got:
-        module.outputs[name].subscribe(count(name))
-    module.start()
-    deadline = time.time() + 5
-    while time.time() < deadline and (got["camera_info"] < 2 or got["odom"] < 1):
-        time.sleep(0.05)
-    module.stop()
-    assert got["camera_info"] >= 2  # republished at 1 Hz
-    assert got["odom"] == 1  # arrived within the 5 s deadline, not 39 s later
+
+def test_seek_on_late_topic_uses_recording_origin(
+    tmp_path: Path, mocker: MockerFixture, wait_until: Any
+) -> None:
+    path = tmp_path / "memory.db"
+    _tf_recording(path)
+    with SqliteStore(path=str(path)) as store:
+        for ts in (1010.0, 1010.25):
+            store.stream("late", PoseStamped).append(PoseStamped(ts=ts), ts=ts)
+    cls = replay_module(str(path), topics="late")
+    module = cls(dataset=str(path), topics="late", seek=10.0, duration=0.5, speed=20.0)
+    published = _publications(module)
+    _replay_to_the_end(module, mocker, wait_until)
+    assert [msg.ts for _, msg in published] == [1010.0, 1010.25]
 
 
 def test_slow_first_decode_does_not_skip_other_streams(
@@ -273,14 +343,7 @@ def test_dataset_path_resolves_names_and_skips_the_default(recording: str) -> No
     assert dataset_path("no-such-dataset-for-this-test") == ""
 
 
-@pytest.mark.parametrize("static", [False, True])
-def test_replay_logs_source_and_finishes_after_all_timed_streams(recording, mocker, static):
-    # Static metadata must not extend the reported duration or prevent completion.
-    with SqliteStore(path=recording) as store:
-        if static:
-            info = store.stream("camera_info", PoseStamped)
-            for _ in range(2):
-                info.append(PoseStamped(ts=0.0), ts=0.0)
+def test_replay_logs_source_and_finishes_after_all_timed_streams(recording, mocker):
     scheduler = TestScheduler()
     mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
     log = mocker.patch("dimos.memory.replay_progress.logger")
@@ -301,31 +364,3 @@ def test_replay_logs_source_and_finishes_after_all_timed_streams(recording, mock
         assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=recording)]
     finally:
         module.stop()
-
-
-def test_replay_with_only_static_metadata_reports_completion(recording, mocker):
-    with SqliteStore(path=recording) as store:
-        for _ in range(2):
-            store.stream("camera_info", PoseStamped).append(PoseStamped(ts=0.0), ts=0.0)
-    scheduler = TestScheduler()
-    mocker.patch(
-        "dimos.memory.replay_module.interval",
-        side_effect=lambda period: interval(period, scheduler=scheduler),
-    )
-    log = mocker.patch("dimos.memory.replay_progress.logger")
-    module = replay_module(recording, topics="camera_info")(dataset=recording, topics="camera_info")
-    received = []
-    with Disposable(module.outputs["camera_info"].subscribe(received.append)), module:
-        scheduler.advance_by(2)
-    assert [message.ts for message in received] == [0.0, 0.0]
-    assert log.info.call_args_list == [
-        mocker.call(
-            "Replay started",
-            source=recording,
-            path=recording,
-            duration_s=0.0,
-            speed=1.0,
-            loop=False,
-        ),
-        mocker.call("Replay finished", source=recording),
-    ]

@@ -90,7 +90,7 @@ class G1CollectionRecorder(Recorder):
     left_cartesian_command: In[PoseStamped]
     right_cartesian_command: In[PoseStamped]
 
-    def _resolve_ts(self, name: str, msg: Any) -> float:
+    def _resolve_ts(self, name: str, msg: Any) -> float | None:
         if name == "status":
             return EpisodeStatus.from_json(msg.data).ts
         return super()._resolve_ts(name, msg)

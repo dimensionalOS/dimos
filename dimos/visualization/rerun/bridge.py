@@ -448,8 +448,8 @@ class RerunBridgeModule(Module):
 
         entity_path: str = self._get_entity_path(topic)
 
-        # Throttle entities with a max_hz limit
-        if entity_path in self._min_intervals:
+        # Throttle entities with a max_hz limit; tf is small and one edge per row, so never.
+        if entity_path in self._min_intervals and not isinstance(msg, TFMessage):
             now = time.monotonic()
             if now - self._last_log.get(entity_path, 0.0) < self._min_intervals[entity_path]:
                 return

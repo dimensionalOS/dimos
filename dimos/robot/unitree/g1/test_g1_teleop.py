@@ -210,12 +210,9 @@ def g1_json_recorder(tmp_path):
         recorder.stop()
 
 
-def test_g1_records_episode_source_time_without_parsing_other_string_streams(
-    g1_json_recorder, mocker
-):
-    mocker.patch("dimos.memory.module.time.time", return_value=99.0)
+def test_g1_records_episode_source_time_without_parsing_other_string_streams(g1_json_recorder):
     event = EpisodeStatus(
         ts=12.5, state="idle", episodes_saved=1, episodes_discarded=0, last_event="save"
     )
     assert g1_json_recorder._resolve_ts("status", String(event.to_json())) == 12.5
-    assert g1_json_recorder._resolve_ts("another_status", String(event.to_json())) == 99.0
+    assert g1_json_recorder._resolve_ts("another_status", String(event.to_json())) is None

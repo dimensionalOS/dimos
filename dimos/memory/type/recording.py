@@ -12,9 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Policy for recording to an existing artifact."""
+"""Shared recorder policies for source timestamps and existing artifacts."""
 
+from collections.abc import Iterator
 import enum
+from typing import Any
+
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class OnExisting(str, enum.Enum):
@@ -22,3 +29,38 @@ class OnExisting(str, enum.Enum):
     ERROR = "error"
     BACKUP = "backup"
     APPEND = "append"
+
+
+class SourceStamps:
+    """Index recorded rows on their source stamps, one row per TF transform.
+
+    A message's source time is its ``ts``. A missing or zero ``ts`` means the
+    publisher never set it: that row is indexed at arrival, and the topic is
+    reported once.
+    """
+
+    def __init__(self) -> None:
+        self._unstamped_topics: set[str] = set()
+
+    def rows(
+        self, topic: str, msg: Any, *, reception_ts: float, ts: float | None = None
+    ) -> Iterator[tuple[Any, float]]:
+        """Yield ``(payload, ts)``: one per TF transform, otherwise *msg* at *ts* (its ``ts`` by default)."""
+        if isinstance(msg, TFMessage) and msg.transforms:
+            for transform in msg.transforms:
+                yield TFMessage(transform), self._stamp(topic, transform.ts, reception_ts)
+        else:
+            source_ts = getattr(msg, "ts", None) if ts is None else ts
+            yield msg, self._stamp(topic, source_ts, reception_ts)
+
+    def _stamp(self, topic: str, ts: float | None, reception_ts: float) -> float:
+        if ts:
+            return ts
+        if topic not in self._unstamped_topics:
+            self._unstamped_topics.add(topic)
+            logger.warning(
+                "[%s] publisher does not stamp its messages (no source ts); "
+                "indexing them at arrival time",
+                topic,
+            )
+        return reception_ts

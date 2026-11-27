@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -26,7 +26,7 @@ use dimos_module::{worker_pool, Builder, Input, Module};
 use rayon::ThreadPool;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::encoding::StoredObservation;
 use crate::store::{Observation, RecordingStore};
@@ -92,6 +92,7 @@ pub struct RecorderConfig {
 
 #[derive(Clone)]
 pub struct RecorderHandle {
+    unstamped: UnstampedTopics,
     submission: Arc<Mutex<Option<Submission>>>,
     permits: Sender<()>,
     sequence: Arc<AtomicU64>,
@@ -127,11 +128,13 @@ impl RecorderHandle {
         }
         let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
         let reception_ts = wall_time();
+        let unstamped = self.unstamped.clone();
         pool.spawn_fifo(move || {
-            let observations =
-                catch_unwind(AssertUnwindSafe(|| process(&stream, &data, reception_ts)))
-                    .map_err(|_| "encoding task panicked".to_string())
-                    .and_then(|result| result.map_err(|error| format!("{error:#}")));
+            let observations = catch_unwind(AssertUnwindSafe(|| {
+                process(&stream, &data, reception_ts, &unstamped)
+            }))
+            .map_err(|_| "encoding task panicked".to_string())
+            .and_then(|result| result.map_err(|error| format!("{error:#}")));
             let _ = sender.send(EncodedBatch {
                 sequence,
                 stream,
@@ -170,6 +173,7 @@ impl RecorderEngine {
             pending: WaitGroup::new(),
         })));
         let handle = RecorderHandle {
+            unstamped: UnstampedTopics::default(),
             submission,
             permits: permit_tx,
             sequence: Arc::new(AtomicU64::new(0)),
@@ -241,14 +245,41 @@ pub struct WriterStats {
     pub encode_errors: u64,
 }
 
+/// Streams whose publisher left a source stamp at zero, so each is reported once.
+#[derive(Clone, Default)]
+struct UnstampedTopics(Arc<Mutex<HashSet<String>>>);
+
+impl UnstampedTopics {
+    /// True the first time *name* is seen.
+    fn first_report(&self, name: &str) -> bool {
+        self.0
+            .lock()
+            .expect("unstamped topics lock poisoned")
+            .insert(name.to_string())
+    }
+}
+
+/// Index each observation on its source stamp; a zero stamp was never set, so use arrival.
 fn process(
     stream: &StreamConfig,
     data: &[u8],
     reception_ts: f64,
+    unstamped: &UnstampedTopics,
 ) -> Result<Vec<StoredObservation>> {
     decoding::decode(stream, data, reception_ts)?
         .into_iter()
-        .map(|observation| encoding::encode(stream, observation))
+        .map(|mut observation| {
+            if observation.ts == 0.0 {
+                observation.ts = reception_ts;
+                if unstamped.first_report(&stream.name) {
+                    warn!(
+                        stream = %stream.name,
+                        "publisher does not stamp its messages (source stamp 0); indexing them at arrival time"
+                    );
+                }
+            }
+            encoding::encode(stream, observation)
+        })
         .collect()
 }
 
@@ -518,7 +549,8 @@ mod tests {
         };
 
         let stream = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Jpeg);
-        let observations = process(&stream, &image.encode(), 100.0).unwrap();
+        let observations =
+            process(&stream, &image.encode(), 100.0, &UnstampedTopics::default()).unwrap();
         let decoded = Image::decode(&observations[0].data).unwrap();
 
         assert_eq!(observations[0].ts, 12.000_000_034);
@@ -531,7 +563,7 @@ mod tests {
     #[test]
     fn tf_batches_become_individually_timestamped_observations() {
         let mut first = lcm_msgs::geometry_msgs::TransformStamped::default();
-        first.header.stamp = Time { sec: 10, nsec: 5 };
+        first.header.stamp = Time { sec: 0, nsec: 0 };
         first.child_frame_id = "first".to_string();
         let mut second = lcm_msgs::geometry_msgs::TransformStamped::default();
         second.header.stamp = Time { sec: 20, nsec: 7 };
@@ -542,19 +574,19 @@ mod tests {
         let stream = stream("tf", Codec::Lcm, true);
         let data = message.encode();
 
-        let observations = process(&stream, &data, 100.0).unwrap();
+        let observations = process(&stream, &data, 100.0, &UnstampedTopics::default()).unwrap();
 
         assert_eq!(observations.len(), 2);
-        assert_eq!(observations[0].ts, 10.000_000_005);
+        assert_eq!(observations[0].ts, 100.0);
         assert_eq!(observations[1].ts, 20.000_000_007);
         let decoded: Vec<TFMessage> = observations
             .iter()
             .map(|observation| TFMessage::decode(&observation.data).unwrap())
             .collect();
         assert_eq!(decoded[0].transforms.len(), 1);
-        assert_eq!(decoded[0].transforms[0].child_frame_id, "first");
+        assert_eq!(decoded[0].transforms[0], message.transforms[0]);
         assert_eq!(decoded[1].transforms.len(), 1);
-        assert_eq!(decoded[1].transforms[0].child_frame_id, "second");
+        assert_eq!(decoded[1].transforms[0], message.transforms[1]);
     }
 
     #[test]
@@ -590,11 +622,27 @@ mod tests {
         };
         let stream = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Lcm);
 
-        let observations = process(&stream, &image.encode(), 100.0).unwrap();
+        let observations =
+            process(&stream, &image.encode(), 100.0, &UnstampedTopics::default()).unwrap();
 
         assert_eq!(observations.len(), 1);
         assert_eq!(observations[0].ts, 42.000_000_025);
         assert_eq!(Image::decode(&observations[0].data).unwrap(), image);
+    }
+
+    #[test]
+    fn zero_stamps_index_at_arrival_and_report_each_stream_once() {
+        let unset = Imu::default();
+        let unstamped = UnstampedTopics::default();
+        for name in ["imu", "imu", "other_imu"] {
+            let stream = typed_stream(name, "dimos.msgs.sensor_msgs.Imu.Imu", Codec::Lcm);
+            let observations = process(&stream, &unset.encode(), 100.0, &unstamped).unwrap();
+            assert_eq!(observations[0].ts, 100.0);
+            assert_eq!(observations[0].data, unset.encode());
+        }
+        let mut reported: Vec<_> = unstamped.0.lock().unwrap().iter().cloned().collect();
+        reported.sort();
+        assert_eq!(reported, ["imu", "other_imu"]);
     }
 
     #[test]
@@ -779,6 +827,83 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_indexes_known_stamped_payloads_by_source_time() {
+        use lcm_msgs::geometry_msgs::{PoseArray, PoseStamped};
+        use lcm_msgs::sensor_msgs::BatteryState;
+
+        let file = NamedTempFile::new().unwrap();
+        let header = Header {
+            stamp: Time {
+                sec: 0,
+                nsec: 250_000_000,
+            },
+            ..Default::default()
+        };
+        let cases = [
+            (
+                "poses",
+                "dimos.msgs.geometry_msgs.PoseArray.PoseArray",
+                PoseArray {
+                    header: header.clone(),
+                    ..Default::default()
+                }
+                .encode(),
+            ),
+            (
+                "power",
+                "dimos.msgs.sensor_msgs.BatteryState.BatteryState",
+                BatteryState {
+                    header: header.clone(),
+                    ..Default::default()
+                }
+                .encode(),
+            ),
+            (
+                "odom",
+                "dimos.robot.unitree.type.odometry.Odometry",
+                PoseStamped {
+                    header: header.clone(),
+                    ..Default::default()
+                }
+                .encode(),
+            ),
+            (
+                "header",
+                "dimos.msgs.std_msgs.Header.Header",
+                header.encode(),
+            ),
+        ];
+        let config = RecorderConfig {
+            store: store::RecordingStoreConfig::Sqlite {
+                path: file.path().to_string_lossy().into_owned(),
+            },
+            encoding_threads: 1,
+            streams: cases
+                .iter()
+                .map(|(name, ty, _)| (*typed_stream(name, ty, Codec::Lcm)).clone())
+                .collect(),
+        };
+        let engine = RecorderEngine::start(config).unwrap();
+        for (name, ty, data) in &cases {
+            engine
+                .handle()
+                .record(typed_stream(name, ty, Codec::Lcm), data);
+        }
+        let stats = engine.shutdown().unwrap();
+        assert_eq!(stats.written, cases.len() as u64);
+        let db = Connection::open(file.path()).unwrap();
+        for (name, _, sent) in cases {
+            let query = format!("SELECT ts, json_extract(tags, '$.reception_ts'), data FROM {name} JOIN {name}_blob USING(id)");
+            let (source, received, stored): (f64, f64, Vec<u8>) = db
+                .query_row(&query, [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap();
+            assert_eq!(source, 0.25, "{name}");
+            assert!(received > source);
+            assert_eq!(stored, sent);
+        }
+    }
+
+    #[test]
     fn encoding_failure_fails_the_recording_with_stream_and_sequence() {
         let file = NamedTempFile::new().unwrap();
         let image = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Jpeg);
@@ -825,7 +950,13 @@ mod tests {
             timestamp_field: Some("sent".into()),
             json_schema: Some(schema.clone()),
         });
-        let mut encoded = process(&stream, &message.encode(), 13.0).unwrap();
+        let mut encoded = process(
+            &stream,
+            &message.encode(),
+            13.0,
+            &UnstampedTopics::default(),
+        )
+        .unwrap();
         let stored = encoded.pop().unwrap();
         assert_eq!(stored.data, text.as_bytes());
         let observations = [Observation {

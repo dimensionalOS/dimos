@@ -32,6 +32,11 @@ class GraspCandidateArray:
         self.header = header if header is not None else Header(0.0)
         self.candidates = candidates if candidates is not None else []
 
+    @property
+    def ts(self) -> float:
+        """The input cloud's header stamp, under the name recorders read."""
+        return self.header.ts  # type: ignore[no-any-return]
+
     def __len__(self) -> int:
         return len(self.candidates)
 
