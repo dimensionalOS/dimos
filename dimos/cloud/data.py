@@ -51,7 +51,11 @@ from dimos.memory.cli.dataset import open_store
 Progress = Callable[[str, int, int], None]  # (phase, done_bytes, total_bytes)
 
 # an upload opens one connection per this much data, since each new one starts slow
-BYTES_PER_CONNECTION = 64 << 20
+BYTES_PER_CONNECTION = 32 << 20
+# small files don't need multiple connections because that just adds overhead
+SINGLE_PART_MAX = 64 << 20
+# large files reuse many connections and use smaller parts
+DEFAULT_PART_SIZE = 8 << 20
 
 
 class _AlreadyCompleteError(Exception):
@@ -182,6 +186,8 @@ class MultipartBackend:
             else:
                 artifact = path
             size = artifact.stat().st_size
+            if part_size is None:
+                part_size = size if size <= SINGLE_PART_MAX else DEFAULT_PART_SIZE
             spec = dict(
                 filename=artifact.name,
                 size=size,

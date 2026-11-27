@@ -28,7 +28,7 @@ import urllib.request
 import requests
 
 # split each chunk into blocks of this size
-PUT_BLOCK = 64 << 10
+PUT_BLOCK = 1 << 20
 
 
 class CloudRequest(Protocol):
