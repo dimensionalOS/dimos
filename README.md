@@ -212,7 +212,7 @@ dimos run unitree-go2
 | `dimos --replay run drone-basic` | Drone video + telemetry replay (requires `dimos[drone]` extra) |
 | `dimos --replay run drone-agentic` | Drone + LLM agent with flight skills (replay, requires `dimos[drone]` extra) |
 | `dimos run demo-camera` | Webcam demo — no hardware needed |
-| `dimos run keyboard-teleop-xarm7` | Keyboard teleop with mock xArm7 (requires `dimos[manipulation]` extra) |
+| `dimos run keyboard-teleop-xarm7 --choice arm=mock` | Keyboard teleop with mock xArm7 (requires `dimos[manipulation]` extra) |
 | `dimos --simulation run unitree-go2-agentic-ollama` | Quadruped agentic with local LLM (requires [Ollama](https://ollama.com) + `ollama serve`) |
 
 Drone replay needs the `drone` extra even without hardware. If it is missing, run `uv pip install 'dimos[drone]'` in your active environment.
