@@ -52,8 +52,8 @@ def usd_to_urdf(usd: str, *, root: Path | str | None = None) -> str:
     links = _usd_links_of(pxr, frames)
     world = _world_body(stage)
     joint_prims = _joint_prims(pxr, stage)
-    # Every name the layer already uses: a link or joint this converter adds must not take one.
-    taken = set(links) | set(joint_prims)
+    # Every name the layer already uses, static frames included: a link or joint this converter adds must not take one.
+    taken = set(frames) | set(joint_prims)
     joints = [
         joint for prim in joint_prims.values() for joint in _joints_of(pxr, prim, taken, world)
     ]

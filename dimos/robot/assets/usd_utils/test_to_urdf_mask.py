@@ -660,16 +660,32 @@ def test_a_moving_joint_anchored_off_the_child_origin_turns_about_the_anchor() -
         )
 
 
-def test_an_added_anchor_does_not_take_the_name_of_a_real_link() -> None:
+def _anchor_name_taken_by_the_child() -> tuple[str, str]:
     usda = _anchored_usda("PhysicsRevoluteJoint").replace('"arm"', '"elbow_anchor"')
-    usda = usda.replace("</rig/arm>", "</rig/elbow_anchor>")
+    return usda.replace("</rig/arm>", "</rig/elbow_anchor>"), "elbow_anchor"
+
+
+def _anchor_name_taken_by_a_static_parent() -> tuple[str, str]:
+    # The parent has no RigidBodyAPI: it is a frame only because the joint names it.
+    usda = _anchored_usda("PhysicsRevoluteJoint").replace(
+        'def Xform "base" (\n        prepend apiSchemas = ["PhysicsRigidBodyAPI"]\n    )',
+        'def Xform "elbow_anchor"',
+    )
+    return usda.replace("</rig/base>", "</rig/elbow_anchor>"), "arm"
+
+
+@pytest.mark.parametrize(
+    "layer", [_anchor_name_taken_by_the_child, _anchor_name_taken_by_a_static_parent]
+)
+def test_an_added_anchor_does_not_take_the_name_of_a_real_frame(layer: Any) -> None:
+    usda, child = layer()
     urdf = usd_to_urdf(usda)
 
     links = [link.get("name") for link in ET.fromstring(urdf).iter("link")]
     assert len(links) == len(set(links)) == 3
     for angle in (0.0, 0.7):
         np.testing.assert_allclose(
-            _link_pose(urdf, "elbow_anchor", {"elbow": angle}),
+            _link_pose(urdf, child, {"elbow": angle}),
             _expected_anchored_pose(angle),
             atol=1e-6,
         )
