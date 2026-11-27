@@ -120,7 +120,11 @@ class G1Replay(Module):
                 stream.count(),
                 self.config.speed,
             )
-            self.register_disposable(progress.track(stream.observable()).subscribe(port.publish))
+            # Not a late subscriber, just behind the anchor pinned above by this
+            # setup, which on a loaded machine exceeds the late tolerance and
+            # would drop its first frames, or all of a short recording.
+            timed = stream.observable(skip_late=False)
+            self.register_disposable(progress.track(timed).subscribe(port.publish))
         progress.seal()
 
     @rpc
