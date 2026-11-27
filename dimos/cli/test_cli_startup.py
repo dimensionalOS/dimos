@@ -178,7 +178,7 @@ def test_go2_blueprint_import_does_not_pull_heavy_deps() -> None:
     [
         ("N_WORKERS=[bad", "--help", 0, "Usage"),
         ("N_WORKERS=[bad", "mcp status --help", 0, "Usage"),
-        ("N_WORKERS=[bad", "bake --help", 0, "--emit-config"),
+        ("N_WORKERS=[bad", "bake --help", 0, "Arguments"),
         ("N_WORKERS=[bad", "top -- --help", 0, "dtop"),
         ("N_WORKERS=[bad", "--n-workers 3 show-config", 0, "n_workers: 3"),
         ("N_WORKERS=[bad", "evals list", 2, "n_workers"),
