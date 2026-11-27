@@ -82,8 +82,8 @@ When `stop()` is called, the process receives SIGTERM. If it doesn't exit within
 
 | Field              | Type             | Default       | Description                                                 |
 |--------------------|------------------|---------------|-------------------------------------------------------------|
-| `source_dir` | `str \| None` | `None` | Build directory relative to the shared project checkout; required for source builds |
-| `executable` | `str` | *(required)* | Source mode: relative to `source_dir`, inside the checkout. External mode: supplied binary path |
+| `source_dir` | `str \| None` | `None` | Build directory relative to the root of the project that declares it; required for source builds |
+| `executable` | `str` | *(required)* | Source mode: relative to `source_dir`, inside the project. External mode: supplied binary path |
 | `build_command`    | `str \| None`    | `None`        | Shell command to run if executable is missing (auto-build)  |
 | `extra_args`       | `list[str]`      | `[]`          | Additional CLI arguments appended after auto-generated ones |
 | `extra_env`        | `dict[str, str]` | `{}`          | Extra environment variables for the subprocess              |
@@ -287,11 +287,16 @@ then reuse the existing checkout without automatically updating it. This checkou
 can differ from the installed Python version. Git and network access are needed
 on first use; the clone skips LFS assets.
 
-Source builds declare `source_dir` relative to the shared checkout and an
+Source builds declare `source_dir` relative to the project root and an
 `executable` relative to that directory. Configuration rejects absolute source
 paths, absolute build executables, and artifact paths that
-escape the checkout. Cargo workspace outputs can use `../` within the checkout.
-These paths do not depend on the Python file or a subclass's location.
+escape the project. Cargo workspace outputs can use `../` within the project.
+
+The project root comes from the config class that declares `source_dir`, through
+`get_project_root(file)`. For a class in the `dimos` package it is the shared
+checkout. For a class in another package it is that package's own project, see
+[Modules in your own repo](#modules-in-your-own-repo). A subclass that does not
+redeclare `source_dir` keeps its parent's root, wherever the subclass lives.
 
 For an externally provisioned binary, set `source_dir=None`,
 `build_command=None`, and `executable="/path/to/binary"`. The process runs from
@@ -332,6 +337,31 @@ The resolved `source_dir` is used for both the build command and the runtime sub
 If the executable exists, preparation skips compilation unless `auto_build=True`
 or `--build-native` requests a rebuild. `auto_build=False` does not disable
 building a missing executable. Calling `build()` again checks these rules again.
+
+### Modules in your own repo
+
+A native module outside the dimOS repo declares its source build the same way,
+on its own config class. Its `source_dir` is relative to the root of its own
+project: the nearest directory above the config class's file that has a
+`pyproject.toml`. dimOS builds and runs the module there and does not fetch the
+shared checkout for it.
+
+```python skip
+# my_robot/driver.py, in a repo with pyproject.toml and crates/my_driver at its root
+class MyDriverConfig(NativeModuleConfig):
+    source_dir: str | None = "crates/my_driver"
+    executable: str = "target/release/my_driver"
+    build_command: str | None = "cargo build --release"
+```
+
+The sources must be on disk next to the package, as in an editable install.
+Without a `pyproject.toml` above the file, preparing the module fails.
+
+An existing executable is not rebuilt when its sources change. Set
+`auto_build=True` to run the build command on every start, which for an
+up-to-date Cargo build takes about a second. The build toolchain must then exist
+wherever the module runs, so leave `auto_build` off on a robot that receives a
+copied binary.
 
 ### Faster builds via the Cachix substituter
 

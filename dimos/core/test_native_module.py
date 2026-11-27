@@ -20,9 +20,11 @@ The echo script writes received CLI args to a temp file for assertions.
 
 import contextlib
 import importlib
+import importlib.util
 from io import BytesIO
 import json
 from pathlib import Path
+import sys
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -41,6 +43,7 @@ from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import make_transport, rpc_backend, transport_topic
+from dimos.experimental.memory import rust_recorder as rust_recorder_mod
 from dimos.experimental.memory.rust_recorder import RustRecorderConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -674,6 +677,7 @@ def test_builtin_build_outputs_use_shared_checkout(
     "kwargs",
     [
         {"build_command": "cargo build"},
+        {"source_dir": ""},
         {"source_dir": "/installed/package/rust"},
         {"source_dir": "../outside"},
         {"source_dir": "rust", "executable": "/installed/target/native"},
@@ -684,6 +688,63 @@ def test_builtin_build_outputs_use_shared_checkout(
 def test_source_build_rejects_nonportable_paths(kwargs):
     with pytest.raises(ValueError):
         NativeModuleConfig(**{"executable": "result/bin/native", **kwargs})
+
+
+_OUT_OF_TREE_PACKAGE = """
+from dimos.core.native_module import NativeModule, NativeModuleConfig
+from dimos.experimental.memory.rust_recorder import RustRecorderConfig
+
+
+class DriverConfig(NativeModuleConfig):
+    source_dir: str | None = "crates/driver"
+    executable: str = "bin/driver"
+    build_command: str | None = "mkdir bin && touch bin/driver"
+
+
+class Driver(NativeModule):
+    config: DriverConfig
+
+
+class RobotRecorderConfig(RustRecorderConfig):
+    pass
+"""
+
+
+@pytest.fixture
+def out_of_tree(tmp_path, monkeypatch):
+    """A package in its own project, outside the dimos checkout."""
+    project = tmp_path / "robot_project"
+    (project / "robot" / "nested").mkdir(parents=True)
+    (project / "crates" / "driver").mkdir(parents=True)
+    (project / "pyproject.toml").touch()
+    source = project / "robot" / "nested" / "driver.py"
+    source.write_text(_OUT_OF_TREE_PACKAGE)
+    spec = importlib.util.spec_from_file_location("out_of_tree_robot_driver", source)
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    return project, module
+
+
+def test_out_of_tree_source_dir_builds_in_its_own_project(out_of_tree):
+    project, package = out_of_tree
+    module = package.Driver()
+    try:
+        assert module._executable == ""
+        module.build()
+        assert module._cwd == str(project / "crates/driver")
+        assert module._executable == str(project / "crates/driver/bin/driver")
+        assert (project / "crates/driver/bin/driver").exists()
+    finally:
+        module.stop()
+
+
+def test_out_of_tree_subclass_inherits_the_checkout_source_dir(out_of_tree, tmp_path, mocker):
+    _, package = out_of_tree
+    root = mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
+    cwd, _ = package.RobotRecorderConfig().resolve_paths()
+    assert cwd == str(tmp_path / "dimos/experimental/memory/rust")
+    root.assert_called_once_with(Path(rust_recorder_mod.__file__))
 
 
 def test_external_binary_does_not_fetch_checkout(mocker):
@@ -737,7 +798,7 @@ def test_source_preparation_is_lazy_and_reused(tmp_path, mocker):
         module.build()
         module._prepare_native()
         build.assert_called_once_with()
-        root.assert_called_once_with()
+        root.assert_called_once()
         assert module._cwd == str(tmp_path / "rust")
         assert module._executable == str(tmp_path / "rust/bin/native")
         module.build()

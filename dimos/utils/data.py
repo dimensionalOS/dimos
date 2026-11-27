@@ -59,7 +59,17 @@ def _get_user_data_dir() -> Path:
 
 
 @cache
-def get_project_root() -> Path:
+def get_project_root(file: Path | None = None) -> Path:
+    """Project root for a file. Defaults to the dimos root if no file specified."""
+    if file is not None:
+        file = file.resolve()
+        if file.is_relative_to((DIMOS_PROJECT_ROOT / "dimos").resolve()):
+            return get_project_root()
+        for parent in file.parents:
+            if (parent / "pyproject.toml").is_file():
+                return parent
+        raise FileNotFoundError(f"No pyproject.toml above {file} marks its project root")
+
     # Check if running from git repo
     if (DIMOS_PROJECT_ROOT / ".git").exists():
         return DIMOS_PROJECT_ROOT

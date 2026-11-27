@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import enum
 import functools
+import inspect
 import json
 import os
 from pathlib import Path
@@ -172,11 +173,11 @@ class NativeModuleConfig(ModuleConfig):
     @model_validator(mode="after")
     def _validate_source_paths(self) -> NativeModuleConfig:
         if self.build_command and self.source_dir is None:
-            raise ValueError("Source builds require source_dir relative to the project checkout")
+            raise ValueError("Source builds require source_dir relative to the project root")
         if self.source_dir is not None:
             source = Path(self.source_dir)
             if not self.source_dir or source.is_absolute() or ".." in source.parts:
-                raise ValueError("source_dir must stay relative to the project checkout")
+                raise ValueError("source_dir must stay relative to the project root")
             if not self.executable or Path(self.executable).is_absolute():
                 raise ValueError(
                     "Source builds require a relative executable; "
@@ -184,14 +185,22 @@ class NativeModuleConfig(ModuleConfig):
                 )
             artifact = os.path.normpath(source / self.executable)
             if artifact == ".." or artifact.startswith("../"):
-                raise ValueError("executable must stay within the project checkout")
+                raise ValueError("executable must stay within the project root")
         return self
+
+    def _config_class_file(self) -> Path:
+        """The file that sets source_dir: this config's class, or the parent it inherits it from."""
+        owner = next(
+            cls
+            for cls in type(self).__mro__
+            if "source_dir" in vars(cls).get("__annotations__", {})
+        )
+        return Path(inspect.getfile(owner))
 
     def resolve_paths(self) -> tuple[str | None, str]:
         """Resolve source builds once; external binary paths do not fetch sources."""
         if self.source_dir is not None:
-            root = get_project_root()
-            build_cwd = root / self.source_dir
+            build_cwd = get_project_root(self._config_class_file()) / self.source_dir
             return str(build_cwd), str(Path(os.path.normpath(build_cwd / self.executable)))
         executable = Path(self.executable).absolute()
         return str(executable.parent), str(executable)
