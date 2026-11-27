@@ -33,7 +33,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 
 Values resolve in this order: schema defaults → blueprint values → JSON config → `.env` → environment → CLI flags. Global environment variables use uppercase field names, such as `ROBOT_IPS` (transport also accepts `DIMOS_TRANSPORT`).
 
-Module settings go after the blueprint names, for example `dimos run unitree-go2 --go2connection.replay-exit true`. Use `dimos run <blueprint> --help` for that stack's options. See [Configuration](/docs/usage/configuration.md#migrating-former-global-settings) for the migration from global flags.
+Module settings go after the blueprint names, for example `dimos --replay run unitree-go2 --go2connection.replay-exit true`. Use `dimos run <blueprint> --help` for that stack's options. See [Configuration](/docs/usage/configuration.md#migrating-former-global-settings) for the migration from global flags.
 
 Module booleans require an explicit value (`--go2connection.replay-exit true` or `--go2connection.replay-exit=true`); they have no bare-flag or `--no-` form. Global booleans still accept paired flags such as `--replay` / `--no-replay`.
 
@@ -109,8 +109,8 @@ dimos --transport=zenoh --dtop --replay --replay-db=go2_bigoffice run unitree-go
 # Real robot
 dimos run unitree-go2-agentic --robot-ip 192.168.123.161
 
-# Blueprint configuration (both value forms are accepted)
-dimos --replay run unitree-go2 --map-file recording_go2
+# Set the map voxel size and exit at the end of replay (both value forms are accepted)
+dimos --replay run unitree-go2 --pgovoxelmapper.voxel-size 0.1 --go2connection.replay-exit=true
 
 # Compose modules dynamically
 dimos --replay run unitree-go2 keyboard-teleop
@@ -491,7 +491,7 @@ agentspy
 Live resource monitor TUI: CPU, memory, and process stats. The cockpit shows the same data on its Stats tab (`Stats()` in `cockpit(pages=[...])`), which switches the monitor on by itself. For the TUI, start the run with `--dtop` so that it publishes the stats:
 
 ```bash
-dimos --dtop run unitree-go2
+dimos --dtop --replay run unitree-go2
 ```
 
 Then open the monitor in another terminal (`dimos top` is the same command, `q` quits):
