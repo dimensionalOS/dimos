@@ -81,7 +81,7 @@ LOG_SIZE = 50
 NOT_AT_REST = (
     "The arm is not at rest: support it before stopping the run, which turns its motors off."
 )
-PARKED = "Parked at rest; you can stop the run."
+PARKED = "Parked at init; you can stop the run."
 RunState = Literal["idle", "running", "waiting", "done", "failed", "aborted"]
 StepState = Literal["pending", "running", "done", "skipped", "failed", "aborted"]
 
@@ -469,7 +469,7 @@ class Calibration:
         self.friction: dict[str, float] = {}
         self.proposed: dict[str, dict[str, float]] = {}
         self.at_home = self.at_rest = False
-        self.start = np.zeros(self.arm.dof)
+        self.init = np.zeros(self.arm.dof)
 
     def feed(self, msg: JointState) -> None:
         """Take one ``joint_state``: keep it, and send the running motion's next target."""
@@ -655,7 +655,7 @@ class Calibration:
                 reason = f"{reason}: {motion.detail}"
             logger.warning(reason)
             raise UnsettledError(reason, motion.detail)
-        self.at_home, self.at_rest = what == "home", what == "rest"
+        self.at_home, self.at_rest = what == "home", what == "init"
         return motion
 
     def home(
@@ -669,11 +669,11 @@ class Calibration:
         self.move(self.arm.home, "home", patch=patch)
 
     def park(self) -> None:
-        """Go home unless there, then to rest: where the arm sat when the run began, with its
-        motors off."""
+        """Go home unless there, then to init: where the arm sat, its motors off, when the run
+        began."""
         if not self.at_home:
             self.home()
-        self.move(self.start, "rest")
+        self.move(self.init, "init")
 
     def _step(self, name: str, reason: str | None) -> str:
         """Step ``name``'s result, run unless ``reason`` says why not; its row follows it."""

@@ -55,7 +55,7 @@ from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
 
 TRUE_LINKS = {"fore": LinkInertial(mass_kg=0.7, com_m=(0.13, 0.0, 0.02))}
 WAIT_S = 10.0
-PARKED = "Parked at rest; you can stop the run."
+PARKED = "Parked at init; you can stop the run."
 
 
 @pytest.fixture(scope="module")
@@ -130,7 +130,7 @@ def test_a_full_run_saves_the_fit_and_the_gains_and_parks_at_rest(bent: ArmModel
     assert all(row["passed"] for row in fake.file["checks"]["float"]["joints"].values())
     assert "2 poses compared" in text
     assert fake.live == {} and fake.floating == {}
-    np.testing.assert_allclose(fake.q, run.start, atol=1e-3)
+    np.testing.assert_allclose(fake.q, run.init, atol=1e-3)
 
 
 def test_every_move_is_confirmed_and_a_skipped_step_moves_nothing(arm: ArmModel) -> None:
@@ -141,7 +141,7 @@ def test_every_move_is_confirmed_and_a_skipped_step_moves_nothing(arm: ArmModel)
     assert operator.done is not None and operator.done[0], operator.done
     assert "gravity_poses: skipped by the operator" in operator.done[1]
     [parking] = [p for p in operator.asked if "Move to" in p]
-    assert parking.startswith("Move to rest [")
+    assert parking.startswith("Move to init [")
     moving = FakeOperator()
     calibration(arm, moving, FakeArm(arm), steps=["confirm_tracking"]).run()
     assert sum("Move to" in prompt for prompt in moving.asked) == 2 + 1 + 1
@@ -179,16 +179,16 @@ def test_abort_stops_streaming_so_the_deadman_holds_then_home_is_offered(bent: A
     assert held and held[0] - t_abort <= fake.deadman_s + 2 * fake.period_s
     resumed = [t for t in fake.commands if t > t_abort]
     assert resumed[0] > held[0]
-    np.testing.assert_allclose(fake.q, np.zeros(3), atol=1e-3)
+    np.testing.assert_allclose(fake.q, bent.home, atol=1e-3)
 
 
-def test_parking_returns_to_where_the_run_began(bent: ArmModel) -> None:
+def test_parking_returns_to_init_where_the_run_began(bent: ArmModel) -> None:
     fake, operator = FakeArm(bent), FakeOperator()
     fake.q, fake.target = np.radians([3.0, -6.0, 12.0]), np.radians([3.0, -6.0, 12.0])
     calibration(bent, operator, fake, steps=["summary"]).run()
 
     assert operator.done is not None and operator.done[2], operator.done
-    assert "Move to rest [3.0, -6.0, 12.0] deg?" in operator.asked
+    assert "Move to init [3.0, -6.0, 12.0] deg?" in operator.asked
     np.testing.assert_allclose(fake.q, np.radians([3.0, -6.0, 12.0]), atol=1e-3)
 
 
@@ -226,8 +226,8 @@ def test_the_run_waits_on_its_question_until_it_is_answered(arm: ArmModel) -> No
     assert view[-2].startswith("? The arm moves home") and view[-1] == "  answer: go"
     assert operator.answer("skip") == "unknown answer 'skip'; answer go"
     assert operator.answer(" Go ") == "ok"
-    parking = asked(operator, "Move to rest")
-    assert (parking.step, parking.question) == ("summary", "Move to rest [0.0, 0.0, 0.0] deg?")
+    parking = asked(operator, "Move to init")
+    assert (parking.step, parking.question) == ("summary", "Move to init [0.0, 0.0, 0.0] deg?")
     assert operator.answer("go") == "ok"
     thread.join(WAIT_S)
     assert operator.answer("go") == "no question pending"

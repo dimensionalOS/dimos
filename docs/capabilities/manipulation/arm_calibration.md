@@ -52,7 +52,7 @@ Stop `dimos run` with Ctrl-C in its terminal and start it again with `--calibrat
 | `keep`, `save` | Keep what the arm runs, or save a fit that is worse over all |
 | `home`, `stay` | After a failure or an abort: go home, or hold where it is |
 
-`cal.answer` and `cal.abort` return at once: `"ok"` or `"aborting"`, or why not. The calibration asks before every move; with `--calibrationmodule.confirm-each false` it asks only at the start of each step. A question waits until it is answered, and the arm holds meanwhile. `cal.status().log` keeps the last 50 messages, questions and answers. If the arm is not back at rest when the calibration ends, the last message says so: support it before you stop `dimos run`, because stopping turns the motors off.
+`cal.answer` and `cal.abort` return at once: `"ok"` or `"aborting"`, or why not. The calibration asks before every move; with `--calibrationmodule.confirm-each false` it asks only at the start of each step. A question waits until it is answered, and the arm holds meanwhile. `cal.status().log` keeps the last 50 messages, questions and answers. If the arm is not home when the calibration ends, the last message says so: support it before you stop `dimos run`, because stopping turns the motors off.
 
 ## What each step does
 
@@ -65,7 +65,7 @@ Stop `dimos run` with Ctrl-C in its terminal and start it again with `--calibrat
 7. **confirm_tracking.** Revisits some gravity poses with the new calibration and the proposed gains, and compares how far each joint rests from its target with the first visit. The gains are saved only if no joint stalls and each rests within 1.5 times its first visit or its rest limit; otherwise they are undone.
 8. **summary.** Shows the file the arm runs now.
 
-Once every step is done, the arm goes home, then back to where it sat when the run began, so start a run with the arm in the pose it rests in with its motors off.
+Once every step is done, the arm is home and the calibration asks to move to init, the pose the arm sat in when the run began. Start a run with the arm where it rests with its motors off, so it ends there.
 
 A hold ends once the arm has settled: one rest window of readings stays inside the noise measured in check. A hold also ends if it stops settling (it oscillates in place) or has not settled after 5 s, and that counts as a failure. A motion stops with an error if a joint falls behind its target by more than its motor can push through, or the arm reaches the table or the other arm's side.
 

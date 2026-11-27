@@ -243,7 +243,7 @@ def check(run: Calibration) -> str:
     ]
     if outside:
         raise RuntimeError(f"joints outside their limits: {', '.join(outside)}")
-    run.start = q.mean(0)
+    run.init = q.mean(0)
     run.confirm(
         f"The arm moves home [{_deg(run.arm.home)}] deg at {run.config.speed_deg_s:g} deg/s. "
         "Clear the workspace.",
