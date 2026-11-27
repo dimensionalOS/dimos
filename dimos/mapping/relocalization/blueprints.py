@@ -31,7 +31,6 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.relocalization.module import PremapModule
-from dimos.memory.replay import ReplayStream
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -59,6 +58,13 @@ class RecordingPlayer(Module):
 
     @rpc
     def start(self) -> None:
+        try:
+            self._play()
+        except BaseException:
+            self._rollback_start()
+            raise
+
+    def _play(self) -> None:
         super().start()
         path = resolve_named_path(self.config.dataset, ".db")
         store = SqliteStore(path=str(path), must_exist=True)
@@ -72,8 +78,9 @@ class RecordingPlayer(Module):
             seek=self.config.seek,
             duration=self.config.duration,
         )
-        lidar: ReplayStream[PointCloud2] = replay.stream(self.config.stream)
-        tf: ReplayStream[TFMessage] = replay.stream("tf")
+        lidar = replay.typed_stream(self.config.stream, PointCloud2, source=path)
+        tf = replay.typed_stream("tf", TFMessage, source=path)
+        replay.require_recorded_frames([lidar, tf], source=path)
         progress = ReplayProgress(str(path))
         progress.start(replay, [lidar, tf])
         subscriptions.add(progress.track(lidar.observable()).subscribe(self.lidar.publish))

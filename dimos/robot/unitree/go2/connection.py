@@ -344,13 +344,18 @@ class ReplayConnection(CompositeResource):
         self._pending_streams.append(stream)
         return self._tracked(stream.observable())
 
-    def seal_subscriptions(self) -> None:
-        """Mark the subscription set complete so end-of-playback can be reported."""
+    def prepare_playback(self) -> None:
+        """Validate the selected inputs and report their timing before subscribing."""
         if self._pending_streams:
             # Only inspect selected streams: unused recordings may depend on
             # unavailable payload types or contain unrelated timestamp ranges.
+            self.replay.require_recorded_frames(self._pending_streams, source=self.dataset)
             self._progress.start(self.replay, self._pending_streams, path=self._replay_path)
             self._pending_streams.clear()
+
+    def seal_subscriptions(self) -> None:
+        """Mark the subscription set complete so end-of-playback can be reported."""
+        self.prepare_playback()
         self._progress.seal()
 
     def _on_complete(self) -> None:
@@ -375,28 +380,20 @@ class ReplayConnection(CompositeResource):
 
     @simple_mcache
     def lidar_stream(self) -> Observable[PointCloud2]:
-        stream: ReplayStream[PointCloud2] = self.replay.stream(
-            self._stream_name("go2_lidar", "lidar")
-        )
+        name = self._stream_name("go2_lidar", "lidar")
+        stream = self.replay.typed_stream(name, PointCloud2, source=self.dataset)
         return self._replay_observable(stream)
 
     @simple_mcache
     def odom_stream(self) -> Observable[PoseStamped]:
         name = self._stream_name("go2_odom", "odom")
-        kind = self.replay.store.stream(name).data_type
-        if kind is None or not issubclass(kind, PoseStamped):
-            # A legacy Go2 DDS recording stores nav_msgs.Odometry. Replayed as is,
-            # it kills the odom subscriber and leaves lidar and video without TF.
-            raise TypeError(
-                f"Go2 replay needs PoseStamped odometry, but stream {name!r} in dataset "
-                f"{self.dataset!r} holds {kind.__name__ if kind else None}"
-            )
-        stream: ReplayStream[PoseStamped] = self.replay.stream(name)
+        stream = self.replay.typed_stream(name, PoseStamped, source=self.dataset)
         return self._replay_observable(stream)
 
     @simple_mcache
     def video_stream(self) -> Observable[Image]:
-        return self._replay_observable(self.replay.streams.color_image)
+        stream = self.replay.typed_stream("color_image", Image, source=self.dataset)
+        return self._replay_observable(stream)
 
     @simple_mcache
     def lowstate_stream(self) -> Observable:  # type: ignore[type-arg]
@@ -478,6 +475,20 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
         def onimage(image: Image) -> None:
             image.frame_id = _prefixed(self.frame_id_prefix, image.frame_id)
             self.color_image.publish(image)
+
+        # Resolve every enabled replay input before the first subscription can publish.
+        if isinstance(self.connection, ReplayConnection):
+            try:
+                if self.config.lidar:
+                    self.connection.lidar_stream()
+                self.connection.odom_stream()
+                if self.config.camera:
+                    self.connection.video_stream()
+                self.connection.prepare_playback()
+            except BaseException:
+                self.connection.stop()
+                self._rollback_start()
+                raise
 
         if self.config.lidar:
             lidar_received = Event()

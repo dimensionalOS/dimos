@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import numpy as np
+import pytest
 from reactivex.testing import TestScheduler
 
 from dimos.memory.store.sqlite import SqliteStore
@@ -46,3 +47,26 @@ def test_feed_logs_source_duration_and_completion(tmp_path, mocker):
         )
         scheduler.advance_by(5)
         assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=str(path))]
+
+
+@pytest.mark.parametrize(
+    ("color_type", "error"),
+    [(CameraInfo, TypeError), (Image, ValueError)],
+    ids=["wrong-type", "no-frames"],
+)
+def test_feed_rejects_a_recording_it_cannot_play(tmp_path, color_type, error):
+    path = tmp_path / "xarm.db"
+    with SqliteStore(path=str(path)) as store:
+        color = store.stream("color_image", color_type)
+        if color_type is CameraInfo:
+            color.append(CameraInfo(), ts=1.0)
+        store.stream("depth_image", Image)
+        store.stream("camera_info", CameraInfo)
+        store.stream("tf", TFMessage)
+    module = DepthCameraFeed(dataset=str(path))
+    try:
+        with pytest.raises(error, match="color_image"):
+            module.start()
+        assert module._loop_thread is None
+    finally:
+        module.stop()

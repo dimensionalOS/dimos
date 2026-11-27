@@ -248,6 +248,25 @@ class ModuleBase(Configurable, CompositeResource):
         self._close_all_tools()
         self._close_rpc()
 
+        self._close_loop()
+
+        if self._tf is not None:
+            self._tf.dispose()
+            self._tf = None
+
+        # Stop transports and break the In/Out -> owner -> self reference
+        # cycle so the instance can be freed by refcount instead of waiting for GC.
+        for attr in [*self.inputs.values(), *self.outputs.values(), *self.ios.values()]:
+            attr.stop()
+            attr.owner = None
+
+    def _rollback_start(self) -> None:
+        """Release startup resources while keeping RPC available to return the error."""
+        self._stop_main()
+        super().stop()
+        self._close_loop()
+
+    def _close_loop(self) -> None:
         # Save into local variables to avoid race when stopping concurrently
         # (from RPC and worker shutdown)
         with self._loop_lock:
@@ -261,16 +280,6 @@ class ModuleBase(Configurable, CompositeResource):
                     loop_thread.join(timeout=self._loop_thread_timeout)
                 self._loop = None
                 self._loop_thread = None
-
-        if self._tf is not None:
-            self._tf.dispose()
-            self._tf = None
-
-        # Stop transports and break the In/Out -> owner -> self reference
-        # cycle so the instance can be freed by refcount instead of waiting for GC.
-        for attr in [*self.inputs.values(), *self.outputs.values(), *self.ios.values()]:
-            attr.stop()
-            attr.owner = None
 
     def _close_all_tools(self) -> None:
         with self._tools_lock:

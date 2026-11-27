@@ -39,7 +39,7 @@ from dimos.memory.store.base import Store, StreamAccessor
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterator
+    from collections.abc import Callable, Collection, Generator, Iterator, Mapping
 
     from dimos.memory.stream import Stream
 
@@ -87,6 +87,46 @@ class Replay(Configurable):
 
     def stream(self, name: str, autocast: Callable[[Any], T] | None = None) -> ReplayStream[T]:
         return ReplayStream(replay=self, name=name, autocast=autocast)
+
+    def typed_stream(self, name: str, expected: type[T], *, source: str | Path) -> ReplayStream[T]:
+        """Check the decoded type a subscriber will receive before playback starts."""
+        if name not in self.list_streams():
+            recorded_names = ", ".join(sorted(self.list_streams())) or "(none)"
+            raise LookupError(f"No stream {name!r} in {source}. Recorded: {recorded_names}.")
+        recorded = self.store.stream(name).data_type
+        if recorded is None or not issubclass(recorded, expected):
+            raise TypeError(
+                f"Replay needs {expected.__name__} for stream {name!r} in {source}, "
+                f"but the recording declares {recorded.__name__ if recorded else None}"
+            )
+        return self.stream(name)
+
+    def select_streams(
+        self, enabled: Mapping[str, type], *, source: Path
+    ) -> dict[str, ReplayStream[Any]]:
+        """Select the recorded subset of a module's outputs, requiring at least one match."""
+        available = set(self.list_streams())
+        streams: dict[str, ReplayStream[Any]] = {
+            name: self.typed_stream(name, kind, source=source)
+            for name, kind in enabled.items()
+            if name in available
+        }
+        if not streams:
+            raise ValueError(
+                f"No recorded streams match the enabled outputs in {source}. "
+                f"Enabled: {', '.join(sorted(enabled)) or '(none)'}. "
+                f"Recorded: {', '.join(sorted(available)) or '(none)'}."
+            )
+        self.require_recorded_frames(streams.values(), source=source)
+        return streams
+
+    def require_recorded_frames(
+        self, streams: Collection[ReplayStream[Any]], *, source: str | Path
+    ) -> None:
+        """Check the original streams so seeking past their last frame remains valid."""
+        if not any(self.store.stream(stream.name).count() for stream in streams):
+            names = ", ".join(sorted(stream.name for stream in streams))
+            raise ValueError(f"No recorded frames for the selected streams in {source}: {names}")
 
     def first_ts(self) -> float | None:
         """Earliest source timestamp across non-empty streams in the underlying store.

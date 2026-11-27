@@ -114,6 +114,19 @@ An MCAP replay loads each replayed stream into memory at start, so memory use gr
 
 `--replay` swaps the robot connection for the recording; it needs `lidar`, `odom`, and `color_image`, so record all streams (the default) if you intend to replay. Poses are not stored per frame; `tf` is recorded like any other stream and `dimos map global` uses it to register clouds.
 
+G1 and Spot replay can use a partial recording when it contains at least one
+enabled output stream. For example, a G1 recording containing only
+`pointlio_odometry` is sufficient. A lidar-only G1 recording also needs
+`--g1replay.replay-lidar true`. Go2, G1 and Spot check the decoded type of each
+enabled input before subscribing. For example, a G1 `pointlio_odometry` stream
+must carry `Odometry` messages. At least one selected stream must contain a
+recorded frame. A seek or duration that excludes all frames still completes normally.
+The relocalization recording player and the xArm depth feed make the same checks
+for the streams they play, all of which must be in the recording.
+
+The G1 mesh blueprint warns when a recording lacks color, depth, camera calibration,
+or TF. It continues to publish the available streams, including odometry.
+
 ## Spatial queries
 
 `stream.near(pose, radius)` matches the pose attached to each observation. `--record` attaches none, so `near()` on a fresh recording returns nothing and warns. The `Poses` column of `dimos mem summary` counts the observations that have a pose.

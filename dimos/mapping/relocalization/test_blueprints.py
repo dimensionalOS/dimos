@@ -175,3 +175,27 @@ def test_player_logs_source_duration_and_completion(player, mocker):
     assert log.info.call_count == 1
     scheduler.advance_by(100)
     assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=path)]
+
+
+@pytest.mark.parametrize(
+    ("lidar_type", "error"),
+    [(Odometry, TypeError), (PointCloud2, ValueError)],
+    ids=["wrong-type", "no-frames"],
+)
+def test_player_rejects_a_recording_it_cannot_play(tmp_path: Path, lidar_type: type, error: type):
+    path = tmp_path / "recording.db"
+    with SqliteStore(path=str(path)) as store:
+        lidar = store.stream("pointlio_lidar", lidar_type)
+        if lidar_type is Odometry:
+            lidar.append(Odometry(ts=1.0), ts=1.0)
+        store.stream("tf", TFMessage)
+    module = RecordingPlayer(dataset=str(path))
+    received: list[Any] = []
+    try:
+        with Disposable(module.lidar.subscribe(received.append)):
+            with pytest.raises(error, match="pointlio_lidar"):
+                module.start()
+        assert received == []
+        assert module._loop_thread is None
+    finally:
+        module.stop()

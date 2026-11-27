@@ -39,7 +39,6 @@ from typing import Any
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.memory.replay import ReplayStream
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -75,6 +74,13 @@ class DepthCameraFeed(Module):
 
     @rpc
     def start(self) -> None:
+        try:
+            self._play()
+        except BaseException:
+            self._rollback_start()
+            raise
+
+    def _play(self) -> None:
         super().start()
         given = Path(self.config.dataset)
         path = given if given.exists() else get_data(self.config.dataset)
@@ -89,10 +95,14 @@ class DepthCameraFeed(Module):
             "camera_info": self.camera_info,
             "tf": self.tf,
         }
+        streams = {
+            name: replay.typed_stream(name, port.type, source=path) for name, port in ports.items()
+        }
+        replay.require_recorded_frames(streams.values(), source=path)
         progress = ReplayProgress(str(path))
-        progress.start(replay, (replay.stream(name) for name in ports))
+        progress.start(replay, streams.values())
         for name, port in ports.items():
-            stream: ReplayStream[Any] = replay.stream(name)
+            stream = streams[name]
             logger.info(
                 f"feed: {path.name}:{name} ({stream.count()} frames at {self.config.speed}x)"
             )
