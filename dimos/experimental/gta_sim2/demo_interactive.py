@@ -180,7 +180,9 @@ def main() -> None:
         object_store=object_store,
     )
     deployment: ModuleCoordinator | None = None
-    last_action = read_json(args.runtime / "action.json").get("id")
+    # A gateway request can arrive before Python finishes starting. Read the
+    # acknowledged ID separately so a new request is not mistaken for old state.
+    last_action = read_json(args.runtime / "action_processed.json").get("id")
     last_seen = time.monotonic()
     next_status = 0.0
     # Keep browser acknowledgements distinct across service restarts, too.
@@ -218,6 +220,8 @@ def main() -> None:
                     write_json(args.runtime / "selection.json", {"location": location})
                 reset |= spawn
                 last_action = action.get("id")
+                if new_action:
+                    write_json(args.runtime / "action_processed.json", {"id": last_action})
                 if deployment is not None and (reset or tick - last_seen > 60):
                     write_json(
                         args.runtime / "simulation.json",
