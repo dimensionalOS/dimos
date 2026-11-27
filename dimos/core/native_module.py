@@ -410,6 +410,9 @@ class NativeModule(Module):
     def _stdin_blob(self, topics: dict[str, str]) -> bytes:
         """The JSON line the native process reads its launch from."""
         config_dict = self.config.to_config_dict()
+        if "frame_id_prefix" in self.config.base_fields:
+            # The namespace lives in the instance name, so send the resolved prefix.
+            config_dict["frame_id_prefix"] = self.frame_id_prefix or None
         blob: dict[str, Any] = {
             "topics": topics,
             "config": config_dict or None,

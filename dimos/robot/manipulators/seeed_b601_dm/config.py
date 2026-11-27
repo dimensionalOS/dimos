@@ -149,4 +149,5 @@ B601_DM = DamiaoRobot(
     joint_names=[*B601_DM_ARM_JOINTS, B601_DM_FINGER_JOINTS[0]],
     gravity=True,
     home_joints=[0.0] * B601_DM_DOF,
+    name="b601_dm",
 )

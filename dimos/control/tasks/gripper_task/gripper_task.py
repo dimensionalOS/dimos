@@ -133,7 +133,7 @@ class GripperControlTask(BaseControlTask):
                 self._stamp_pending = False
             hold = self._config.hold_duration
             if hold > 0.0 and (state.t_now - self._target_set_at) > hold:
-                # Hold expired; ConnectedHardware keeps re-sending the last value.
+                # Hold expired; the coordinator keeps the joint at its last value.
                 self._target = None
                 return None
             target = list(self._target)
@@ -163,7 +163,7 @@ class GripperControlTask(BaseControlTask):
                 self._target = None
 
     def set_position(self, values: list[float], t_now: float | None = None) -> bool:
-        """Set per-joint targets in the adapter's native units."""
+        """Set per-joint targets in the connection's native units."""
         if not self._validate_values("set_position", values, self._limits):
             return False
         return self._latch(list(values), t_now)
@@ -258,57 +258,16 @@ class GripperControlTaskParams(BaseConfig):
     open_at: OpenAt = "upper"
 
 
-def _resolve_limits(
-    cfg: Any, hardware: Any, connections: Mapping[str, ConnectionSource]
+def _connection_limits(
+    cfg: Any, connections: Mapping[str, ConnectionSource]
 ) -> list[tuple[float, float]]:
-    """Resolve each joint from its owning hardware or connection declaration."""
+    """Read the same per-joint position bounds that the coordinator enforces."""
     where = f"gripper task {cfg.name!r}"
     joint_names = list(cfg.joint_names)
     if not joint_names:
         raise ValueError(f"{where}: requires at least one joint")
     if len(set(joint_names)) != len(joint_names):
         raise ValueError(f"{where}: joint_names must not contain duplicates")
-    if not hardware:
-        return _connection_limits(where, joint_names, connections)
-    resolved: list[tuple[float, float]] = []
-    for joint_name in joint_names:
-        owners = [
-            connected
-            for connected in (hardware or {}).values()
-            if joint_name in connected.component.joints
-        ]
-        if not owners:
-            raise ValueError(f"{where}: joint {joint_name!r} is not owned by coordinator hardware")
-        if len(owners) > 1:
-            raise ValueError(
-                f"{where}: joint {joint_name!r} is owned by multiple hardware components"
-            )
-        connected = owners[0]
-        component = connected.component
-        index = component.joints.index(joint_name)
-        limits = connected.get_limits()
-        if limits is None:
-            raise ValueError(
-                f"{where}: hardware {component.hardware_id!r} does not declare joint limits"
-            )
-        arrays = (limits.position_lower, limits.position_upper, limits.velocity_max)
-        if any(len(array) != len(component.joints) for array in arrays):
-            raise ValueError(
-                f"{where}: hardware {component.hardware_id!r} limits must contain "
-                f"{len(component.joints)} entries"
-            )
-        lower = limits.position_lower[index]
-        upper = limits.position_upper[index]
-        if lower is None or upper is None:
-            raise ValueError(f"{where}: joint {joint_name!r} has no declared position limits")
-        resolved.append((float(lower), float(upper)))
-    return resolved
-
-
-def _connection_limits(
-    where: str, joint_names: list[str], connections: Mapping[str, ConnectionSource]
-) -> list[tuple[float, float]]:
-    """Read the same per-joint position bounds that the coordinator enforces."""
     resolved: list[tuple[float, float]] = []
     for joint_name in joint_names:
         source = connections.get(joint_name.partition("/")[0])
@@ -321,9 +280,7 @@ def _connection_limits(
     return resolved
 
 
-def create_task(
-    cfg: Any, hardware: Any, connections: Mapping[str, ConnectionSource] | None = None
-) -> GripperControlTask:
+def create_task(cfg: Any, connections: Mapping[str, ConnectionSource]) -> GripperControlTask:
     params = GripperControlTaskParams.model_validate(cfg.params)
     return GripperControlTask(
         cfg.name,
@@ -333,5 +290,5 @@ def create_task(
             hold_duration=params.hold_duration,
             open_at=params.open_at,
         ),
-        limits=_resolve_limits(cfg, hardware, connections or {}),
+        limits=_connection_limits(cfg, connections),
     )

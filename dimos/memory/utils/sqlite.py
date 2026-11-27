@@ -58,13 +58,17 @@ def close_sqlite_connection(conn: sqlite3.Connection) -> None:
         _locks.pop(id(conn), None)
 
 
-def open_sqlite_connection(path: str | Path) -> sqlite3.Connection:
-    """Open a WAL-mode SQLite connection with sqlite-vec loaded."""
+def open_sqlite_connection(path: str | Path, *, read_only: bool = False) -> sqlite3.Connection:
+    """Open SQLite with sqlite-vec, using WAL only for writable connections."""
     import sqlite_vec
 
-    conn = sqlite3.connect(path, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
+    if read_only:
+        uri = Path(path).resolve().as_uri() + "?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+    else:
+        conn = sqlite3.connect(path, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
     # WAL has one writer; concurrent writer threads outlast the 5s default
     conn.execute("PRAGMA busy_timeout=30000")
     conn.enable_load_extension(True)
@@ -74,11 +78,11 @@ def open_sqlite_connection(path: str | Path) -> sqlite3.Connection:
 
 
 def open_disposable_sqlite_connection(
-    path: str | Path,
+    path: str | Path, *, read_only: bool = False
 ) -> tuple[Disposable, sqlite3.Connection]:
-    """Open a WAL-mode SQLite connection and return (disposable, connection).
+    """Open SQLite and return (disposable, connection).
 
     The disposable closes the connection and releases its lock when disposed.
     """
-    conn = open_sqlite_connection(path)
+    conn = open_sqlite_connection(path, read_only=read_only)
     return Disposable(lambda: close_sqlite_connection(conn)), conn

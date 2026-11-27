@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from dimos.constants import RECORDINGS_DIR
+from dimos.control.contract.keys import SEPARATOR
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprint_config.fields import module_config_cls
 from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
@@ -104,7 +105,18 @@ def _collection_components(
     coordinator = next(
         atom for atom in producers.active_blueprints if issubclass(atom.module, ControlCoordinator)
     )
-    joints = [joint for hardware in coordinator.kwargs["hardware"] for joint in hardware.joints]
+    joints = [
+        *(
+            joint
+            for hardware in coordinator.kwargs.get("hardware", [])
+            for joint in hardware.joints
+        ),
+        *(
+            joint if SEPARATOR in joint else f"{connection.source}{SEPARATOR}{joint}"
+            for connection in coordinator.kwargs.get("connections", [])
+            for joint in connection.joint_commands
+        ),
+    ]
     camera = next(
         atom
         for atom in producers.active_blueprints
