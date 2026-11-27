@@ -28,6 +28,7 @@ from dimos.robot.manipulators.dual_openyam.config import (
     dual_openyam_model_config,
 )
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
+from dimos.robot.urdf_manager import UrdfManager
 
 _dual_openyam = dual_openyam_model_config(robot="arm")
 
@@ -68,6 +69,8 @@ def dual_openyam_control() -> MetaBlueprint:
 
 
 coordinator_dual_openyam = dual_openyam_control().remappings([])
+# UrdfManager serves the URDF to web 3D views. The planner already puts every
+# link on tf, so the manager leaves joint tf off (on, links would get two parents).
 dual_openyam_planner_coordinator = autoconnect(
     planner(
         model=_dual_openyam,
@@ -77,4 +80,5 @@ dual_openyam_planner_coordinator = autoconnect(
         },
     ),
     dual_openyam_control(),
+    UrdfManager.blueprint(model=_dual_openyam.model, publish_joint_tf=False),
 )

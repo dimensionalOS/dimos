@@ -48,6 +48,25 @@ DUAL_OPENYAM_KP = [80.0, 80.0, 80.0, 10.0, 10.0, 10.0]
 DUAL_OPENYAM_KD = [1.0, 1.0, 1.0, 1.5, 1.5, 1.5]
 
 
+# Every link of the dual URDF. The planner puts each on tf as world -> link,
+# which is where web 3D views draw that link's meshes.
+DUAL_OPENYAM_LINKS = [
+    "dual_openyam_base",
+    *[
+        f"{side}_{link}"
+        for side in DUAL_OPENYAM_SIDES
+        for link in (
+            "base",
+            *[f"link{index}" for index in range(1, 6)],
+            "gripper",
+            "tip_left",
+            "tip_right",
+            "grasp_frame",
+        )
+    ],
+]
+
+
 def dual_openyam_arm_joints(side: str) -> list[str]:
     if side not in DUAL_OPENYAM_SIDES:
         raise ValueError(f"side must be 'left' or 'right', got {side!r}")
@@ -77,7 +96,7 @@ def dual_openyam_model_config(*, robot: str | None = None) -> RobotModelConfig:
             ],
             auto_convert_meshes=True,
             home_joints=list(DUAL_OPENYAM_HOME_JOINTS),
-            tf_extra_links=[],
+            tf_extra_links=list(DUAL_OPENYAM_LINKS),
         ),
         robot,
     )
