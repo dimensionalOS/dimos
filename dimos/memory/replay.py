@@ -230,7 +230,12 @@ class _Frame:
 @dataclass(frozen=True)
 class _Ended:
     name: str
-    error: Exception | None = None
+
+
+@dataclass(frozen=True)
+class _Failed:
+    name: str  # the stream that could not be read or decoded
+    error: Exception
 
 
 class _Buffer:
@@ -238,11 +243,11 @@ class _Buffer:
 
     def __init__(self, size: int, stopped: threading.Event) -> None:
         self._size = size
-        self._items: deque[_Frame | _Ended] = deque()
+        self._items: deque[_Frame | _Ended | _Failed] = deque()
         self._stopped = stopped
         self._changed = threading.Condition()
 
-    def put(self, item: _Frame | _Ended) -> bool:
+    def put(self, item: _Frame | _Ended | _Failed) -> bool:
         """False once stopped, without adding *item*."""
         with self._changed:
             self._changed.wait_for(lambda: len(self._items) < self._size or self._stopped.is_set())
@@ -252,7 +257,7 @@ class _Buffer:
             self._changed.notify_all()
             return True
 
-    def get(self) -> _Frame | _Ended | None:
+    def get(self) -> _Frame | _Ended | _Failed | None:
         """None once stopped."""
         with self._changed:
             self._changed.wait_for(lambda: self._items or self._stopped.is_set())
@@ -282,7 +287,8 @@ class Playback:
     in order, waits until its recorded offset from the first frame (divided by
     ``speed``) has passed since :meth:`play`, and publishes it. No frame is
     dropped: a publisher that falls behind publishes the late frames at once and
-    warns when it is more than ``lag_warning`` seconds behind.
+    warns when it is more than ``lag_warning`` seconds behind. A frame that cannot be
+    read or decoded stops the whole replay and errors every stream.
 
     :meth:`add` every stream and subscribe to what it returns. :meth:`load`
     returns once the buffer is full (or the recording ends), so calling it in a
@@ -301,7 +307,6 @@ class Playback:
         self._subjects: dict[str, Subject[Any]] = {}
         self._stopped = threading.Event()
         self._buffer = _Buffer(replay.config.buffer_size, self._stopped)
-        self._failed: set[str] = set()  # streams ended by a read or decode error
         self._state_lock = threading.Lock()
         self._reader: threading.Thread | None = None
         self._read_done = threading.Event()
@@ -366,14 +371,14 @@ class Playback:
             self._buffer.wake()
 
     def _read_passes(self) -> bool:
-        """Buffer every pass of the recording. False once stopped."""
+        """Buffer every pass of the recording. False once stopped or failed."""
         offset = 0.0
         while True:
             rows: dict[str, Iterator[Any]] = {}
             heap: list[tuple[float, int, str, Any]] = []
             try:
                 for order, (name, stream) in enumerate(self._streams.items()):
-                    if name not in self._failed and not self._open(name, stream, order, rows, heap):
+                    if not self._open(name, stream, order, rows, heap):
                         return False
                 first = last = None
                 while heap:
@@ -383,11 +388,8 @@ class Playback:
                     try:
                         value = self._streams[name]._decode(obs)
                     except Exception as error:
-                        self._close(rows.pop(name))
-                        self._failed.add(name)
-                        if not self._buffer.put(_Ended(name, error)):
-                            return False
-                        continue
+                        self._buffer.put(_Failed(name, error))
+                        return False
                     if not self._buffer.put(_Frame(ts + offset, name, value)):
                         return False
                     if not self._advance(name, order, rows, heap):
@@ -407,12 +409,12 @@ class Playback:
         rows: dict[str, Iterator[Any]],
         heap: list[tuple[float, int, str, Any]],
     ) -> bool:
-        """Push *name*'s first row. False once stopped."""
+        """Push *name*'s first row. False once stopped or failed."""
         try:
             rows[name] = iter(stream._base_stream())
         except Exception as error:
-            self._failed.add(name)
-            return self._buffer.put(_Ended(name, error))
+            self._buffer.put(_Failed(name, error))
+            return False
         return self._advance(name, order, rows, heap)
 
     def _advance(
@@ -422,16 +424,15 @@ class Playback:
         rows: dict[str, Iterator[Any]],
         heap: list[tuple[float, int, str, Any]],
     ) -> bool:
-        """Push *name*'s next row, or end it. False once stopped."""
+        """Push *name*'s next row, or end it. False once stopped or failed."""
         try:
             obs = next(rows[name])
         except StopIteration:
             self._close(rows.pop(name))
             return self._replay.config.loop or self._buffer.put(_Ended(name))
         except Exception as error:
-            self._close(rows.pop(name))
-            self._failed.add(name)
-            return self._buffer.put(_Ended(name, error))
+            self._buffer.put(_Failed(name, error))
+            return False
         heapq.heappush(heap, (float(obs.ts), order, name, obs))
         return True
 
@@ -451,13 +452,12 @@ class Playback:
             item = self._buffer.get()
             if item is None:
                 return
+            if isinstance(item, _Failed):
+                self._fail(item, ended)
+                return
             if isinstance(item, _Ended):
                 ended.add(item.name)
-                subject = self._subjects[item.name]
-                if item.error is None:
-                    self._deliver(item.name, subject.on_completed)
-                else:
-                    self._deliver(item.name, subject.on_error, item.error)
+                self._deliver(item.name, self._subjects[item.name].on_completed)
                 continue
             if first_ts is None:
                 first_ts = item.ts
@@ -474,9 +474,24 @@ class Playback:
                 )
             self._deliver(item.name, self._subjects[item.name].on_next, item.value)
 
+    def _fail(self, failure: _Failed, ended: set[str]) -> None:
+        """A bad recording or a config that cannot decode it: stop, and error every stream."""
+        logger.error(
+            "Replay stopped: recording could not be read",
+            stream=failure.name,
+            exc_info=failure.error,
+        )
+        for name, subject in self._subjects.items():
+            if name not in ended:
+                try:
+                    subject.on_error(failure.error)
+                except Exception as raised:
+                    if raised is not failure.error:  # a subscriber without on_error re-raises it
+                        logger.exception("Replay subscriber failed", stream=name)
+
     @staticmethod
     def _deliver(name: str, notify: Callable[..., None], *args: Any) -> None:
-        # A subscriber that raises (or has no on_error) must not stop the other streams.
+        # A subscriber's bug is logged, not allowed to stop the replay for every other subscriber.
         try:
             notify(*args)
         except Exception:

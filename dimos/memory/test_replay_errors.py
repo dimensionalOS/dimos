@@ -14,6 +14,7 @@
 
 from collections.abc import Iterator
 from contextlib import closing
+from functools import partial
 import gc
 from pathlib import Path
 import sqlite3
@@ -180,7 +181,7 @@ def test_autocast_failure_reports_one_error(fail_at: int, mocker: MockerFixture)
     assert closed.is_set()
 
 
-def test_failed_stream_leaves_the_others_playing(mocker: MockerFixture) -> None:
+def test_a_failed_stream_stops_the_whole_replay(mocker: MockerFixture) -> None:
     with MemoryStore() as store:
         for name in ("broken", "odom"):
             recorded = store.stream(name, int)
@@ -190,14 +191,25 @@ def test_failed_stream_leaves_the_others_playing(mocker: MockerFixture) -> None:
         broken = replay.stream("broken")
         mocker.patch.object(broken, "_base_stream", side_effect=OSError("recording read failed"))
         playback = replay.playback()
-        errors: list[Exception] = []
-        odom: list[int] = []
-        done = threading.Event()
-        playback.add(broken).subscribe(on_error=errors.append)
-        playback.add(replay.stream("odom")).subscribe(odom.append, on_completed=done.set)
-        playback.play()
-        assert done.wait(HUNG_TEST_TIMEOUT)
-        playback.stop()
+        errors: dict[str, Exception] = {}
+        both = threading.Event()
 
-    assert [str(error) for error in errors] == ["recording read failed"]
-    assert odom == [0, 1, 2]
+        def on_error(name: str, error: Exception) -> None:
+            errors[name] = error
+            if len(errors) == 2:
+                both.set()
+
+        odom: list[int] = []
+        playback.add(broken).subscribe(on_error=partial(on_error, "broken"))
+        playback.add(replay.stream("odom")).subscribe(odom.append, partial(on_error, "odom"))
+        try:
+            playback.play()
+            assert both.wait(HUNG_TEST_TIMEOUT)
+        finally:
+            playback.stop()
+
+    assert {name: str(error) for name, error in errors.items()} == {
+        "broken": "recording read failed",
+        "odom": "recording read failed",
+    }
+    assert odom == []
