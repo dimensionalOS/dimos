@@ -891,7 +891,7 @@ class Module(ModuleBase):
         if not isinstance(stream, (In, Out, IO)):
             raise TypeError(f"Output {stream_name} is not a valid stream")
 
-        stream._transport = transport
+        stream.transport = transport
         return True
 
     @rpc

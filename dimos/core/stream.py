@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import enum
+import threading
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -28,8 +29,9 @@ from typing import (
 from pydantic import BaseModel
 import reactivex as rx
 from reactivex import operators as ops
-from reactivex.disposable import Disposable
+from reactivex.disposable import CompositeDisposable, Disposable, SerialDisposable
 from reactivex.scheduler import TimeoutScheduler
+from reactivex.subject import Subject
 
 from dimos.core.resource import Resource
 from dimos.utils import colors
@@ -340,6 +342,19 @@ class In(Stream[T], ObservableMixin[T]):
     connection: RemoteOut[T] | None = None
     _transport: Transport[T]
 
+    def __init__(
+        self,
+        type: type[T],
+        name: str,
+        owner: Any | None = None,
+        transport: Transport[T] | None = None,
+    ) -> None:
+        super().__init__(type, name, owner, transport)
+        self._local: Subject[T] = Subject()
+        self._transport_assigned: Subject[Transport[T]] = Subject()
+        self._connections = CompositeDisposable()
+        self._forward_lock = threading.RLock()
+
     def __str__(self) -> str:
         mystr = super().__str__()
 
@@ -358,15 +373,36 @@ class In(Stream[T], ObservableMixin[T]):
     @property
     def transport(self) -> Transport[T]:
         if not self._transport and self.connection:
-            self._transport = self.connection.transport
+            self.transport = self.connection.transport
         return self._transport
 
     @transport.setter
     def transport(self, value: Transport[T]) -> None:
-        self._transport = value
+        with self._forward_lock:
+            self._transport = value
+        if value is not None:
+            self._transport_assigned.on_next(value)
 
     def connect(self, value: Out[T]) -> None:
-        value.subscribe(self.transport.publish)
+        """Forward a local output until this input stops."""
+
+        def forward(msg: T) -> None:
+            # Out.publish may have copied this callback before the input stopped.
+            with self._forward_lock:
+                if self._connections.is_disposed:
+                    return
+                if (transport := self.transport) is not None:
+                    transport.publish(msg)
+            self._local.on_next(msg)
+
+        self._connections.add(Disposable(value.subscribe(forward)))
+
+    def stop(self) -> None:
+        with self._forward_lock:
+            self._connections.dispose()
+        self._transport_assigned.on_completed()
+        self._local.on_completed()
+        super().stop()
 
     @property
     def state(self) -> State:
@@ -374,7 +410,20 @@ class In(Stream[T], ObservableMixin[T]):
 
     # returns unsubscribe function
     def subscribe(self, cb: Callable[[T], Any]) -> Callable[[], None]:
-        return self.transport.subscribe(cb, self)
+        with self._forward_lock:
+            if (transport := self.transport) is None:
+                subscription = SerialDisposable()
+
+                def bind(value: Transport[T]) -> None:
+                    # Replacing the local subscriptions also stops listening for assignments.
+                    subscription.disposable = Disposable(value.subscribe(cb, self))
+
+                subscription.disposable = CompositeDisposable(
+                    self._local.subscribe(cb),
+                    self._transport_assigned.subscribe(bind, on_completed=subscription.dispose),
+                )
+                return subscription.dispose
+        return transport.subscribe(cb, self)
 
 
 # representation of input outside of module
