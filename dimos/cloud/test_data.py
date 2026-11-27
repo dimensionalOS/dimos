@@ -29,13 +29,15 @@ import tempfile
 import threading
 import time
 from typing import Any, Literal
+import urllib.error
+import urllib.request
 
 import pytest
 import requests
 import typer
 
 from dimos.cloud import cli, data as cd
-from dimos.cloud.cloud_request import PUT_BLOCK, HttpCloudRequest
+from dimos.cloud.cloud_request import PUT_BLOCK, HttpCloudRequest, UrlExpiredError, _Blocks
 from dimos.cloud.config import CloudConfig
 from dimos.cloud.data import CloudData, DataApi, MultipartBackend
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -127,7 +129,7 @@ class FakeTransport:
                 self.expire_at = 0
                 self.epoch += 1
             if int(epoch) != self.epoch:
-                raise OSError("403 Forbidden: Request has expired")
+                raise UrlExpiredError("403 Forbidden: Request has expired")
             if self.fail_at and len(self.parts[uid]) + 1 == self.fail_at:
                 self.fail_at = 0
                 raise OSError("link dropped")
@@ -143,7 +145,7 @@ class FakeTransport:
             progress(len(blob), len(blob))
 
 
-def one_part_per_worker(cloud: CloudData, t: FakeTransport, dir_: Path) -> Path:
+def parts_file(cloud: CloudData, t: FakeTransport, dir_: Path) -> Path:
     raw = dir_ / "parts.lz4"  # carries the codec suffix, so it uploads as-is
     raw.write_bytes(os.urandom(cloud.backend.parallel_parts * t.part_size))
     return raw
@@ -330,7 +332,7 @@ def test_upload_refreshes_expired_part_urls(
     The parts in flight hit the expiry together and share one re-create."""
     cloud, t, db = env
     cloud.backend.retries = 0
-    raw = one_part_per_worker(cloud, t, db.parent)
+    raw = parts_file(cloud, t, db.parent)
     t.expire_at = 1  # URLs signed at create expire before any part lands
     in_flight = threading.Barrier(cloud.backend.parallel_parts)
     creates: list[str] = []
@@ -385,7 +387,7 @@ def test_failed_part_abandons_the_parts_in_flight(
     """Part 1 fails for good while the others are mid-send. The upload raises without
     waiting for them, and when their link drops too they do not try again."""
     cloud, t, db = env
-    raw = one_part_per_worker(cloud, t, db.parent)
+    raw = parts_file(cloud, t, db.parent)
     in_flight = threading.Barrier(cloud.backend.parallel_parts)
     release = threading.Event()
     attempts: list[str] = []
@@ -420,12 +422,25 @@ def test_empty_file_uploads_with_no_parts(env: tuple[CloudData, FakeTransport, P
     assert r["state"] == "complete" and t.uploads[r["upload_id"]]["blob"] == b""
 
 
+def test_unset_chunk_size_asks_for_one_part_up_to_the_single_part_limit(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cloud, t, db = env
+    monkeypatch.setattr(cd, "SINGLE_PART_MAX", 2 * t.part_size)
+    monkeypatch.setattr(cd, "DEFAULT_PART_SIZE", t.part_size)
+    at_limit, over_limit = db.parent / "at_limit.lz4", db.parent / "over_limit.lz4"
+    at_limit.write_bytes(os.urandom(2 * t.part_size))
+    over_limit.write_bytes(os.urandom(2 * t.part_size + 1))
+    asked = [t.uploads[cloud.upload(p)["upload_id"]]["part_size"] for p in (at_limit, over_limit)]
+    assert asked == [2 * t.part_size, t.part_size]
+
+
 def test_upload_opens_a_connection_per_share_of_the_file(
     env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Four parts that fill two connections between them go out over two."""
     cloud, t, db = env
-    raw = one_part_per_worker(cloud, t, db.parent)
+    raw = parts_file(cloud, t, db.parent)
     pools: list[int] = []
     monkeypatch.setattr(cd, "BYTES_PER_CONNECTION", 2 * t.part_size)
     monkeypatch.setattr(cd, "ThreadPool", lambda n: pools.append(n) or ThreadPool(n))
@@ -632,7 +647,6 @@ def test_transport_maps_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     names the endpoint and status, and a 401 says how to fix it."""
     from email.message import Message
     import io
-    import urllib.error
 
     t = HttpCloudRequest("https://api.test", "dimos_sk_x", timeout=1)
 
@@ -654,12 +668,11 @@ class PartStore(BaseHTTPRequestHandler):
     """Takes part PUTs over HTTP/1.1, which keeps the connection open between them."""
 
     protocol_version = "HTTP/1.1"
+    server: "PartStoreServer"
 
     def do_PUT(self) -> None:
         body = self.rfile.read(int(self.headers["Content-Length"]))
-        self.server.puts.append(  # type: ignore[attr-defined]
-            (self.client_address, self.headers["Transfer-Encoding"], body)
-        )
+        self.server.puts.append((self.client_address, self.headers["Transfer-Encoding"], body))
         reply = b""
         if "stalled" in self.path:
             reply = b"<Error><Code>RequestTimeout</Code><Message>Idle connections will be closed.</Message></Error>"
@@ -707,7 +720,9 @@ def test_put_sends_blocks_over_one_connection(
     def spying_send(
         session: requests.Session, request: requests.PreparedRequest, **kwargs: Any
     ) -> requests.Response:
-        sent.append([len(block) for block in request.body])  # type: ignore[union-attr]
+        body: object = request.body  # the stubs only know of a bytes or str body
+        assert isinstance(body, _Blocks)
+        sent.append([len(block) for block in body])
         return real_send(session, request, **kwargs)
 
     monkeypatch.setattr(requests.Session, "send", spying_send)
@@ -722,10 +737,10 @@ def test_put_sends_blocks_over_one_connection(
 
 
 def test_put_errors_leave_out_the_signed_url(part_store: PartStoreServer) -> None:
-    """A 403 in the message triggers a re-sign, and a signature can hold those digits."""
+    """An expired URL raises its own type, and no error names the signed URL."""
     t = HttpCloudRequest("https://api.test", "dimos_sk_x", timeout=5)
     signed = "X-Amz-Signature=a403b"
-    with pytest.raises(OSError, match="HTTP Error 403: Forbidden") as expired:
+    with pytest.raises(UrlExpiredError, match="HTTP Error 403: Forbidden") as expired:
         t.put(f"http://127.0.0.1:{part_store.server_address[1]}/expired?{signed}", b"x")
     assert signed not in str(expired.value)
     with socket.socket() as unused:
@@ -733,7 +748,7 @@ def test_put_errors_leave_out_the_signed_url(part_store: PartStoreServer) -> Non
         closed_port = unused.getsockname()[1]
     with pytest.raises(OSError, match="Connection refused") as refused:
         t.put(f"http://127.0.0.1:{closed_port}/part?{signed}", b"x")
-    assert "403" not in str(refused.value)
+    assert signed not in str(refused.value)
 
 
 def test_put_errors_keep_the_s3_error_code(part_store: PartStoreServer) -> None:

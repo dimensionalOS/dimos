@@ -21,6 +21,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+import sys
 import threading
 from typing import Any, Protocol, cast
 import urllib.error
@@ -28,8 +29,12 @@ import urllib.request
 
 import requests
 
-# split each chunk into blocks of this size
+# split each part into blocks of this size
 PUT_BLOCK = 1 << 20
+
+
+class UrlExpiredError(OSError):
+    """A presigned URL was refused with a 403, which is how S3 answers an expired one."""
 
 
 class CloudRequest(Protocol):
@@ -57,8 +62,8 @@ class _Blocks:
 
 
 class HttpCloudRequest:
-    """urllib + Bearer key. 401 and network faults surface as RuntimeError with a
-    message the CLI can print verbatim."""
+    """API calls (Bearer key) and downloads go over urllib, presigned PUTs over requests. 401
+    and network faults on API calls surface as RuntimeError the CLI can print verbatim."""
 
     def __init__(self, base_url: str, key: str, timeout: float) -> None:
         self.base_url, self.key, self.timeout = base_url.rstrip("/"), key, timeout
@@ -86,18 +91,21 @@ class HttpCloudRequest:
         session = getattr(self.put_sessions, "session", None)
         if session is None:
             session = self.put_sessions.session = requests.Session()
+            # an auth that does nothing keeps requests from adding netrc credentials
+            session.auth = lambda r: r
+        # an error the caller is already handling would end the chain walked below
+        handled = sys.exc_info()[1]
         try:
             r = session.put(
                 url,
                 data=cast("Iterable[bytes]", _Blocks(body)),
-                # the default form content-type makes some S3-compatible servers parse the body
                 headers={"Content-Type": "application/octet-stream"},
                 timeout=self.timeout,
             )
         except requests.RequestException as e:
             # requests puts the signed URL in its message, so report the error underneath
             cause: BaseException = e
-            while cause.__context__ is not None:
+            while cause.__context__ is not None and cause.__context__ is not handled:
                 cause = cause.__context__
             raise OSError(f"PUT failed: {cause}") from e
         if not r.ok:
@@ -105,7 +113,8 @@ class HttpCloudRequest:
             code = re.search(r"<Code>(.*?)</Code>", r.text)
             message = re.search(r"<Message>(.*?)</Message>", r.text)
             detail = f" ({code[1]}: {message[1] if message else ''})"[:300] if code else ""
-            raise OSError(f"HTTP Error {r.status_code}: {r.reason}{detail}")
+            error = UrlExpiredError if r.status_code == 403 else OSError
+            raise error(f"HTTP Error {r.status_code}: {r.reason}{detail}")
 
     def download(
         self, url: str, dst: Path, progress: Callable[[int, int], None] | None = None

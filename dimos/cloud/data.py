@@ -42,7 +42,7 @@ from typing import Any
 
 from dimos.cli.cloud import api_key
 from dimos.cloud import codecs, preview
-from dimos.cloud.cloud_request import CloudRequest, HttpCloudRequest
+from dimos.cloud.cloud_request import CloudRequest, HttpCloudRequest, UrlExpiredError
 from dimos.cloud.config import CloudConfig
 from dimos.constants import DOWNLOADS_DIR, RECORDINGS_DIR
 from dimos.core.run_registry import blueprint_from_run_id
@@ -138,6 +138,9 @@ class MultipartBackend:
         for attempt in range(1, self.retries + 2):
             try:
                 return fn()
+            except UrlExpiredError:
+                # only a re-sign helps, which is the caller's to do
+                raise
             except (OSError, RuntimeError) as e:
                 if attempt > self.retries:
                     raise RuntimeError(f"{what} failed after {attempt} attempts: {e}") from e
@@ -238,9 +241,8 @@ class MultipartBackend:
         resign_lock = threading.Lock()
         abandoned = threading.Event()
         with artifact.open("rb") as f:
-            # Parts are slices of one mapping, so none is copied into memory. It is
-            # freed with its last slice, which an interrupted part may still be
-            # sending. An empty file cannot be mapped.
+            # Never closed, because an interrupted part may still be sending a slice.
+            # An empty file can't be mapped.
             data = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) if size else b""
 
         def send(n: int) -> int:
@@ -254,9 +256,7 @@ class MultipartBackend:
             url = urls[n]
             try:
                 self._retry(functools.partial(put, url), f"part {n}")
-            except RuntimeError as e:
-                if "403" not in str(e):
-                    raise
+            except UrlExpiredError:
                 # Part URLs share one presign expiry, so a slow upload gets 403 from S3.
                 # create is idempotent by sha256 and re-signs every URL. The first part
                 # to notice re-signs and the rest reuse its URLs.
@@ -270,9 +270,9 @@ class MultipartBackend:
             return len(chunk)
 
         missing = [n for n in sorted(urls) if n not in uploaded]
-        # request workers so each one is roughly allocated that many bytes
+        # one connection per BYTES_PER_CONNECTION still to send
         wanted = math.ceil((size - done) / BYTES_PER_CONNECTION)
-        # but then cap it to the maximum number configured
+        # capped at the configured maximum
         connections = max(1, min(wanted, self.parallel_parts))
         try:
             # daemon workers, so the process can exit immediately instead
