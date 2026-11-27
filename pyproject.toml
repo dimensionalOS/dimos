@@ -282,6 +282,9 @@ yolo = [
     "ultralytics>=8.3.70",
     "lap>=0.5.12",  # the Ultralytics trackers
     "clip-anytorch>=2.6",  # clip.tokenize for YOLO-E text prompts
+    # clip-anytorch imports pkg_resources, which setuptools 82 removed. Without the cap
+    # Ultralytics installs its own CLIP fork at run time. Drop the cap with clip-anytorch.
+    "setuptools<82",
 ]
 
 unitree = [

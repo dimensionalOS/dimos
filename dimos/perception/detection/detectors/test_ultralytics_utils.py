@@ -73,6 +73,16 @@ def test_custom_model_directory_keeps_its_positional_argument(
     assert detector.device == "cpu"
 
 
+@pytest.mark.parametrize("in_directory", [True, False])
+def test_missing_custom_checkpoint_is_not_downloaded(in_directory: bool, tmp_path: Path) -> None:
+    args = ("custom.pt", tmp_path) if in_directory else (str(tmp_path / "custom.pt"),)
+
+    with pytest.raises(FileNotFoundError, match="custom.pt"):
+        ultralytics_utils.checkpoint_path(*args)
+
+    assert list(tmp_path.iterdir()) == []
+
+
 @pytest.mark.self_hosted
 def test_legacy_person_and_image_converters() -> None:
     # Only the self-hosted jobs install the optional Ultralytics result type.

@@ -2224,6 +2224,7 @@ webrtc = [
 yolo = [
     { name = "clip-anytorch" },
     { name = "lap" },
+    { name = "setuptools" },
     { name = "ultralytics" },
 ]
 
@@ -2542,6 +2543,7 @@ requires-dist = [
     { name = "safetensors", marker = "extra == 'perception'", specifier = ">=0.8" },
     { name = "scipy", specifier = ">=1.15.1" },
     { name = "sentencepiece", marker = "extra == 'perception'", specifier = ">=0.2.0" },
+    { name = "setuptools", marker = "extra == 'yolo'", specifier = "<82" },
     { name = "sortedcontainers", specifier = "==2.4.0" },
     { name = "sounddevice", marker = "extra == 'agents'" },
     { name = "soundfile", marker = "extra == 'web'" },

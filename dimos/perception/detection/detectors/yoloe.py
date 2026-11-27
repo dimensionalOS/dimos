@@ -56,7 +56,8 @@ class Yoloe2DDetector(Detector):
         Initialize YOLO-E 2D detector.
 
         Args:
-            model_path: Custom model directory, resolved with get_data.
+            model_path: Custom model directory, resolved with get_data. Nothing is
+                downloaded into it.
             model_name: Model filename. Defaults based on prompt_mode. Ultralytics
                 downloads it when it is missing.
             device: Device to run inference on ('cuda', 'cpu', or None for auto).

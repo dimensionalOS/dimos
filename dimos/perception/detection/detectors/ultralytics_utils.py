@@ -67,16 +67,24 @@ def cache_path(name: str) -> Path:
 
 
 def checkpoint_path(name: str, model_path: str | Path | None = None) -> Path:
-    """Resolve a custom model directory or atomically cache a downloaded checkpoint."""
-    path = get_data(model_path) / name if model_path is not None else cache_path(name)
-    complete: Callable[[Path], bool] = Path.exists
-    if model_path is None and name == path.name and path.suffix == ".pt":
-        # Only official cached checkpoints have a known format. A download from
-        # an older version can have the ZIP header but no central directory.
-        from ultralytics.utils.downloads import GITHUB_ASSETS_NAMES
+    """Where a checkpoint is. A missing official one is downloaded into the cache.
 
-        if name in GITHUB_ASSETS_NAMES:
-            complete = is_zipfile
+    A custom model directory, or a name with a directory in it, is used as supplied.
+    Nothing is downloaded there.
+    """
+    path = get_data(model_path) / name if model_path is not None else cache_path(name)
+    if model_path is not None or name != path.name:
+        if not path.exists():
+            raise FileNotFoundError(f"No checkpoint at {path}")
+        return path
+
+    # Not at the top of the file: Ultralytics is optional (the yolo extra).
+    from ultralytics.utils.downloads import GITHUB_ASSETS_NAMES, attempt_download_asset
+
+    # Only official checkpoints have a known format. A download from an older
+    # version can have the ZIP header but no central directory.
+    official = path.suffix == ".pt" and name in GITHUB_ASSETS_NAMES
+    complete: Callable[[Path], bool] = is_zipfile if official else Path.exists
     if complete(path):
         return path
 
@@ -85,9 +93,6 @@ def checkpoint_path(name: str, model_path: str | Path | None = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     with FileLock(path.with_name(f".{path.name}.lock")):
         if not complete(path):
-            # This backend is optional and should only be imported on a YOLO cache miss.
-            from ultralytics.utils.downloads import attempt_download_asset
-
             with TemporaryDirectory(dir=path.parent) as staging:
                 downloaded = Path(attempt_download_asset(Path(staging) / path.name))
                 if not complete(downloaded):
