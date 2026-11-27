@@ -50,7 +50,6 @@ from dimos.core import run_registry
         (["run", "coordinator-flowbase"], "portal", "misc"),
         (["run", "keyboard-teleop-module"], "pygame", "control"),
         (["run", "g1-whole-body-connection"], "unitree_sdk2py", "unitree-dds"),
-        (["run", "g1-tf-publisher"], "unitree_sdk2py", "unitree-dds"),
         (["run", "websocket-vis-module"], "socketio", "web"),
     ],
 )

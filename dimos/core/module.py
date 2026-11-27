@@ -220,7 +220,7 @@ class ModuleBase(Configurable, CompositeResource):
         Default is a no-op — override in subclasses that need a build step.
         """
 
-    # Packages imported lazily once an active module starts.
+    # Lazy imports that the module cannot start without.
     required_imports: ClassVar[tuple[str, ...]] = ()
 
     @classmethod
