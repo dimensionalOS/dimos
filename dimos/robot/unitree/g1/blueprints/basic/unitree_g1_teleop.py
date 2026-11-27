@@ -20,7 +20,7 @@ manipulation, and the dimos.imitation data-collection stack. ``--simulation
 mujoco`` and ``--scene-package`` remain supported. Put on the headset, open
 ``https://<host>:8443/teleop``, and:
 
-    X + A             hold to track both arms from a shared reference
+    Both grips        hold to track both arms from a shared reference
     B                 start / save an episode
     Y                 discard the in-progress episode
 
@@ -64,7 +64,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
-from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
+from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_groot_wbc import (
     _G1GrootCoordinator,
     _unitree_g1_groot_wbc_core,
 )
@@ -90,7 +90,7 @@ class G1CollectionRecorder(Recorder):
     left_cartesian_command: In[PoseStamped]
     right_cartesian_command: In[PoseStamped]
 
-    def _resolve_ts(self, name: str, msg: Any) -> float:
+    def _resolve_ts(self, name: str, msg: Any) -> float | None:
         if name == "status":
             return EpisodeStatus.from_json(msg.data).ts
         return super()._resolve_ts(name, msg)

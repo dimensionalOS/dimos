@@ -62,6 +62,11 @@ class JointCommand:
         # LCM Type: double[num_joints]
         self.positions = list(positions)
 
+    @property
+    def ts(self) -> float:
+        """The command's timestamp, under the name recorders read."""
+        return self.timestamp  # type: ignore[no-any-return]
+
     def lcm_encode(self):  # type: ignore[no-untyped-def]
         """Encode for LCM transport (dimos uses lcm_encode method name)."""
         return self.encode()  # type: ignore[no-untyped-call]

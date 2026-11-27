@@ -64,6 +64,11 @@ class MotorCommandArray:
         self.kd = list(kd)
         self.tau = list(tau)
 
+    @property
+    def ts(self) -> float:
+        """The command's timestamp, under the name recorders read."""
+        return self.timestamp  # type: ignore[no-any-return]
+
     def lcm_encode(self) -> bytes:
         return self.encode()
 

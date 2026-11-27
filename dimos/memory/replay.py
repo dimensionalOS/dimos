@@ -19,14 +19,10 @@ subscribe across all streams pins a single ``(wall_t0, replay_t0)`` anchor;
 subsequent subscribers schedule emissions against the same anchor, so
 ``replay.streams.lidar.observable()`` and ``replay.streams.odom.observable()``
 advance together. Late subscribers skip past data already behind wall time.
-
-Setup metadata (intrinsics and mount frames that keep one stamp) is not part of
-that clock: :meth:`ReplayStream.split_static` separates it from the timed rows.
 """
 
 from __future__ import annotations
 
-from functools import partial
 from pathlib import Path
 import threading
 import time
@@ -34,29 +30,18 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 import reactivex as rx
 from reactivex.abc import DisposableBase, ObserverBase, SchedulerBase
-from reactivex.disposable import (
-    CompositeDisposable,
-    Disposable,
-    SerialDisposable,
-    SingleAssignmentDisposable,
-)
+from reactivex.disposable import Disposable, SerialDisposable, SingleAssignmentDisposable
 from reactivex.observable import Observable
 from reactivex.scheduler import TimeoutScheduler
-from reactivex.subject import AsyncSubject
 
 from dimos.memory.cli.dataset import resolve_dataset
 from dimos.memory.store.base import Store, StreamAccessor
-from dimos.memory.tf import STATIC_SUFFIX
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
 
     from dimos.memory.stream import Stream
-    from dimos.memory.type.observation import Observation
-    from dimos.msgs.geometry_msgs.Transform import Transform
 
 T = TypeVar("T")
 
@@ -89,8 +74,8 @@ class Replay(Configurable):
     def __init__(self, store: Store, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.store = store
-        self._splits: dict[str, tuple[Any, ReplayStream[Any] | None]] = {}
         self._first_ts: float | None = None
+        self._loop_period: float | None = None
         self._anchor: tuple[float, float] | None = None
         self._anchor_lock = threading.Lock()
 
@@ -101,37 +86,43 @@ class Replay(Configurable):
     def list_streams(self) -> list[str]:
         return self.store.list_streams()
 
-    def stream(
-        self,
-        name: str,
-        autocast: Callable[[Any], T] | None = None,
-        *,
-        source: Stream[Any] | None = None,
-    ) -> ReplayStream[T]:
-        """Replay a named stream, optionally from a filtered observation query."""
-        return ReplayStream(replay=self, name=name, autocast=autocast, source=source)
+    def stream(self, name: str, autocast: Callable[[Any], T] | None = None) -> ReplayStream[T]:
+        return ReplayStream(replay=self, name=name, autocast=autocast)
 
     def first_ts(self) -> float | None:
-        """Return the earliest timed row's timestamp for relative seek and duration.
+        """Earliest source timestamp across non-empty streams in the underlying store.
 
-        Static metadata is often stamped long before the run, so a clip measured
-        from it would hold no sensor data. In a setup-only recording, use the
-        earliest recorded row.
+        Found once and reused. A replay reads a finished recording, and every
+        stream measures seek and duration from the same start.
         """
         if self._first_ts is None:
-            timed_starts: list[float] = []
-            setup_starts: list[float] = []
+            candidates: list[float] = []
             for name in self.store.list_streams():
-                stream: ReplayStream[Any] = self.stream(name)
                 try:
-                    _, timed = stream.split_static()
-                    source = timed if timed is not None else stream
-                    starts = timed_starts if timed is not None else setup_starts
-                    starts.append(float(source._source_stream().order_by("ts").first().ts))
+                    candidates.append(float(self.store.stream(name).order_by("ts").first().ts))
                 except (LookupError, ImportError, AttributeError):
                     continue
-            self._first_ts = min(timed_starts or setup_starts, default=None)
+            if candidates:
+                self._first_ts = min(candidates)
         return self._first_ts
+
+    def loop_period(self) -> float:
+        """Recorded time of one loop pass. Every stream wraps on it, so loops play as recorded."""
+        if self._loop_period is None:
+            firsts: list[float] = []
+            lasts: list[float] = []
+            for name in self.store.list_streams():
+                try:
+                    stream: ReplayStream[Any] = self.stream(name)
+                    first, last = stream.first_ts(), stream.last_ts()
+                except (ImportError, AttributeError):
+                    continue
+                if first is not None and last is not None:
+                    firsts.append(first)
+                    lasts.append(last)
+            span = max(lasts) - min(firsts) if firsts else 0.0
+            self._loop_period = span + _LOOP_GAP
+        return self._loop_period
 
     def _resolve_anchor(self, candidate_first_ts: float) -> tuple[float, float]:
         """Pin (wall_t0, replay_t0) on first call; return shared anchor."""
@@ -141,7 +132,7 @@ class Replay(Configurable):
             return self._anchor
 
     def pin_anchor(self, ts: float | None = None) -> None:
-        """Pin the anchor at *ts* (defaults to :meth:`first_ts`) now, before any stream
+        """Pin the anchor at *ts* (default: the earliest recorded ts) now, before any stream
         subscribes, so streams that start earlier than the first-subscribed one keep their
         frames."""
         first = self.first_ts() if ts is None else ts
@@ -167,19 +158,14 @@ class ReplayStream(Generic[T]):
         replay: Replay,
         name: str,
         autocast: Callable[[Any], T] | None = None,
-        source: Stream[Any] | None = None,
     ) -> None:
         self._replay = replay
         self._name = name
         self._autocast = autocast
-        self._source = source
 
     @property
     def name(self) -> str:
         return self._name
-
-    def _source_stream(self) -> Stream[Any]:
-        return self._replay.store.stream(self._name) if self._source is None else self._source
 
     def _decode(self, obs: Any) -> T:
         data = obs.data
@@ -190,7 +176,7 @@ class ReplayStream(Generic[T]):
     def _base_stream(self) -> Stream[Any]:
         """Memory Stream bounded by the replay window, ordered by ts."""
         cfg = self._replay.config
-        s = self._source_stream()
+        s: Stream[Any] = self._replay.store.stream(self._name)
 
         start: float | None = None
         if cfg.from_timestamp is not None:
@@ -221,58 +207,6 @@ class ReplayStream(Generic[T]):
             bound = s
 
         return bound.order_by("ts")
-
-    def split_static(self) -> tuple[T | None, ReplayStream[T] | None]:
-        """Separate setup metadata from the rows that play on the recording clock.
-
-        Returns the message to republish and the stream to schedule; either can be
-        missing. Repeated copies of one stamped camera calibration and unchanged
-        TF edges can predate the run. Other sensor samples keep their recorded
-        timing, even when they share a stamp or a value. A stream given its own
-        source or cast plays as given.
-
-        A declared static TF channel (``tf_static``) holds the last recorded mount
-        for each edge throughout the clip.
-        """
-        if self._source is not None or self._autocast is not None:
-            return None, self
-        splits = self._replay._splits
-        if self._name not in splits:
-            splits[self._name] = self._split_static()
-        return splits[self._name]
-
-    def _split_static(self) -> tuple[Any, ReplayStream[Any] | None]:
-        rows = self._source_stream()
-        payload_type = rows.data_type
-        if payload_type is not None and issubclass(payload_type, TFMessage):
-            if self._name.endswith(STATIC_SUFFIX):
-                held = {
-                    (t.frame_id, t.child_frame_id): t
-                    for row in rows.order_by("ts")
-                    for t in row.data.transforms
-                }
-                return (TFMessage(*held.values()), None) if held else (None, self)
-            frozen, edges = _frozen_tf(rows)
-            if not frozen.transforms:
-                return None, self
-            dynamic = rows.filter(partial(_has_dynamic_tf, edges))
-            try:
-                start = dynamic.order_by("ts").first().ts
-            except LookupError:
-                return frozen, None
-            return frozen, ReplayStream(
-                replay=self._replay,
-                name=self._name,
-                autocast=partial(_dynamic_tf, edges),
-                source=dynamic.time_range(start, float("inf")),
-            )
-        if payload_type is not None and issubclass(payload_type, CameraInfo) and rows.count() > 1:
-            first = rows.order_by("ts").first()
-            if first.ts == rows.last().ts:
-                encoded = first.data.lcm_encode()
-                if all(row.data.lcm_encode() == encoded for row in rows):
-                    return first.data, None
-        return None, self
 
     def first_ts(self) -> float | None:
         """First ts within the replay window (post seek/duration)."""
@@ -312,16 +246,14 @@ class ReplayStream(Generic[T]):
             return None
 
     def find_closest(self, timestamp: float, tolerance: float = 1.0) -> T | None:
-        s = self._source_stream()
+        s: Stream[Any] = self._replay.store.stream(self._name)
         try:
             obs: Any = s.at(timestamp, tolerance).first()
         except LookupError:
             return None
         return self._decode(obs)
 
-    def observable(
-        self, *, skip_late: bool = True, start_on: AsyncSubject[None] | None = None
-    ) -> Observable[T]:
+    def observable(self, *, skip_late: bool = True) -> Observable[T]:
         """Timed Observable scheduled against the Replay's shared anchor.
 
         The first subscribe across the whole :class:`Replay` pins
@@ -332,8 +264,8 @@ class ReplayStream(Generic[T]):
 
         With *skip_late* off nothing is skipped: frames already behind wall
         time are emitted at once, in order, and the rest keep their timing.
-        For grouped startup, *start_on* delays scheduling until the signal while
-        opening the cursor at subscription time. Every selected stream keeps its first row.
+        Disabled by a subscriber that is only behind by its own setup, like a module
+        subscribing every stream right after pinning the anchor.
 
         Disposing cancels pending emissions and waits for an active callback
         before releasing its iterator, so the store can then be closed safely.
@@ -354,8 +286,9 @@ class ReplayStream(Generic[T]):
             emission_lock = threading.RLock()
             pending = SerialDisposable()
 
-            def make_iterator() -> Generator[tuple[float, Any, bool], None, None]:
-                wrapped = False
+            def make_iterator() -> Generator[tuple[float, Any], None, None]:
+                # Pass k plays at ts + k * loop_period, the same for every stream.
+                offset = 0.0
                 while True:
                     emitted = False
                     obs: Any
@@ -363,15 +296,17 @@ class ReplayStream(Generic[T]):
                     try:
                         for obs in rows:
                             emitted = True
-                            yield (obs.ts, obs, wrapped)
-                            wrapped = False
+                            yield (
+                                obs.ts + offset,
+                                obs,
+                            )  # decoded at emission, keeping subscribe cheap
                     finally:
                         close = getattr(rows, "close", None)
                         if close is not None:
                             close()
                     if not loop or not emitted:
                         break
-                    wrapped = True
+                    offset += replay.loop_period()
 
             iterator = make_iterator()
 
@@ -393,7 +328,7 @@ class ReplayStream(Generic[T]):
                     observer.on_error(error)
 
             try:
-                first_ts, first_data, _ = next(iterator)
+                first_ts, first_data = next(iterator)
             except StopIteration:
                 terminate()
                 return Disposable()
@@ -401,45 +336,28 @@ class ReplayStream(Generic[T]):
                 terminate(error)
                 return Disposable()
 
-            now_replay = first_ts
-            if skip_late and start_on is None:
-                wall_t0, replay_t0 = replay._resolve_anchor(first_ts)
-                now_replay = replay_t0 + (time.time() - wall_t0) * speed
+            wall_t0, replay_t0 = replay._resolve_anchor(first_ts)
+            now_replay = replay_t0 + (time.time() - wall_t0) * speed
 
-            # Late-subscribe skip: drop frames behind the wall clock. Stop
-            # if the iterator wraps (ts < prev) — that means we've exhausted
-            # one full pass without finding a forward frame.
-            wrap_offset = 0.0
-            prev_skip = first_ts
+            # Late-subscribe skip: drop frames behind the wall clock.
             while skip_late and first_ts < now_replay - _LATE_TOLERANCE:
                 try:
-                    cand_ts, cand_data, wrapped = next(iterator)
+                    first_ts, first_data = next(iterator)
                 except StopIteration:
                     terminate()
                     return Disposable()
                 except Exception as error:
                     terminate(error)
                     return Disposable()
-                if wrapped or cand_ts < prev_skip:
-                    wrap_offset += (prev_skip - cand_ts) + _LOOP_GAP
-                    first_ts, first_data = cand_ts, cand_data
-                    break
-                first_ts, first_data = cand_ts, cand_data
-                prev_skip = cand_ts
 
-            prev_ts = first_ts
-
-            def schedule(message: tuple[float, Any, bool], wrap_off: float, prev: float) -> None:
+            def schedule(message: tuple[float, Any]) -> None:
                 if disposed.is_set():
                     return
-                ts, data, wrapped = message
-                if wrapped or ts < prev:
-                    wrap_off += (prev - ts) + _LOOP_GAP
-                target = wall_t0 + ((ts + wrap_off) - replay_t0) / speed
+                ts, data = message
+                target = wall_t0 + (ts - replay_t0) / speed
                 delay = max(0.0, target - time.time())
 
                 def emit(_s: SchedulerBase, _state: object) -> DisposableBase | None:
-                    nonlocal wrap_offset, prev_ts
                     with emission_lock:
                         if disposed.is_set():
                             return None
@@ -461,9 +379,7 @@ class ReplayStream(Generic[T]):
                         except Exception as error:
                             terminate(error)
                             return None
-                        wrap_offset = wrap_off
-                        prev_ts = ts
-                        schedule(nxt, wrap_offset, prev_ts)
+                        schedule(nxt)
                     return None
 
                 # A zero-delay callback can schedule its successor before this
@@ -473,59 +389,8 @@ class ReplayStream(Generic[T]):
                 pending.disposable = scheduled
                 scheduled.disposable = sched.schedule_relative(delay, emit)
 
-            def begin(_: None = None) -> None:
-                nonlocal wall_t0, replay_t0
-                if disposed.is_set():
-                    return
-                if start_on is not None or not skip_late:
-                    wall_t0, replay_t0 = replay._resolve_anchor(first_ts)
-                schedule((first_ts, first_data, False), wrap_offset, prev_ts)
+            schedule((first_ts, first_data))
 
-            if start_on is not None:
-                return CompositeDisposable(
-                    Disposable(dispose), start_on.subscribe(begin, on_error=terminate)
-                )
-            begin()
             return Disposable(dispose)
 
         return rx.create(subscribe)
-
-
-def _has_dynamic_tf(edges: set[tuple[str, str]], row: Observation[TFMessage]) -> bool:
-    return not row.data.transforms or any(
-        (t.frame_id, t.child_frame_id) not in edges for t in row.data.transforms
-    )
-
-
-def _dynamic_tf(edges: set[tuple[str, str]], message: TFMessage) -> TFMessage:
-    # Older recordings can carry both fixed and changing edges in one row.
-    return TFMessage(
-        *(t for t in message.transforms if (t.frame_id, t.child_frame_id) not in edges)
-    )
-
-
-def _frozen_tf(rows: Stream[TFMessage]) -> tuple[TFMessage, set[tuple[str, str]]]:
-    """Hold unchanged edges that repeat or belong to several rows at a single timestamp."""
-    one_timestamp = rows.count() > 1 and rows.order_by("ts").first().ts == rows.last().ts
-    candidates: dict[tuple[str, str], Transform | None] = {}
-    repeated: set[tuple[str, str]] = set()
-    for row in rows:
-        for transform in row.data.transforms:
-            edge = (transform.frame_id, transform.child_frame_id)
-            if edge not in candidates:
-                candidates[edge] = transform
-            elif (previous := candidates[edge]) is not None:
-                if (
-                    previous.ts == transform.ts
-                    and previous.translation.to_tuple() == transform.translation.to_tuple()
-                    and previous.rotation.to_tuple() == transform.rotation.to_tuple()
-                ):
-                    repeated.add(edge)
-                else:
-                    candidates[edge] = None
-    fixed = {
-        edge: t
-        for edge, t in candidates.items()
-        if t is not None and (one_timestamp or edge in repeated)
-    }
-    return TFMessage(*fixed.values()), set(fixed)

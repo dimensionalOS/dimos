@@ -79,6 +79,11 @@ class TrajectoryStatus:
         self.error = error
 
     @property
+    def ts(self) -> float:
+        """The status timestamp, under the name recorders read."""
+        return self.timestamp  # type: ignore[no-any-return]
+
+    @property
     def state_name(self) -> str:
         """Get human-readable state name."""
         return self.state.name

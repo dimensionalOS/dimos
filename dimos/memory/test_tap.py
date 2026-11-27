@@ -15,6 +15,7 @@
 from collections.abc import Callable
 from contextlib import ExitStack, closing
 from pathlib import Path
+import time
 from typing import Any
 
 import numpy as np
@@ -22,13 +23,14 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.global_config import global_config
 from dimos.core.stream import In, Transport
 from dimos.experimental.memory import rust_cli_recorder
 from dimos.memory import tap
 from dimos.memory.module import Recorder
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
+from dimos.memory.type import recording
 from dimos.msgs.control_msgs.ControlValues import ControlValues
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -215,9 +217,8 @@ def test_recording_delegates_to_rust_session(
     session.stop.assert_called_once_with()
 
 
-@pytest.mark.parametrize("ts", [42.25, 0.0])
-def test_records_tf_and_odom_at_source_time(sqlite_store, ts, monkeypatch):
-    monkeypatch.setattr(global_config, "simulation", "mujoco")
+def test_records_tf_and_odom_at_source_time(sqlite_store):
+    ts = 42.25
     older = Transform(ts=ts, frame_id="base", child_frame_id="sensor")
     batches = [
         TFMessage(Transform(ts=ts + 1.0, child_frame_id="base"), older),
@@ -247,25 +248,28 @@ def test_records_tf_and_odom_at_source_time(sqlite_store, ts, monkeypatch):
     assert (replay.first_ts(), replay.last_ts()) == (ts, ts + 2.0)
 
 
-def test_unset_stamps_share_the_wall_clock_replay_window(sqlite_store, mocker):
-    wall = 1_800_000_000.0
-    mocker.patch.object(tap.time, "time", return_value=wall)
+def test_unstamped_messages_index_at_arrival_and_warn_once_per_topic(sqlite_store, mocker):
+    warning = mocker.patch.object(recording.logger, "warning")
+    before = time.time()
     with closing(TransportRecorder(sqlite_store)) as recorder:
-        odom, frames = _Transport(), _Transport()
+        odom, notes, frames = _Transport(), _Transport(), _Transport()
         recorder.tap("odom", PoseStamped, odom)
+        recorder.tap("notes", String, notes)
         recorder.tap("tf", TFMessage, frames)
-        odom.publish(PoseStamped(ts=0.0))
-        frames.publish(TFMessage(Transform(ts=0.0), Transform(ts=wall + 0.25)))
+        for _ in range(2):
+            odom.publish(PoseStamped(ts=0.0))
+        notes.publish(String("unstamped"))
+        frames.publish(TFMessage(Transform(ts=0.0), Transform(ts=42.25)))
+    after = time.time()
 
-    replay = sqlite_store.replay(duration=1.0)
-    replay.pin_anchor()
-    assert replay.first_ts() == wall
-    assert replay._anchor is not None and replay._anchor[1] == wall
-    assert [(ts, pose.ts) for ts, pose in replay.stream("odom").iterate_ts()] == [(wall, 0.0)]
-    assert [(ts, batch.transforms[0].ts) for ts, batch in replay.stream("tf").iterate_ts()] == [
-        (wall, 0.0),
-        (wall + 0.25, wall + 0.25),
-    ]
+    odom_rows = sqlite_store.stream("odom", PoseStamped).to_list()
+    assert len(odom_rows) == 2
+    assert all(before <= row.ts <= after and row.data.ts == 0.0 for row in odom_rows)
+    assert before <= sqlite_store.stream("notes", String).first().ts <= after
+    tf_rows = sqlite_store.stream("tf", TFMessage).order_by("id").to_list()
+    assert before <= tf_rows[0].ts <= after
+    assert tf_rows[1].ts == 42.25
+    assert sorted(call.args[1] for call in warning.call_args_list) == ["notes", "odom", "tf"]
 
 
 @pytest.mark.parametrize(
@@ -274,17 +278,14 @@ def test_unset_stamps_share_the_wall_clock_replay_window(sqlite_store, mocker):
         Header(0.25),
         JointCommand(timestamp=0.25),
         ControlValues("test", source_ts=0.25),
-        String("unstamped"),
     ],
 )
-def test_tap_indexes_other_source_clocks_and_unstamped_messages(sqlite_store, message, mocker):
+def test_tap_records_types_that_keep_their_stamp_under_another_name(sqlite_store, message):
     transport = _Transport()
-    mocker.patch.object(tap.time, "time", return_value=99.0)
     with closing(TransportRecorder(sqlite_store)) as recorder:
         recorder.tap("samples", type(message), transport)
         transport.publish(message)
-    row = sqlite_store.stream("samples", type(message)).first()
-    assert row.ts == (99.0 if isinstance(message, String) else 0.25)
+    assert sqlite_store.stream("samples", type(message)).first().ts == 0.25
 
 
 class _SourceRecorder(Recorder):
@@ -292,10 +293,7 @@ class _SourceRecorder(Recorder):
     frames: In[TFMessage]
 
 
-@pytest.mark.parametrize("simulation", ["", "mujoco"])
-def test_module_recorder_preserves_source_and_arrival_clocks(
-    tmp_path, mocker, wait_until, simulation
-):
+def test_module_recorder_preserves_source_and_arrival_clocks(tmp_path, mocker, wait_until):
     path = tmp_path / "memory.db"
     mocker.patch.object(ZenohRPC, "start")
     mocker.patch.object(ZenohRPC, "serve_module_rpc")
@@ -304,7 +302,6 @@ def test_module_recorder_preserves_source_and_arrival_clocks(
         record_tf=True,
         poseless_streams=["frames", "odom"],
         rpc_transport=ZenohRPC,
-        g=GlobalConfig(simulation=simulation),
     )
     module.odom.transport = _Transport()
     module.frames.transport = _Transport()
@@ -324,19 +321,13 @@ def test_module_recorder_preserves_source_and_arrival_clocks(
         )
     with SqliteStore(path=str(path), must_exist=True) as store:
         odom = store.stream("odom").first()
-        assert odom.ts == (0.0 if simulation else odom.tags["reception_ts"])
+        assert odom.ts == odom.tags["reception_ts"]
         assert odom.data.ts == 0.0
         frames = store.stream("frames").order_by("id").to_list()
-        assert [row.ts for row in frames] == [
-            0.0 if simulation else frames[0].tags["reception_ts"],
-            42.25,
-        ]
+        assert [row.ts for row in frames] == [frames[0].tags["reception_ts"], 42.25]
         assert [row.data.transforms[0].ts for row in frames] == [0.0, 42.25]
         assert frames[0].tags["reception_ts"] == frames[1].tags["reception_ts"]
         dedicated = store.stream("tf", TFMessage).order_by("id").to_list()
         assert [row.data.transforms[0].ts for row in dedicated] == [0.0, 42.25]
         assert dedicated[1].ts == 42.25
-        if simulation:
-            assert dedicated[0].ts == 0.0
-        else:
-            assert dedicated[0].ts > 42.25
+        assert dedicated[0].ts > 42.25

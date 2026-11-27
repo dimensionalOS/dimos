@@ -50,6 +50,4 @@ def make_zenoh_config(settings: Mapping[str, Any]) -> zenoh.Config:
         if not value and name in _DEFAULTED_WHEN_EMPTY:
             continue
         config.insert_json5(ZENOH_KEYS[name], json.dumps(value))
-    # Shared memory silently loses >3 kB payloads between some sessions.
-    config.insert_json5("transport/shared_memory/enabled", "false")
     return config

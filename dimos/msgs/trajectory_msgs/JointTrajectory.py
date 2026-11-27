@@ -71,6 +71,11 @@ class JointTrajectory:
         else:
             self.duration = 0.0
 
+    @property
+    def ts(self) -> float:
+        """The creation timestamp, under the name recorders read."""
+        return self.timestamp  # type: ignore[no-any-return]
+
     def sample(self, t: float) -> tuple[list[float], list[float]]:
         """
         Sample the trajectory at time t using linear interpolation.

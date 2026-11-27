@@ -23,22 +23,21 @@ from plum import dispatch
 
 class Header(LCMHeader):  # type: ignore[misc]
     msg_name = "std_msgs.Header"
-    ts: float
 
     @dispatch
     def __init__(self) -> None:
         """Initialize a Header with current time and empty frame_id."""
-        self.ts = time.time()
-        sec = int(self.ts)
-        nsec = int((self.ts - sec) * 1_000_000_000)
+        ts = time.time()
+        sec = int(ts)
+        nsec = int((ts - sec) * 1_000_000_000)
         super().__init__(seq=0, stamp=LCMTime(sec=sec, nsec=nsec), frame_id="")
 
     @dispatch  # type: ignore[no-redef]
     def __init__(self, frame_id: str) -> None:
         """Initialize a Header with current time and specified frame_id."""
-        self.ts = time.time()
-        sec = int(self.ts)
-        nsec = int((self.ts - sec) * 1_000_000_000)
+        ts = time.time()
+        sec = int(ts)
+        nsec = int((ts - sec) * 1_000_000_000)
         super().__init__(seq=1, stamp=LCMTime(sec=sec, nsec=nsec), frame_id=frame_id)
 
     @dispatch  # type: ignore[no-redef]
@@ -51,9 +50,9 @@ class Header(LCMHeader):  # type: ignore[misc]
     @dispatch  # type: ignore[no-redef]
     def __init__(self, timestamp: datetime, frame_id: str = "") -> None:
         """Initialize a Header with datetime object and frame_id."""
-        self.ts = timestamp.timestamp()
-        sec = int(self.ts)
-        nsec = int((self.ts - sec) * 1_000_000_000)
+        ts = timestamp.timestamp()
+        sec = int(ts)
+        nsec = int((ts - sec) * 1_000_000_000)
         super().__init__(seq=1, stamp=LCMTime(sec=sec, nsec=nsec), frame_id=frame_id)
 
     @dispatch  # type: ignore[no-redef]
@@ -78,7 +77,7 @@ class Header(LCMHeader):  # type: ignore[misc]
     @classmethod
     def lcm_decode(cls, data: bytes) -> Header:
         # The generated decoder resolves nested field types from the decoding class's
-        # own annotations, which here hold only ``ts``: decode as the LCM type and wrap.
+        # own annotations, which here hold none: decode as the LCM type and wrap.
         return cls(LCMHeader.lcm_decode(data))
 
     @classmethod
@@ -91,6 +90,11 @@ class Header(LCMHeader):  # type: ignore[misc]
     def timestamp(self) -> float:
         """Get timestamp as Unix time (float)."""
         return self.stamp.sec + (self.stamp.nsec / 1_000_000_000)  # type: ignore[no-any-return]
+
+    @property
+    def ts(self) -> float:
+        """The stamp as Unix time, under the name recorders read."""
+        return self.timestamp
 
     @property
     def datetime(self) -> datetime:

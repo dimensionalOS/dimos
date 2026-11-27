@@ -25,7 +25,7 @@ from __future__ import annotations
 from functools import partial
 from pathlib import Path
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
@@ -37,6 +37,12 @@ from dimos.memory.store.base import Store
 from dimos.memory.tap import check_topics, matching
 from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from reactivex import Observable
+
+    from dimos.memory.replay import Replay, ReplayStream
+    from dimos.msgs.protocol import DimosMsg
 
 logger = setup_logger()
 
@@ -124,17 +130,30 @@ class ReplayModule(Module):
         store: Store = open_store(path)
         store.start()
         self._store = store
-        replay = store.replay(
+        replay: Replay = store.replay(
             speed=self.config.speed,
             loop=self.config.loop,
             seek=self.config.seek,
             duration=self.config.duration,
         )
+        # Open every stream before pinning the anchor, so setup time does not
+        # put the playback behind the wall clock from the start.
+        streams: dict[str, ReplayStream[DimosMsg]] = {
+            name: replay.stream(name) for name in self.outputs
+        }
+        starts = [ts for stream in streams.values() if (ts := stream.first_ts()) is not None]
+
         progress = ReplayProgress(str(path))
-        progress.start(replay, (replay.stream(name) for name in self.outputs))
-        for name, port in self.outputs.items():
+        progress.start(replay, streams.values())
+        replay.pin_anchor(min(starts) if starts else None)
+        for name, stream in streams.items():
+            port = self.outputs[name]
             logger.info("Replaying %s -> %s", name, port)
-            self.register_disposable(progress.play(replay.stream(name)).subscribe(port.publish))
+            # Not a late subscriber, just behind by the setup of the streams
+            # subscribed before it, which on a loaded machine exceeds the
+            # late tolerance and would drop its first frames.
+            timed: Observable[DimosMsg] = stream.observable(skip_late=False)
+            self.register_disposable(progress.track(timed).subscribe(port.publish))
         progress.seal()
 
     @rpc

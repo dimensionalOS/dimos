@@ -90,6 +90,11 @@ class ControlValues:
         self.interface_names = names
         self.values = vals
 
+    @property
+    def ts(self) -> float:
+        """The publisher's stamp, under the name recorders read."""
+        return self.source_ts  # type: ignore[no-any-return]
+
     def as_dict(self) -> dict[str, float]:
         """Map each interface name to its value.
 

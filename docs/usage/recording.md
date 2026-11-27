@@ -13,13 +13,11 @@ Bare `--record` means `--record sqlite`. SQLite lands at
 `recordings/<run-id>/memory.db`; MCAP lands at
 `recordings/<run-id>/memory.mcap`. The root is under the checkout, or
 `~/.local/state/dimos/recordings/` for an installed package. `<run-id>` is the
-same `YYYYMMDD-HHMMSS-<blueprint>` used by the run's `logs/` directory.
+same `YYYYMMDD-HHMMSS-<4 hex>-<blueprint>` used by the run's `logs/` directory.
 
-Recorders index supported stamped messages at their source time. On a wall-clock
-run, a zero stamp is treated as unset and indexed at packet arrival. Its payload
-keeps the original zero. Simulation and replay runs preserve zero as a source
-time. For an external simulation, use `--record-zero-stamp source` before
-`run`. Use `--record-zero-stamp arrival` to treat zero as unset in any run.
+Recorders index each message at its source time, its `ts`. A missing or zero
+`ts` means the publisher never set it: that message is indexed at packet arrival,
+its payload keeps the original zero, and the recorder warns once per topic.
 A TF batch produces one row per transform, each indexed by its own header stamp.
 Pose arrays such as `pgo_keyframes` use the array header. The Rust engine keeps
 arrival time in MCAP log time and in SQLite reception tags for non-TF streams.
@@ -80,7 +78,7 @@ none of the selected streams is recordable, startup fails.
 
 `dimos mem summary` and `dimos mem rerun` accept a `.db` or `.mcap` path, a
 dataset name in cwd/project/data (including LFS), or a recording folder name
-such as `20260830-120000-unitree-go2`. They also find cloud downloads by their
+such as `20260830-120000-1a2b-unitree-go2`. They also find cloud downloads by their
 stored filename or stem, original filename or stem, timestamp-and-ID tag, or
 upload ID prefix. Downloads store only the first eight ID characters; use that
 stored ID or a shorter unique prefix, not the full upload ID.
@@ -121,17 +119,6 @@ dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
 dimos --replay --replay-db recordings/<run-id>/memory.mcap run unitree-go2
 ```
 
-Sensor replay opens all selected streams before starting the playback clock at their earliest timed row.
-Initial subscriptions include the first recorded rows even when opening another sensor takes time.
-Replay republishes camera calibration when every row of a `CameraInfo` stream repeats the same
-message at one timestamp. On ordinary TF, replay holds an edge when its transform stamp and pose
-repeat unchanged. If the entire stream has multiple rows at one recording timestamp, replay
-also holds edges that appear just once.
-On a declared static channel such as `tf_static`, replay publishes the last recorded mount for
-each edge at startup and repeats it every second. Raw stream iteration retains all mount revisions.
-Other samples play in order even at the same timestamp. Relative `seek` and `duration` start
-at the first timed row, or at the earliest recorded row if the recording contains only setup data.
-
 An MCAP replay loads each replayed stream into memory at start, so memory use grows with the length of the recording.
 
 `--replay` swaps the robot connection for the recording; it needs `lidar`, `odom`, and `color_image`, so record all streams (the default) if you intend to replay. Poses are not stored per frame; `tf` is recorded like any other stream and `dimos map global` uses it to register clouds.
@@ -150,7 +137,7 @@ dimos map pose-fill recordings/<run-id>/memory.db --target color_image --pose-so
 
 - `--target` is the stream that gets the poses (default `lidar`).
 - `--pose-source` is a stream of pose messages, such as `PoseStamped` or `Odometry` (default `odom`). Each target observation takes the pose nearest in time.
-- The copy lands beside the source as `memory_posed.db`. Run the command on the copy to fill another stream.
+- By default, the copy lands beside the source as `<source>_posed.db`. The printed `dimos mem summary` command shows pose counts for the copied streams. Run pose-fill on the copy to fill another stream.
 - Target observations with no pose within `--tolerance` (default 0.1 s) are left out of the copy.
 - MCAP recordings cannot be pose-filled. Record with `--record sqlite` for spatial queries.
 
