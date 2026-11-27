@@ -504,7 +504,7 @@ Without `--dtop` on the run, the monitor only shows a hint to add it. A stack st
 
 ### `dimos rerun-bridge`
 
-Launch the Rerun visualization bridge as a standalone process (outside of a blueprint). It takes the bridge module's settings as flags or as `RERUNBRIDGEMODULE__*` environment variables, and serves the web viewer by default. Global options such as `--transport` are accepted after the command as well.
+Launch the Rerun visualization bridge as a standalone process (outside of a blueprint). It takes the bridge module's settings as flags or as `RERUNBRIDGEMODULE__*` environment variables, and serves the web viewer by default. Global options such as `--transport` are accepted after the command as well. On Linux the native viewer can use X11, a named Wayland display, or an inherited Wayland socket. Without a usable display, the bridge still serves the web viewer.
 
 ```bash
 dimos rerun-bridge --rerun-open web --memory-limit 4GB
