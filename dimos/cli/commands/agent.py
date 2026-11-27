@@ -19,6 +19,7 @@ from __future__ import annotations
 import fcntl
 import getpass
 import hashlib
+from importlib.resources import files
 import json
 import os
 from pathlib import Path
@@ -52,7 +53,7 @@ class _NodeFallback(TyperGroup):
 
 
 class _Verbatim(TyperCommand):
-    """Parses nothing, so the Node CLI receives every argument, `--` and `--help` included."""
+    """Keeps the original arguments, including the end-of-options separator."""
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
         ctx.args = list(args)
@@ -76,7 +77,7 @@ def agent_main(ctx: typer.Context) -> None:
 
     With no command, opens a terminal on a new conversation, starting the gateway if needed.
 
-    Every command but load and service runs in the Node CLI with the same arguments.
+    Help is available in the Python package. Other commands except load and service run in the Node CLI.
     """
     if ctx.invoked_subcommand is None:
         _exec_node([])
@@ -176,7 +177,44 @@ def service_uninstall(no_systemctl: bool = NO_SYSTEMCTL) -> None:
         _systemctl("daemon-reload")
 
 
+def _requests_node_help(args: list[str], options: dict[str, dict[str, str | bool]]) -> bool:
+    """Recognize Node's help flag or first positional `help`; leave parse errors to Node."""
+    words = iter(args)
+    command = None
+    help_flag = False
+    for word in words:
+        if word == "--":
+            if command is None:
+                command = next(words, None)
+            break
+        if word == "-" or not word.startswith("-"):
+            if command is None:
+                command = word
+            continue
+
+        name, equals, _ = word.partition("=")
+        option = options.get(name.removeprefix("--"))
+        if option is None:
+            return False
+        if option["type"] == "string":
+            if not equals:
+                value = next(words, None)
+                if value is None or (value.startswith("-") and value != "-"):
+                    return False
+        elif equals:
+            return False
+        elif name == "--help":
+            help_flag = True
+    return help_flag or command == "help"
+
+
 def _exec_node(args: list[str]) -> NoReturn:
+    if "--help" in args or "help" in args:
+        spec = files("dimos").joinpath("agents/cli/command-line.json").read_text(encoding="utf-8")
+        command_line = json.loads(spec)
+        if _requests_node_help(args, command_line["options"]):
+            typer.echo("\n".join(command_line["usage"]))
+            raise typer.Exit()
     argv = _node_argv(args)
     os.execve(argv[0], argv, _node_environment())
 

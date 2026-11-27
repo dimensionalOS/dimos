@@ -1,0 +1,34 @@
+{
+  "usage": [
+    "dimos agent [--conversation ID] [--view] [--cwd DIR]              open a terminal (a new conversation without --conversation)",
+    "dimos agent run [--conversation ID] [--cwd DIR] [--json] PROMPT   submit one input and print the answer, as JSON lines with --json",
+    "dimos agent conversations                                         list conversations, newest first",
+    "dimos agent gateway [--daemon]                                    run the gateway, in the background with --daemon",
+    "dimos agent status [--json]                                       the gateway, DimOS, conversations, modules, jobs, streams",
+    "dimos agent stop | version"
+  ],
+  "options": {
+    "conversation": {
+      "type": "string"
+    },
+    "view": {
+      "type": "boolean",
+      "default": false
+    },
+    "json": {
+      "type": "boolean",
+      "default": false
+    },
+    "daemon": {
+      "type": "boolean",
+      "default": false
+    },
+    "cwd": {
+      "type": "string"
+    },
+    "help": {
+      "type": "boolean",
+      "default": false
+    }
+  }
+}
