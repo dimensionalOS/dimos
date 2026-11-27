@@ -87,6 +87,15 @@ def _fake_robocasa(root: Path) -> Path:
     return root
 
 
+def _use_data_root(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+    """Resolve benchmark files under ``root``, with no generated export to take precedence."""
+    scenes = "dimos.evals.environments.lib.benchmark_scenes"
+    monkeypatch.setattr(f"{scenes}.get_data", lambda name: root / name)
+    monkeypatch.setattr(
+        f"{scenes}.get_generated_data_dir", lambda extra_path="": root / "generated" / extra_path
+    )
+
+
 @pytest.fixture
 def data_root(tmp_path: Path) -> Path:
     _fake_xarm7(tmp_path)
@@ -105,10 +114,7 @@ def exported(data_root: Path) -> Path:
 
 
 def test_export_loadable_and_autogen(exported: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "dimos.evals.environments.lib.benchmark_scenes.get_data",
-        lambda name: exported / name,
-    )
+    _use_data_root(monkeypatch, exported)
     for root, body in (("libero_pro", "akita_black_bowl"), ("robocasa", "apple")):
         manifest = load_manifest(root)
         scene = exported / root / manifest.cases[0].scene
@@ -191,10 +197,7 @@ def test_local_manifest_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
             ],
         },
     )
-    monkeypatch.setattr(
-        "dimos.evals.environments.lib.benchmark_scenes.get_data",
-        lambda name: tmp_path / name,
-    )
+    _use_data_root(monkeypatch, tmp_path)
     suite = cases_from_manifest(load_manifest("fixture_bench"))
     assert suite[0].id == "fixture_lift"
     assert suite[0].environment.config.tracked_bodies == ("cup",)
