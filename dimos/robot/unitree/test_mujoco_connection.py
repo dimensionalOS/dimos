@@ -39,7 +39,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree import mujoco_connection
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
 from dimos.simulation.mujoco.config import MujocoConfig
-from dimos.utils import data, logging_config
+from dimos.utils import logging_config
 
 
 class _FakeShmNames:
@@ -136,7 +136,7 @@ def _bare_connection(
 ) -> MujocoConnection:
     """A MujocoConnection whose subprocess, shared memory and logging are doubles."""
     monkeypatch.setattr(mujoco_connection, "get_data", lambda _name: None)
-    monkeypatch.setattr(data, "get_data", lambda _name: None)
+    monkeypatch.setattr(mujoco_connection, "unitree_meshes", lambda: None)
     monkeypatch.setattr(mujoco_connection, "ShmWriter", _FakeShmWriter)
     monkeypatch.setattr(mujoco_connection.subprocess, "Popen", popen)
     monkeypatch.setattr(mujoco_connection.atexit, "register", lambda *_args: None)
