@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -21,9 +23,11 @@ from numpy.typing import NDArray
 import pytest
 
 from dimos.navigation.bench.ground_truth import GroundTruth
+from dimos.navigation.bench.paired import Attempt, pair
 from dimos.navigation.bench.suite import (
     APPROACH_M,
     GOAL_CLEARANCE,
+    HIDDEN_POLE,
     MINED,
     NARROW_DOOR_M,
     REFERENCE_ENVELOPE,
@@ -72,10 +76,50 @@ def test_freeze_bins_routable_cases_that_round_trip(tmp_path: Path) -> None:
     manifest.save(tmp_path / "suite.json")
     loaded = Manifest.load(tmp_path / "suite.json")
     assert loaded == manifest
-    loaded.check_drift()
-    stale = replace(loaded.cases[0], scene_digest="stale")
+    replace(
+        loaded, cases=[replace(c, scene_digest="other-host") for c in loaded.cases]
+    ).check_drift()
+    stale = replace(loaded.cases[0], seed=loaded.cases[0].seed + 1)
     with pytest.raises(RuntimeError, match=stale.id):
         replace(loaded, cases=[stale]).check_drift()
+
+
+def test_frozen_probe_tolerates_last_bit_differences_but_detects_changed_geometry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Different libm implementations can round an angle to adjacent floats.
+    atan2 = math.atan2
+    probe = replace(HIDDEN_POLE, seeds=(3,), levels=(0.02,), control=None)
+    with monkeypatch.context() as patch:
+        patch.setattr(math, "atan2", lambda y, x: math.nextafter(atan2(y, x), math.inf))
+        freeze_probe(probe).save(tmp_path / "suite.json")
+
+    frozen = Manifest.load(tmp_path / "suite.json")
+    (foreign,) = frozen.cases
+    (local,) = freeze_probe(probe).cases
+    assert foreign.scene_digest != local.scene_digest
+    frozen.check_drift()
+    paired = pair({foreign.id: Attempt(foreign, "success")}, {local.id: Attempt(local, "success")})
+    assert len(paired.pairs) == 1
+
+    # Older manifests have only the exact digest. Keep their original drift check.
+    path = tmp_path / "suite.json"
+    legacy = json.loads(path.read_text())
+    del legacy["cases"][0]["portable_scene_digest"]
+    path.write_text(json.dumps(legacy))
+    with pytest.raises(RuntimeError, match=foreign.id):
+        Manifest.load(path).check_drift()
+    legacy["cases"][0]["scene_digest"] = local.scene_digest
+    path.write_text(json.dumps(legacy))
+    old = Manifest.load(path)
+    old.check_drift()
+    assert pair(
+        {local.id: Attempt(old.cases[0], "success")}, {local.id: Attempt(local, "success")}
+    ).pairs
+
+    changed = replace(foreign, params={"pole_width": 0.03})
+    with pytest.raises(RuntimeError, match=foreign.id):
+        replace(frozen, cases=[changed]).check_drift()
 
 
 def _one_start_per_seed(manifest: Manifest) -> None:

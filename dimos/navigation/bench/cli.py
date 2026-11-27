@@ -96,7 +96,10 @@ def freeze_command(
     samples_per_scene: int = typer.Option(60, help="Random start-goal pairs mined per scene."),
     cases_per_bin: int = typer.Option(3, help="Mined cases kept per difficulty bin."),
 ) -> None:
-    """Generate, validate and bin the suite's cases into a manifest."""
+    """Generate, validate and bin the suite's cases into a manifest.
+
+    Freeze an older suite again on its original host to add portable scene fingerprints.
+    """
     from dimos.navigation.bench.suite import PROBES, FreezeConfig, freeze, freeze_probe
 
     if probe is not None:
