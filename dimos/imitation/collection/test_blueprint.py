@@ -14,12 +14,9 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 from dimos.control.contract.keys import SEPARATOR
-from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -38,6 +35,7 @@ from dimos.imitation.collection.recorder import CollectionModule
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.get_all_blueprints import get_by_name
+from dimos.robot.manipulators.common.mock import coordinator_mock
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import unitree_g1_teleop
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
@@ -180,8 +178,7 @@ def test_collection_records_a_camera_that_publishes_on_a_bidirectional_port(
 ) -> None:
     # as in simulation: the teleop stack brings the camera, no RealSense is added
     monkeypatch.setattr(collection.global_config, "simulation", "mujoco")
-    arm = SimpleNamespace(joints=["joint1"])
-    teleop = autoconnect(ControlCoordinator.blueprint(hardware=[arm]), DuplexCamera.blueprint())
+    teleop = autoconnect(coordinator_mock, DuplexCamera.blueprint())
 
     recorder, *_ = collection._collection_components("demo", teleop, task="Teleoperate")
 
