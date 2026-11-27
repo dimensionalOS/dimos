@@ -338,7 +338,8 @@ def _npm(node: str, args: list[str], package: Path, environment: dict[str, str])
 
 def _node_environment() -> dict[str, str]:
     """This process's environment, plus where DimOS is. Of what `dimos` loaded from .env,
-    only GlobalConfig settings stay, such as the transport and the robot's address.
+    only GlobalConfig settings stay, such as the transport and the robot's address, and
+    McpServer's settings.
 
     bash inherits the gateway's environment, and .env holds API keys.
     """
@@ -352,7 +353,12 @@ def _node_environment() -> dict[str, str]:
     environment = {
         name: value
         for name, value in os.environ.items()
-        if name not in loaded or name.lower() in settings
+        if name not in loaded
+        or name.lower() in settings
+        # The gateway starts `dimos agent load` in the checkout, which does not read the
+        # working directory's .env again. Without these the loader dials another endpoint
+        # than DIMOS_MCP_URL below, which is built from them.
+        or name.lower().startswith("mcpserver__")
     }
     try:
         mcp_url = mcp_server_url()

@@ -91,8 +91,8 @@ export const runLink: Command = async ({ paths, startGateway }) => {
 
 Python's `dimos agent` checks that `node` is version 24 or 26. Except for `gateway`, `stop` and `status`, it runs
 `npm ci` when `package.json` or `package-lock.json` changed and `npm run build` when a file the last build read changed.
-It drops the variables `dimos` loaded from `.env` that are not `GlobalConfig` settings, so API keys there stay out of
-the gateway, and adds six that say where dimOS is. Then it replaces itself with `node dist/cli.js`.
+It drops the variables `dimos` loaded from `.env` that are not `GlobalConfig` or `McpServer` settings, so API keys
+there stay out of the gateway, and adds six that say where dimOS is. Then it replaces itself with `node dist/cli.js`.
 
 | Variable          | Value                                                                           |
 | ----------------- | ------------------------------------------------------------------------------- |
