@@ -94,7 +94,7 @@ def test_dataset_reads_wal_and_rejects_writes(tmp_path: Path) -> None:
             assert stream.last().data == 2.5
             with pytest.raises(sqlite3.OperationalError, match="readonly"):
                 stream.append(5.0, ts=3.0)
-            with pytest.raises(KeyError, match="missing"):
+            with pytest.raises(sqlite3.OperationalError, match="missing"):
                 reader.stream("missing", float)
         assert writer.list_streams() == ["values1"]
         assert values.count() == 2
@@ -208,7 +208,7 @@ def test_sealed_recording_still_reads_committed_wal(tmp_path: Path) -> None:
         try:
             with open_dataset(path) as reader:
                 assert reader.stream("measure").last().data == 2.5
-                with pytest.raises(KeyError, match="missing"):
+                with pytest.raises(sqlite3.OperationalError, match="missing"):
                     reader.stream("missing", float)
         finally:
             tmp_path.chmod(0o755)
