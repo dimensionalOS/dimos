@@ -13,15 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import sys
-import threading
+from dataclasses import dataclass
 import time
 from typing import Any
 
 import pygame
-
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 
 # Gate event codes published on KeyboardTeleop.operator_command for tools that need
 # operator-confirmation per step. Defined in a dependency-free module so offline
@@ -36,14 +32,10 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.Int8 import Int8
+from dimos.teleop.keyboard.window import KeyboardWindow, WindowProcess, check_keyboard_display
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
-
-# Force X11 driver on Linux to avoid OpenGL threading issues. macOS has no X11
-# driver (SDL uses cocoa); forcing x11 there makes pygame.display fail outright.
-if sys.platform.startswith("linux"):
-    os.environ["SDL_VIDEODRIVER"] = "x11"
 
 DEFAULT_LINEAR_SPEED: float = 0.5  # m/s
 DEFAULT_ANGULAR_SPEED: float = 0.8  # rad/s
@@ -96,8 +88,6 @@ class KeyboardTeleop(Module):
     publish into a stream nobody listens to.
     """
 
-    # pygame.display supports one window per process; multi-robot blueprints
-    # run one teleop per robot, so each instance needs its own worker.
     dedicated_worker = True
 
     cmd_vel: Out[Twist]
@@ -107,13 +97,7 @@ class KeyboardTeleop(Module):
     # to 0.0–0.9 m so an operator can dial precision live during a run.
     e_max: Out[Float32]
 
-    _stop_event: threading.Event
-    _keys_held: set[int] | None = None
-    _keys_down: set[int]
-    _thread: threading.Thread | None = None
-    _screen: pygame.Surface | None = None
-    _clock: pygame.time.Clock | None = None
-    _fonts: dict[tuple[int, bool], pygame.font.Font] | None = None
+    _window: WindowProcess | None = None
 
     def __init__(
         self,
@@ -126,7 +110,6 @@ class KeyboardTeleop(Module):
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        self._stop_event = threading.Event()
         self.linear_speed = linear_speed
         self.angular_speed = angular_speed
         self.boost_multiplier = boost_multiplier
@@ -141,56 +124,80 @@ class KeyboardTeleop(Module):
         # from another source (e.g. nav-stack-driven precision controller)
         # but still want the operator's live e_max input.
         self.disable_movement = disable_movement
-        self._was_active = False
-        self._estop_at = 0.0
         # Namespaced instances (e.g. "robot0/keyboardteleop") get their own
         # window title so multi-robot teleop windows are distinguishable.
         self._window_title = self.config.instance_name or "Keyboard Teleop"
 
     @rpc
     def start(self) -> None:
-        super().start()
+        if self._window is not None:
+            if self._window.running:
+                return
+            self._window.stop()
+        else:
+            super().start()
 
-        self._keys_held = set()
-        self._keys_down = set()
-        self._stop_event.clear()
+        self._window = WindowProcess(
+            __name__,
+            {
+                "linear_speed": self.linear_speed,
+                "angular_speed": self.angular_speed,
+                "boost_multiplier": self.boost_multiplier,
+                "slow_multiplier": self.slow_multiplier,
+                "publish_only_when_active": self.publish_only_when_active,
+                "disable_movement": self.disable_movement,
+                "title": self._window_title,
+            },
+            self.outputs,
+            self._publish_stop,
+        )
 
-        self._thread = threading.Thread(target=self._pygame_loop, daemon=True)
-        self._thread.start()
+    def _publish_stop(self) -> None:
+        self.cmd_vel.publish(Twist())
 
     @rpc
     def stop(self) -> None:
-        stop_twist = Twist()
-        stop_twist.linear = Vector3(0, 0, 0)
-        stop_twist.angular = Vector3(0, 0, 0)
-        self.cmd_vel.publish(stop_twist)
-
-        self._stop_event.set()
-
-        if self._thread is not None:
-            self._thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
-
+        if self._window is not None:
+            self._window.stop()
+            self._window = None
+        else:
+            self._publish_stop()
         super().stop()
 
-    def _pygame_loop(self) -> None:
-        if self._keys_held is None:
-            raise RuntimeError("_keys_held not initialized")
 
-        pygame.init()
+@dataclass
+class _DriveWindow(KeyboardWindow):
+    linear_speed: float
+    angular_speed: float
+    boost_multiplier: float
+    slow_multiplier: float
+    publish_only_when_active: bool
+    disable_movement: bool
+    title: str
+
+    def open(self) -> None:
+        self._keys_held: set[int] = set()
+        self._keys_down: set[int] = set()
+        self._was_active = False
+        self._estop_at = 0.0
+        pygame.display.init()
+        check_keyboard_display(pygame.display.get_driver())
+        pygame.font.init()
         self._screen = pygame.display.set_mode((_WINDOW_WIDTH, _WINDOW_HEIGHT), pygame.SWSURFACE)
-        pygame.display.set_caption(self._window_title)
+        pygame.display.set_caption(self.title)
         self._clock = pygame.time.Clock()
-        self._fonts = {}
+        self._fonts: dict[tuple[int, bool], pygame.font.Font] = {}
 
-        while not self._stop_event.is_set():
+    def run(self) -> None:
+        while not self.connection.poll():
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
-                    self._stop_event.set()
+                    return
                 elif event.type == pygame.KEYDOWN:
                     self._keys_held.add(event.key)
                     self._keys_down.add(event.key)
                     if event.key in _JOY_KEY_SET:
-                        self.joystick.publish(Joy(buttons=joy_buttons(self._keys_down)))
+                        self.publish("joystick", Joy(buttons=joy_buttons(self._keys_down)))
 
                     if event.key == pygame.K_SPACE:
                         # Emergency stop - clear all keys and send zero twist
@@ -198,27 +205,27 @@ class KeyboardTeleop(Module):
                         stop_twist = Twist()
                         stop_twist.linear = Vector3(0, 0, 0)
                         stop_twist.angular = Vector3(0, 0, 0)
-                        self.cmd_vel.publish(stop_twist)
+                        self.publish("cmd_vel", stop_twist)
                         self._estop_at = time.monotonic()
                         logger.warning("EMERGENCY STOP!")
                     elif event.key == pygame.K_ESCAPE:
                         # ESC quits
-                        self._stop_event.set()
+                        return
                     elif event.key == pygame.K_RETURN:
-                        self.operator_command.publish(Int8(GATE_ADVANCE))
+                        self.publish("operator_command", Int8(GATE_ADVANCE))
                     elif event.key == pygame.K_k:
-                        self.operator_command.publish(Int8(GATE_SKIP))
+                        self.publish("operator_command", Int8(GATE_SKIP))
                     elif event.key == pygame.K_BACKSPACE:
-                        self.operator_command.publish(Int8(GATE_QUIT))
+                        self.publish("operator_command", Int8(GATE_QUIT))
                     elif pygame.K_0 <= event.key <= pygame.K_9:
                         # 0 → 0.0 m, 1 → 0.1 m, …, 9 → 0.9 m corridor half-width.
-                        self.e_max.publish(Float32(data=(event.key - pygame.K_0) * 0.1))
+                        self.publish("e_max", Float32(data=(event.key - pygame.K_0) * 0.1))
 
                 elif event.type == pygame.KEYUP:
                     self._keys_held.discard(event.key)
                     self._keys_down.discard(event.key)
                     if event.key in _JOY_KEY_SET:
-                        self.joystick.publish(Joy(buttons=joy_buttons(self._keys_down)))
+                        self.publish("joystick", Joy(buttons=joy_buttons(self._keys_down)))
 
             # Generate Twist message from held keys
             twist = Twist()
@@ -264,26 +271,20 @@ class KeyboardTeleop(Module):
                 # active->idle transition (clean stop); then stay silent
                 # so a co-publisher owns /cmd_vel.
                 if active or self._was_active:
-                    self.cmd_vel.publish(twist)
+                    self.publish("cmd_vel", twist)
                 self._was_active = active
             else:
-                self.cmd_vel.publish(twist)
+                self.publish("cmd_vel", twist)
 
             buttons = joy_buttons(self._keys_down)
             if any(buttons):
-                self.joystick.publish(Joy(buttons=buttons))
+                self.publish("joystick", Joy(buttons=buttons))
             self._update_display(twist)
 
             # Maintain control loop rate
-            if self._clock is None:
-                raise RuntimeError("_clock not initialized")
             self._clock.tick(_CONTROL_RATE_HZ)
 
-        pygame.quit()
-
     def _font(self, size: int, bold: bool = False) -> pygame.font.Font:
-        if self._fonts is None:
-            raise RuntimeError("Not initialized correctly")
         key = (size, bold)
         if key not in self._fonts:
             self._fonts[key] = pygame.font.SysFont(_FONT_NAMES, size, bold=bold)
@@ -297,8 +298,6 @@ class KeyboardTeleop(Module):
         sub: str = "",
         color: tuple[int, int, int] = _ACCENT,
     ) -> None:
-        if self._screen is None:
-            raise RuntimeError("Not initialized correctly")
         pygame.draw.rect(self._screen, color if held else _CAP, rect, border_radius=10)
         text = self._font(20, True).render(label, True, _BG if held else _TEXT)
         self._screen.blit(
@@ -309,8 +308,6 @@ class KeyboardTeleop(Module):
             self._screen.blit(text, text.get_rect(center=(rect.centerx, rect.centery + 14)))
 
     def _update_display(self, twist: Twist) -> None:
-        if self._screen is None or self._keys_held is None:
-            raise RuntimeError("Not initialized correctly")
         screen = self._screen
         screen.fill(_BG)
 
@@ -318,7 +315,7 @@ class KeyboardTeleop(Module):
         moving = twist.linear.x != 0 or twist.linear.y != 0 or twist.angular.z != 0
         estop = time.monotonic() - self._estop_at < _ESTOP_FLASH_S
 
-        screen.blit(self._font(16, True).render(self._window_title.upper(), True, _TEXT), (20, 18))
+        screen.blit(self._font(16, True).render(self.title.upper(), True, _TEXT), (20, 18))
         status, color = (
             ("E-STOP", _RED) if estop else ("DRIVING", _RED) if moving else ("IDLE", _GREEN)
         )
@@ -368,3 +365,10 @@ class KeyboardTeleop(Module):
         screen.blit(self._font(12).render(help_text, True, _DIM), (20, _WINDOW_HEIGHT - 28))
 
         pygame.display.flip()
+
+
+if __name__ == "__main__":
+    try:
+        _DriveWindow.serve()
+    finally:
+        pygame.quit()
