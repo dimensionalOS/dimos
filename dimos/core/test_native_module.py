@@ -366,6 +366,7 @@ def test_external_binary_ignores_the_prebuilt_directory(tmp_path: Path, monkeypa
 
 def test_install_runs_the_shipped_variant_of_a_module(tmp_path: Path, monkeypatch):
     # Each of these asks for another build on some machines. Here every machine is one of those.
+    monkeypatch.delenv("DIMOS_NATIVE_DIR", raising=False)
     monkeypatch.setattr(dim_slam, "sdk_variant", lambda: "x86_64-cuda13")
     monkeypatch.setattr(depth2depth_cloud, "has_nvidia_gpu", lambda: True)
     monkeypatch.setattr(v4l2, "Path", lambda _: tmp_path)

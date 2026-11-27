@@ -310,12 +310,16 @@ change does not establish additional platform or hardware support.
 ## Prebuilt binaries in an installation
 
 An installation can ship its native modules already built. Set `DIMOS_NATIVE_DIR`
-to the folder that holds them. dimOS then runs those binaries and needs no
-checkout, no Nix and no compiler.
+to the folder that holds them. dimOS can start those binaries without a source
+checkout, Nix or a compiler.
 
 ```sh skip
 DIMOS_NATIVE_DIR=/opt/dimos/native dimos --simulation run go2-sim-nav
 ```
+
+The Go2 simulation also loads its robot model, walking policy and lidar occlusion
+map from the `go2_sim` dataset. A fresh pip installation clones the repository
+to fetch those assets, even when all four native executables are prebuilt.
 
 Each module has a folder named after its executable, with the binary in `bin/`.
 Libraries that the binary brings along go next to it, for example in `lib/`.
