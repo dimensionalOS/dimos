@@ -37,7 +37,7 @@ from typing import NamedTuple
 CAP_MOVEMENT = "movement"
 
 
-class _Hold(NamedTuple):
+class CapabilityHold(NamedTuple):
     """Who currently holds a capability.
 
     `tool_name` is the human-meaningful skill name (used for conflict messages
@@ -47,6 +47,7 @@ class _Hold(NamedTuple):
 
     tool_name: str
     token: str
+    lifecycle: str = "instant"
 
 
 class CapabilityRegistry:
@@ -65,7 +66,7 @@ class CapabilityRegistry:
     """
 
     def __init__(self) -> None:
-        self._holders: dict[str, _Hold] = {}
+        self._holders: dict[str, CapabilityHold] = {}
         self._cond = threading.Condition()
 
     def acquire(
@@ -93,13 +94,33 @@ class CapabilityRegistry:
         of waiting (used to refuse, rather than block on, holders that won't release
         on their own).
         """
+        conflict = self.acquire_hold(
+            caps, CapabilityHold(tool_name, token), timeout=timeout, can_wait=can_wait
+        )
+        return (conflict[0], conflict[1].tool_name) if conflict else None
+
+    def acquire_hold(
+        self,
+        caps: list[str],
+        hold: CapabilityHold,
+        *,
+        timeout: float = 0.0,
+        can_wait: Callable[[str], bool] | None = None,
+    ) -> tuple[str, CapabilityHold] | None:
+        """Acquire caps for this invocation, returning the conflicting hold on refusal.
+
+        A background invocation keeps its capabilities until explicitly stopped.
+        """
         deadline = time.monotonic() + timeout
         with self._cond:
             while True:
-                conflict = self._acquire_locked(caps, tool_name, token)
+                conflict = self._acquire_locked(caps, hold)
                 if conflict is None:
                     return None
-                if can_wait is not None and not can_wait(conflict[1]):
+                holder = conflict[1]
+                if holder.lifecycle == "background" or (
+                    can_wait is not None and not can_wait(holder.tool_name)
+                ):
                     return conflict
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -107,15 +128,15 @@ class CapabilityRegistry:
                 self._cond.wait(remaining)
 
     def _acquire_locked(
-        self, caps: list[str], tool_name: str, token: str
-    ) -> tuple[str, str] | None:
+        self, caps: list[str], hold: CapabilityHold
+    ) -> tuple[str, CapabilityHold] | None:
         """Atomic check-and-set of `caps`; the caller must hold `self._cond`."""
         for cap in caps:
             current = self._holders.get(cap)
-            if current is not None and current.tool_name != tool_name:
-                return (cap, current.tool_name)
+            if current is not None and current.tool_name != hold.tool_name:
+                return (cap, current)
         for cap in caps:
-            self._holders[cap] = _Hold(tool_name, token)
+            self._holders[cap] = hold
         return None
 
     def release_by_token(self, token: str) -> list[str]:

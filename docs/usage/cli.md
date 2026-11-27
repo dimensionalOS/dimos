@@ -444,7 +444,7 @@ dimos mcp call land
 
 #### `dimos mcp status`
 
-Show MCP server status: PID, deployed modules, and skill names.
+Show the main process PID, all deployed module instance names, and callable skill names.
 
 ```bash
 dimos mcp status
@@ -452,7 +452,7 @@ dimos mcp status
 
 #### `dimos mcp modules`
 
-List deployed modules and their skills.
+List all deployed module instances and their skills. An instance with no skills has an empty list. If multiple instances provide a skill with the same name, each owner appears here. The name is omitted from `dimos mcp list-tools`, and calling it reports the owners. Unloading the duplicate makes the remaining instance callable again. An instance that is running a skill holding a capability when the duplicate arrives keeps its tools until the modules change again, so that skill can still be stopped.
 
 ```bash
 dimos mcp modules
