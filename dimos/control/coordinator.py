@@ -26,7 +26,7 @@ Features:
 """
 
 from contextlib import suppress
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 import functools
 import inspect
 import threading
@@ -35,20 +35,9 @@ from typing import TYPE_CHECKING, Any
 
 from reactivex.disposable import Disposable
 
-from dimos.control.components import (
-    HardwareComponent,
-    HardwareId,
-    HardwareType,
-    JointName,
-    TaskName,
-)
+from dimos.control.components import HardwareId, JointName, TaskName
 from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.connection_source import COMMAND_PORTS, READING_PORTS, ConnectionSource
-from dimos.control.hardware_interface import (
-    ConnectedHardware,
-    ConnectedTwistBase,
-    ConnectedWholeBody,
-)
 from dimos.control.routing import Routing
 from dimos.control.task import ControlTask
 from dimos.control.tasks.trajectory_task.trajectory_task import (
@@ -62,11 +51,6 @@ from dimos.control.tick_loop import TickLoop
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.hardware.drive_trains.spec import (
-    TwistBaseAdapter,
-)
-from dimos.hardware.manipulators.spec import ManipulatorAdapter
-from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
@@ -100,17 +84,10 @@ class ControlCoordinatorConfig(ModuleConfig):
 
     tick_rate: float = 100.0
     publish_joint_state: bool = True
-    # Transitional: goes away once every consumer reads per-robot streams.
-    publish_robot_joint_states: bool = False
     joint_state_frame_id: str = "coordinator"
     publish_frame_poses: bool = False
     frame_pose_hz: float = 30.0
     log_ticks: bool = False
-    hardware: list[HardwareComponent] = field(default_factory=lambda: [])
-    # Device addresses by hardware id (an IP, a CAN interface, a serial port),
-    # applied when the stack runs on hardware. In simulation the blueprint's
-    # simulated adapters stay, so one saved robot configuration serves both.
-    addresses: dict[str, str] = field(default_factory=dict)
     tasks: list[TaskConfig] = field(default_factory=lambda: [])
     # The connection declarations used by blueprint assembly. Ports select
     # transports, never capabilities; each source needs exactly one declaration.
@@ -127,20 +104,20 @@ class ControlCoordinatorConfig(ModuleConfig):
 class ControlCoordinator(Module):
     """Centralized control coordinator with per-joint arbitration.
 
-    The coordinator is normally used as a DimOS blueprint module. Hardware
-    adapters and control tasks are described declaratively in
-    ``ControlCoordinatorConfig`` and instantiated when the module starts.
+    The coordinator is normally used as a DimOS blueprint module. Robots and
+    control tasks are described declaratively in ``ControlCoordinatorConfig``
+    and set up when the module starts.
 
     Per tick, the coordinator:
-    1. Reads state from configured hardware
+    1. Reads the latest readings of every robot
     2. Runs active tasks
     3. Arbitrates conflicting commands per joint (highest priority wins)
-    4. Routes commands to the owning hardware adapter
+    4. Sends each robot its complete command
     5. Publishes the aggregated canonical joint state
 
-    A robot behind a ``ConnectionModule`` is driven through ports on a
-    coordinator subclass named ``<robot>_<kind>``, which the blueprint remaps
-    onto the connection module's ports::
+    Each robot sits behind a ``ConnectionModule`` and is driven through ports
+    on a coordinator subclass named ``<robot>_<kind>``, which the blueprint
+    remaps onto the connection module's ports::
 
         class Go2Coordinator(ControlCoordinator):
             go2_velocity_command: Out[JointState]
@@ -159,37 +136,14 @@ class ControlCoordinator(Module):
     commanded every tick once it has reported, and not while its newest
     reading is older than ``config.reading_timeout_s``. In a fleet, each
     connection module sets ``frame_id_prefix`` to its robot's name so
-    readings are told apart. A coordinator drives adapters or connection
-    modules, never both.
+    readings are told apart.
 
     Key design decisions:
     - Joint-centric commands (not hardware-centric)
     - Per-joint arbitration (not per-hardware)
     - Centralized time (tasks use state.t_now, never time.time())
-    - Partial commands OK (hardware holds last value)
+    - Partial commands OK (joints no task drives are held)
     - Aggregated preemption (one notification per task per tick)
-
-    Example:
-        >>> from dimos.control.components import HardwareComponent, HardwareType
-        >>> from dimos.control.components import make_joints
-        >>> from dimos.control.coordinator import ControlCoordinator
-        >>> from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-        >>>
-        >>> coordinator = ControlCoordinator.blueprint(
-        ...     tick_rate=100.0,
-        ...     hardware=[
-        ...         HardwareComponent(
-        ...             hardware_id="arm",
-        ...             hardware_type=HardwareType.MANIPULATOR,
-        ...             joints=make_joints("arm", 7),
-        ...             adapter_type="xarm",
-        ...             address="192.168.1.185",
-        ...         ),
-        ...     ],
-        ...     tasks=[
-        ...         joint_trajectory_task(make_joints("arm", 7)),
-        ...     ],
-        ... )
     """
 
     config: ControlCoordinatorConfig
@@ -213,11 +167,10 @@ class ControlCoordinator(Module):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
-        # Connected hardware (keyed by hardware_id)
-        self._hardware: dict[HardwareId, ConnectedHardware | ConnectedWholeBody] = {}
+        # Guards _connections, _command_ports, _joint_to_hardware and _estopped.
         self._hardware_lock = threading.Lock()
 
-        # Joint -> hardware mapping (built when hardware added)
+        # Joint -> robot name, filled on start.
         self._joint_to_hardware: dict[JointName, HardwareId] = {}
 
         # Registered tasks
@@ -256,16 +209,10 @@ class ControlCoordinator(Module):
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
     def _setup_from_config(self) -> None:
-        """Create hardware and tasks from config (called on start)."""
-        hardware_added: list[str] = []
+        """Create tasks from config (called on start)."""
         tasks_added: list[TaskName] = []
 
         try:
-            for component in self.config.hardware:
-                component = self._resolve_component(component)
-                self._setup_hardware(component)
-                hardware_added.append(component.hardware_id)
-
             for task_cfg in self.config.tasks:
                 task = self._create_task_from_config(task_cfg)
                 if self.add_task(task, task_type=task_cfg.type, stream_bind=task_cfg.stream_bind):
@@ -274,93 +221,10 @@ class ControlCoordinator(Module):
                     self.task_invoke(task.name, "start")
 
         except Exception:
-            # Roll back everything this call added, tasks first: an active task
-            # blocks removal of the hardware whose joints it claims.
             for task_name in tasks_added:
                 with suppress(Exception):
                     self.remove_task(task_name)
-            for hw_id in hardware_added:
-                with suppress(Exception):
-                    self.remove_hardware(hw_id)
             raise
-
-    def _resolve_component(self, component: HardwareComponent) -> HardwareComponent:
-        """Settle the adapter and address a component runs with.
-
-        A device address configured by hardware id applies on hardware, not in
-        simulation. A component still without an address runs its mock
-        stand-in when it has one.
-        """
-        address = component.address
-        if not self.config.g.simulation:
-            address = self.config.addresses.get(component.hardware_id, address)
-        if address is None and component.mock_limits is not None:
-            return replace(component, adapter_type="mock", limits=component.mock_limits)
-        return replace(component, address=address)
-
-    def _setup_hardware(self, component: HardwareComponent) -> None:
-        """Connect and add a single hardware adapter."""
-        adapter: ManipulatorAdapter | TwistBaseAdapter | WholeBodyAdapter
-        if component.hardware_type == HardwareType.WHOLE_BODY:
-            adapter = self._create_whole_body_adapter(component)
-        elif component.hardware_type == HardwareType.BASE:
-            adapter = self._create_twist_base_adapter(component)
-        else:
-            adapter = self._create_adapter(component)
-
-        if not adapter.connect():
-            raise RuntimeError(f"Failed to connect to {component.adapter_type} adapter")
-
-        try:
-            if component.auto_enable:
-                activate = getattr(adapter, "activate", None)
-                if callable(activate):
-                    if activate() is False:
-                        raise RuntimeError(f"Failed to activate hardware {component.hardware_id}")
-                elif hasattr(adapter, "write_enable"):
-                    adapter.write_enable(True)
-
-            self.add_hardware(adapter, component)
-        except Exception:
-            adapter.disconnect()
-            raise
-
-    def _create_adapter(self, component: HardwareComponent) -> ManipulatorAdapter:
-        """Create a manipulator adapter from component config."""
-        from dimos.hardware.manipulators.registry import adapter_registry
-
-        return adapter_registry.create(
-            component.adapter_type,
-            dof=len(component.joints),
-            address=component.address,
-            hardware_id=component.hardware_id,
-            **component.adapter_kwargs,
-        )
-
-    def _create_twist_base_adapter(self, component: HardwareComponent) -> TwistBaseAdapter:
-        """Create a twist base adapter from component config."""
-        from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
-
-        return twist_base_adapter_registry.create(
-            component.adapter_type,
-            dof=len(component.joints),
-            address=component.address,
-            hardware_id=component.hardware_id,
-            **component.adapter_kwargs,
-        )
-
-    def _create_whole_body_adapter(self, component: HardwareComponent) -> WholeBodyAdapter:
-        """Create a whole-body adapter from component config."""
-        from dimos.hardware.whole_body.registry import whole_body_adapter_registry
-
-        return whole_body_adapter_registry.create(
-            component.adapter_type,
-            dof=len(component.joints),
-            hardware_id=component.hardware_id,
-            address=component.address,
-            domain_id=component.domain_id,
-            **component.adapter_kwargs,
-        )
 
     def _create_task_from_config(self, cfg: TaskConfig) -> ControlTask:
         """Create a control task from config via the task registry."""
@@ -369,7 +233,6 @@ class ControlCoordinator(Module):
         return control_task_registry.create(
             cfg.type,
             cfg,
-            hardware=self._hardware,
             connections=self._connections,
         )
 
@@ -382,31 +245,12 @@ class ControlCoordinator(Module):
             "add `tf: Out[TFMessage]` to your coordinator subclass"
         )
 
-    def _robot_joint_port(self, hardware_id: HardwareId) -> Out[JointState]:
-        name = f"{hardware_id}_joints"
-        port = getattr(self, name, None)
-        if isinstance(port, Out):
-            return port
-        if not name.isidentifier():
-            raise ValueError(
-                f"publish_robot_joint_states is on but hardware_id {hardware_id!r} cannot name "
-                f"an output port — rename it so `{name}` is a valid Python identifier"
-            )
-        raise ValueError(
-            f"publish_robot_joint_states is on but hardware {hardware_id!r} has no output "
-            f"port — add `{name}: Out[JointState]` to your coordinator subclass"
-        )
-
-    def _publish_robot_joint_state(self, hardware_id: HardwareId, msg: JointState) -> None:
-        self._robot_joint_port(hardware_id).publish(msg)
-
     def _connect_robots(self) -> None:
         """Set up each robot this coordinator's ports name, and listen on its reading ports.
 
         Raises:
             ValueError: If a port named ``<robot>_<kind>`` carries the wrong
-                message, a robot cannot be driven (see ``ConnectionSource``),
-                or this coordinator also has hardware adapters.
+                message, or a robot cannot be driven (see ``ConnectionSource``).
         """
         commands = _robot_ports(self.outputs, COMMAND_PORTS)
         readings = _robot_ports(self.inputs, READING_PORTS)
@@ -415,11 +259,6 @@ class ControlCoordinator(Module):
             if self.config.connections:
                 raise ValueError("connection declarations require matching robot ports")
             return
-        if self.config.hardware:
-            raise ValueError(
-                f"{type(self).__name__} has hardware adapters and ports for robots {robots}; "
-                "a coordinator drives one or the other, not both"
-            )
         declarations = {config.source: config for config in self.config.connections}
         if len(declarations) != len(self.config.connections) or declarations.keys() != set(robots):
             raise ValueError(
@@ -469,114 +308,14 @@ class ControlCoordinator(Module):
             ports[out.port].publish(out.message)
 
     @rpc
-    def add_hardware(
-        self,
-        adapter: ManipulatorAdapter | TwistBaseAdapter | WholeBodyAdapter,
-        component: HardwareComponent,
-    ) -> bool:
-        """Register a hardware adapter with the coordinator."""
-        is_base = component.hardware_type == HardwareType.BASE
-        is_whole_body = component.hardware_type == HardwareType.WHOLE_BODY
-
-        if is_base and not isinstance(adapter, TwistBaseAdapter):
-            raise TypeError(
-                f"Hardware type / adapter mismatch for '{component.hardware_id}': "
-                f"hardware_type={component.hardware_type.value} but got "
-                f"{type(adapter).__name__}"
-            )
-
-        if is_whole_body and not isinstance(adapter, WholeBodyAdapter):
-            raise TypeError(
-                f"Hardware type / adapter mismatch for '{component.hardware_id}': "
-                f"hardware_type={component.hardware_type.value} but got "
-                f"{type(adapter).__name__}"
-            )
-
-        if self._connections:
-            raise ValueError(
-                f"cannot add hardware {component.hardware_id!r}: this coordinator drives "
-                "connection modules, and a coordinator drives one or the other, not both"
-            )
-
-        if self.config.publish_robot_joint_states:
-            self._robot_joint_port(component.hardware_id)
-
-        with self._hardware_lock:
-            if component.hardware_id in self._hardware:
-                logger.warning(f"Hardware {component.hardware_id} already registered")
-                return False
-
-            if isinstance(adapter, WholeBodyAdapter):
-                connected: ConnectedHardware = ConnectedWholeBody(
-                    adapter=adapter,
-                    component=component,
-                )
-            elif isinstance(adapter, TwistBaseAdapter):
-                connected = ConnectedTwistBase(
-                    adapter=adapter,
-                    component=component,
-                )
-            else:
-                connected = ConnectedHardware(
-                    adapter=adapter,
-                    component=component,
-                )
-
-            self._hardware[component.hardware_id] = connected
-
-            for joint_name in connected.joint_names:
-                self._joint_to_hardware[joint_name] = component.hardware_id
-
-            logger.info(
-                f"Added hardware {component.hardware_id} with joints: {connected.joint_names}"
-            )
-        self._sync_stream_subscriptions()
-        return True
-
-    @rpc
-    def remove_hardware(self, hardware_id: str) -> bool:
-        """Remove a hardware interface.
-
-        Note: For safety, call this only when no tasks are actively using this
-        hardware. Consider stopping the coordinator before removing hardware.
-        """
-        with self._hardware_lock:
-            if hardware_id not in self._hardware:
-                return False
-
-            interface = self._hardware[hardware_id]
-            hw_joints = set(interface.joint_names)
-
-            with self._task_lock:
-                for task in self._tasks.values():
-                    if task.is_active():
-                        claimed_joints = task.claim().joints
-                        overlap = hw_joints & claimed_joints
-                        if overlap:
-                            logger.error(
-                                f"Cannot remove hardware {hardware_id}: "
-                                f"task '{task.name}' is actively using joints {overlap}"
-                            )
-                            return False
-
-            for joint_name in interface.joint_names:
-                del self._joint_to_hardware[joint_name]
-
-            interface.disconnect()
-            del self._hardware[hardware_id]
-            logger.info(f"Removed hardware {hardware_id}")
-        self._sync_stream_subscriptions()
-        return True
-
-    @rpc
     def list_hardware(self) -> list[str]:
-        """List registered hardware IDs, then robots driven through connection modules."""
+        """List the robots this coordinator drives, by name."""
         with self._hardware_lock:
-            return [*self._hardware, *self._connections]
+            return list(self._connections)
 
     @rpc
     def list_joints(self) -> list[str]:
-        """List all joint names across all hardware."""
+        """List all joint names across all robots."""
         with self._hardware_lock:
             return list(self._joint_to_hardware.keys())
 
@@ -819,11 +558,11 @@ class ControlCoordinator(Module):
     def set_estop(self, estopped: bool) -> bool:
         """Emergency-stop every task and robot this coordinator drives, or clear the stop.
 
-        Stopping makes tasks inert and sends nothing more to robots behind
-        connection modules; those robots are halted by their own deadman within
-        its timeout once commands stop. Hardware adapters keep the last value
-        they were given. Clearing makes tasks live and commands each robot once
-        it reports again, held where that reading has it. Calls run one at a time.
+        Stopping makes tasks inert and sends nothing more to any robot; each
+        robot is halted by its connection module's deadman within its timeout
+        once commands stop. Clearing makes tasks live and commands each robot
+        once it reports again, held where that reading has it. Calls run one at
+        a time.
 
         Args:
             estopped: True to stop, False to clear.
@@ -1016,35 +755,25 @@ class ControlCoordinator(Module):
                 "'ControlCoordinator'. Pass instance_name='ControlCoordinator' in the blueprint."
             )
 
-        if self.config.publish_robot_joint_states:
-            for component in self.config.hardware:
-                self._robot_joint_port(component.hardware_id)
-
         super().start()
 
         self._connect_robots()
 
-        # Setup hardware and tasks from config (if any)
-        if self.config.hardware or self.config.tasks:
+        if self.config.tasks:
             self._setup_from_config()
 
         # Create and start tick loop
         publish_cb = (
             self.coordinator_joint_state.publish if self.config.publish_joint_state else None
         )
-        publish_robot_cb = (
-            self._publish_robot_joint_state if self.config.publish_robot_joint_states else None
-        )
         self._tick_loop = TickLoop(
             tick_rate=self.config.tick_rate,
-            hardware=self._hardware,
             hardware_lock=self._hardware_lock,
             tasks=self._tasks,
             task_lock=self._task_lock,
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
             publish_command_callback=self.coordinator_joint_command.publish,
-            publish_robot_callback=publish_robot_cb,
             publish_tf_callback=self._frame_pose_port().publish
             if self.config.publish_frame_poses
             else None,
@@ -1077,26 +806,6 @@ class ControlCoordinator(Module):
 
         if self._tick_loop:
             self._tick_loop.stop()
-
-        with self._hardware_lock:
-            for hw_id, interface in self._hardware.items():
-                deactivate = getattr(interface.adapter, "deactivate", None)
-                if not callable(deactivate):
-                    continue
-                try:
-                    if deactivate() is False:
-                        logger.error(f"Hardware {hw_id} deactivate returned False")
-                except Exception as e:
-                    logger.error(f"Error deactivating hardware {hw_id}: {e}")
-
-        # Disconnect all hardware adapters
-        with self._hardware_lock:
-            for hw_id, interface in self._hardware.items():
-                try:
-                    interface.disconnect()
-                    logger.info(f"Disconnected hardware {hw_id}")
-                except Exception as e:
-                    logger.error(f"Error disconnecting hardware {hw_id}: {e}")
 
         super().stop()
         logger.info("ControlCoordinator stopped")

@@ -143,8 +143,6 @@ def test_real_control_declares_body_velocity_joints_without_position_commands() 
     """The chassis body axes are velocity-only joints on the connection."""
     coordinator = _coordinator_config(r1pro_control().solidify())
 
-    # The real robot is driven through R1ProConnection: no hardware adapters.
-    assert coordinator.hardware == []
     claimed = {joint for task in coordinator.tasks for joint in task.joint_names}
     assert claimed == {*R1PRO_UPPER_BODY_JOINTS, *R1PRO_BASE_JOINTS}
 
