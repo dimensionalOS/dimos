@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pytest
 
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.mapping.experimental.mesh import MESH_ENTITY, MeshColours
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -46,6 +48,26 @@ def rgbd_mesh_module() -> Generator[RgbdMesh, None, None]:
         yield module
     finally:
         module.stop()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("region_m", "0"),
+        ("region_m", "inf"),
+        ("voxel_size", "-0.1"),
+        ("voxel_size", "inf"),
+        ("emit_every", "0"),
+        ("min_emit_interval_s", "-0.1"),
+        ("min_emit_interval_s", "nan"),
+        ("min_emit_interval_s", "inf"),
+    ],
+)
+def test_mesh_preflight_rejects_invalid_scale_or_cadence(field: str, value: str) -> None:
+    parser = BlueprintConfigParser(RgbdMesh.blueprint())
+    flag = field.replace("_", "-")
+    with pytest.raises(BlueprintConfigError, match=field):
+        parser.parse([f"--rgbdmesh.{flag}={value}"], environ={})
 
 
 def test_triangle_mesh_lcm_roundtrip() -> None:
