@@ -35,7 +35,14 @@ import uuid
 
 from filelock import FileLock, Timeout
 
-from dimos.constants import DIMOS_PROJECT_ROOT, RUNTIME_DIR, STATE_DIR
+from dimos.constants import (
+    CONFIG_DIR,
+    DIMOS_PROJECT_ROOT,
+    IS_CHECKOUT,
+    RUNTIME_DIR,
+    STATE_DIR,
+    WRITE_ROOT,
+)
 from dimos.core.run_registry import is_pid_alive
 from dimos.utils.logging_config import setup_logger
 
@@ -91,6 +98,8 @@ def _git(*args: str) -> str:
 @lru_cache(maxsize=1)
 def code_revision() -> str:
     """The commit this checkout runs, plus a digest of its uncommitted diff; else the package version."""
+    if not IS_CHECKOUT:
+        return package_version("dimos")
     try:
         commit = _git("rev-parse", "HEAD").strip()
         diff = _git("diff", "HEAD")
@@ -198,6 +207,11 @@ def dimos_executable() -> str:
 
 
 def render_unit(executable: str, working_directory: Path) -> str:
+    # systemd does not inherit an XDG_CONFIG_HOME set by the installing shell or .env.
+    config_env = ""
+    if not IS_CHECKOUT:
+        setting = f"XDG_CONFIG_HOME={CONFIG_DIR.parent}".replace("%", "%%")
+        config_env = f"Environment={json.dumps(setting, ensure_ascii=False)}\n"
     return f"""[Unit]
 Description=DimOS Host daemon (zenoh router + fragment supervisor)
 After=network-online.target
@@ -205,8 +219,8 @@ Wants=network-online.target
 
 [Service]
 ExecStart={executable} host start --foreground
-WorkingDirectory={working_directory}
-# The venv's tools (dimos-viewer, rerun) are spawned by name.
+WorkingDirectory={str(working_directory).replace("%", "%%")}
+{config_env}# The venv's tools (dimos-viewer, rerun) are spawned by name.
 Environment=PATH={Path(executable).parent}:/usr/local/bin:/usr/bin:/bin
 Restart=on-failure
 RestartSec=3
@@ -227,13 +241,14 @@ def _systemctl(args: list[str]) -> subprocess.CompletedProcess[str]:
 
 def unit_current() -> bool:
     """Whether the installed unit is what ``install`` would write now."""
-    return unit_path().read_text() == render_unit(dimos_executable(), DIMOS_PROJECT_ROOT)
+    return unit_path().read_text() == render_unit(dimos_executable(), WRITE_ROOT)
 
 
 def install(run: Run = _systemctl) -> Path:
     path = unit_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_unit(dimos_executable(), DIMOS_PROJECT_ROOT))
+    WRITE_ROOT.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_unit(dimos_executable(), WRITE_ROOT))
     run(["daemon-reload"])
     run(["enable", UNIT_NAME])
     if run(["is-active", UNIT_NAME]).returncode == 0:
@@ -266,11 +281,12 @@ def start(run: Run = _systemctl, spawn: Callable[..., Any] = subprocess.Popen) -
     if installed():
         result = run(["start", UNIT_NAME])
         return f"started {UNIT_NAME}" if result.returncode == 0 else result.stderr.strip()
+    WRITE_ROOT.mkdir(parents=True, exist_ok=True)
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     with LOG_FILE.open("ab") as log:
         process = spawn(
             [dimos_executable(), "host", "start", "--foreground"],
-            cwd=DIMOS_PROJECT_ROOT,
+            cwd=WRITE_ROOT,
             stdin=subprocess.DEVNULL,
             stdout=log,
             stderr=subprocess.STDOUT,

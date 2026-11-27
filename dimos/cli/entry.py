@@ -36,6 +36,5 @@ def rerun_bridge() -> None:
     main()
 
 
-# `python -m dimos.cli.entry` is the `dimos` script without its path. `dimos restart` uses it.
 if __name__ == "__main__":
     main()

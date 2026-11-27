@@ -55,6 +55,9 @@ docker/evals/eval-runs/dimos/recordings/<run-id>/      one per dimos boot, i.e. 
     rerun.rrd                                          the whole Rerun stream of that case (see below)
 ```
 
+With a custom `COMPOSE_FILE`, relative `EVAL_RUNS_DIR` paths start in the
+directory containing the first Compose file.
+
 Each case's result names its recording folder, so its `memory.db` and
 `rerun.rrd` are one lookup away. Open a case's visualization with
 `rerun docker/evals/eval-runs/dimos/recordings/<run-id>/rerun.rrd`.

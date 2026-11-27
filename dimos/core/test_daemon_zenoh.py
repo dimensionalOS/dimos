@@ -80,7 +80,7 @@ def test_daemon_serves_coordinator_ping_over_zenoh(tmp_path: Path, blueprint: st
     cwd = None
     if blueprint == "demo-mcp-stress-test":
         # Exercise a dotenv-only registry path without reading/writing the
-        # developer's .env: dotenv searches upward from the imported CLI.
+        # developer's .env. The CLI reads the temporary working directory's file.
         (tmp_path / "dimos").symlink_to(Path(__file__).resolve().parents[1])
         (tmp_path / ".env").write_text(f"XDG_STATE_HOME={env.pop('XDG_STATE_HOME')}\n")
         env.pop("PYTEST_VERSION", None)

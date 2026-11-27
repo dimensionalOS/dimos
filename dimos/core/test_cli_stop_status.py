@@ -228,20 +228,26 @@ class TestStopCLI:
 class TestRestartCLI:
     """Tests for `dimos restart` command."""
 
+    @pytest.mark.parametrize("console_script", [True, False], ids=["console-script", "module"])
     def test_restart_runs_the_stored_arguments_on_this_python(
-        self, sleeper, monkeypatch: pytest.MonkeyPatch
+        self, sleeper, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, console_script: bool
     ):
         proc = sleeper()
         # Started from an install that has since been replaced by one in another folder.
         stored = ["/opt/dimos/old/bin/dimos", "--replay", "run", "test", "--daemon"]
         _entry("restart-test", proc.pid, original_argv=stored)
+        script = tmp_path / "bin" / "dimos"
+        script.parent.mkdir()
+        script.touch()
+        monkeypatch.setattr(sys, "argv", [str(script) if console_script else "entry.py", "restart"])
         executed: list[tuple[str, list[str]]] = []
         monkeypatch.setattr(os, "execv", lambda path, argv: executed.append((path, argv)))
 
         result = CliRunner().invoke(main, ["restart"])
 
         assert result.exit_code == 0
-        command = [sys.executable, "-m", "dimos.cli.entry", *stored[1:]]
+        launcher = [str(script)] if console_script else ["-m", "dimos.cli.entry"]
+        command = [sys.executable, *launcher, *stored[1:]]
         assert executed == [(sys.executable, command)]
         assert proc.wait(timeout=10) is not None
 

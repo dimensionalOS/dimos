@@ -177,7 +177,7 @@ def test_fix_evaluates_dependent_checks_after_installing_unit(
     )
 
     def install() -> Path:
-        path.write_text(machine.render_unit(machine.dimos_executable(), machine.DIMOS_PROJECT_ROOT))
+        path.write_text(machine.render_unit(machine.dimos_executable(), machine.WRITE_ROOT))
         return path
 
     repair = mocker.patch.object(machine, "install", side_effect=install)

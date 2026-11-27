@@ -12,6 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+
+# The CLI needs the installation location before .env sets the XDG directories.
+DIMOS_PROJECT_ROOT = Path(__file__).parent.parent
+IS_CHECKOUT = (DIMOS_PROJECT_ROOT / ".git").exists()
+
 
 def __getattr__(name: str) -> object:
     if name == "Dimos":

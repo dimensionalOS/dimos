@@ -537,11 +537,18 @@ def restart(
         typer.echo("Cannot restart: run entry missing original command", err=True)
         raise typer.Exit(1)
 
-    # Worked out before stopping, which removes the entry. The stored arguments run on
-    # the Python that runs this command: the stored program path is gone when the
-    # install was replaced by one in another folder. dimos.cli.entry and not
-    # dimos.cli.dimos, because every worker imports the main module again.
-    argv = [sys.executable, "-m", "dimos.cli.entry", *entry.original_argv[1:]]
+    # Reuse the running console script, including user installs outside the venv.
+    # Switching a console script to python -m would let cwd shadow its package.
+    script = Path(sys.argv[0]).absolute()
+    if script.name == "dimos":
+        if not script.is_file():
+            typer.echo(f"Cannot restart: current CLI script is missing: {script}", err=True)
+            raise typer.Exit(1)
+        command = [sys.executable, str(script)]
+    else:
+        # A CLI started with python -m already uses module lookup.
+        command = [sys.executable, "-m", "dimos.cli.entry"]
+    argv = [*command, *entry.original_argv[1:]]
     old_pid = entry.pid
 
     typer.echo(f"Restarting {entry.run_id} ({entry.blueprint})...")

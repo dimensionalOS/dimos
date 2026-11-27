@@ -28,10 +28,10 @@ import sys
 from typing import NoReturn
 
 import click
-from dotenv import dotenv_values, find_dotenv
 import typer
 from typer.core import TyperCommand, TyperGroup
 
+from dimos.cli.environment import DOTENV_KEYS_ENV, dotenv_keys
 from dimos.constants import CONFIG_DIR, DIMOS_PROJECT_ROOT, STATE_DIR
 from dimos.core.run_registry import REGISTRY_DIR
 
@@ -347,13 +347,12 @@ def _node_environment() -> dict[str, str]:
     from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
     from dimos.core.coordination.blueprint_config.sources import global_environment_names
 
-    # The two files dimos/cli/dimos.py loads. The first one wins there too.
-    dotenv = {**dotenv_values(".env"), **dotenv_values(find_dotenv())}
+    loaded = dotenv_keys() | {DOTENV_KEYS_ENV}
     settings = global_environment_names()
     environment = {
         name: value
         for name, value in os.environ.items()
-        if dotenv.get(name) != value or name.lower() in settings
+        if name not in loaded or name.lower() in settings
     }
     try:
         mcp_url = mcp_server_url()

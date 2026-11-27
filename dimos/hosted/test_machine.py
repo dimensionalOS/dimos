@@ -45,6 +45,14 @@ def _record(pid: int) -> HostRecord:
     return HostRecord("id", "name", pid, ("tcp/0.0.0.0:7447",), "tcp/127.0.0.1:7447")
 
 
+def test_installed_host_uses_package_version_inside_another_git_repo(monkeypatch, mocker) -> None:
+    monkeypatch.setattr(machine, "IS_CHECKOUT", False)
+    git = mocker.patch.object(machine, "_git", return_value="unrelated-commit")
+
+    assert machine.code_revision.__wrapped__() == machine.package_version("dimos")
+    git.assert_not_called()
+
+
 def test_host_record_counts_only_while_the_lock_is_held(monkeypatch: pytest.MonkeyPatch) -> None:
     assert machine.local_host() is None
     machine.write_host_file(_record(os.getpid()))
@@ -70,6 +78,20 @@ def test_unit_runs_host_run_from_the_checkout() -> None:
     assert "WorkingDirectory=/repo" in unit
     assert "Environment=PATH=/venv/bin:" in unit
     assert "KillSignal=SIGINT" in unit and "Restart=on-failure" in unit
+
+
+def test_installed_service_uses_the_config_directory_of_the_installer(tmp_path, monkeypatch):
+    config_home = tmp_path / "my config"
+    monkeypatch.setattr(machine, "IS_CHECKOUT", False)
+    monkeypatch.setattr(machine, "CONFIG_DIR", config_home / "dimos")
+    monkeypatch.setattr(machine, "WRITE_ROOT", tmp_path / "state")
+
+    unit = machine.install(run=_ok)
+
+    lines = unit.read_text().splitlines()
+    assert f'Environment="XDG_CONFIG_HOME={config_home}"' in lines
+    assert f"WorkingDirectory={tmp_path / 'state'}" in lines
+    assert (tmp_path / "state").is_dir()
 
 
 def test_install_writes_reloads_and_enables() -> None:

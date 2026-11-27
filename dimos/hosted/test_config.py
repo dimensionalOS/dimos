@@ -12,10 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
+from dimos import DIMOS_PROJECT_ROOT
 from dimos.hosted.config import DEFAULT_LISTEN, HostConfig, write_settings
 
 
@@ -52,3 +56,22 @@ def test_write_settings_refuses_what_a_host_would_not_start_with(
     with pytest.raises(ValueError, match=message):
         write_settings(values, env)
     assert not env.exists()
+
+
+def test_installed_host_config_persists_outside_the_package(tmp_path: Path) -> None:
+    install = tmp_path / "site-packages"
+    install.mkdir()
+    (install / "dimos").symlink_to(DIMOS_PROJECT_ROOT / "dimos")
+    config_home = tmp_path / "config"
+    env = {k: v for k, v in os.environ.items() if k not in {"PYTEST_VERSION", "HOST__NAME"}}
+    env.update(PYTHONPATH=str(install), XDG_CONFIG_HOME=str(config_home))
+    command = [sys.executable, "-m", "dimos.cli.entry", "host", "config"]
+
+    subprocess.run(
+        [*command, "name=test-host"], cwd=tmp_path, env=env, capture_output=True, check=True
+    )
+    settings = subprocess.check_output(command, cwd=install, env=env, text=True)
+
+    assert (config_home / "dimos/host.env").read_text() == "HOST__NAME=test-host\n"
+    assert ["name", "test-host"] in [line.split() for line in settings.splitlines()]
+    assert not (install / ".env").exists()

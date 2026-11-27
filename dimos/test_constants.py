@@ -12,43 +12,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib.util
+import json
 from pathlib import Path
-import shutil
-from types import ModuleType
+import subprocess
+import sys
 
-from dimos import constants
+import pytest
 
-
-def _constants_in(root: Path) -> ModuleType:
-    """dimos/constants.py as it evaluates when the package folder is in ``root``."""
-    copy = root / "dimos" / "constants.py"
-    copy.parent.mkdir()
-    shutil.copy(constants.__file__, copy)
-    spec = importlib.util.spec_from_file_location("constants_copy", copy)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+from dimos import DIMOS_PROJECT_ROOT
 
 
-def test_a_checkout_writes_into_its_own_folder(tmp_path: Path) -> None:
-    (tmp_path / ".git").mkdir()
+@pytest.mark.parametrize("checkout", [True, False], ids=["checkout", "installed"])
+def test_working_files_use_the_checkout_or_state_directory(
+    tmp_path: Path, checkout: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "dimos").symlink_to(DIMOS_PROJECT_ROOT / "dimos")
+    if checkout:
+        (tmp_path / ".git").mkdir()
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
 
-    checkout = _constants_in(tmp_path)
+    result = subprocess.check_output(
+        [
+            sys.executable,
+            "-c",
+            "import json\nfrom dimos import constants as c\n"
+            "print(json.dumps([c.IS_CHECKOUT, c.WRITE_ROOT, c.LOG_DIR, c.RECORDINGS_DIR, "
+            "c.DOWNLOADS_DIR], default=str))",
+        ],
+        cwd=tmp_path,
+        text=True,
+    )
 
-    assert checkout.IS_CHECKOUT
-    assert checkout.WRITE_ROOT == tmp_path
-    assert checkout.LOG_DIR == tmp_path / "logs"
-    assert checkout.RECORDINGS_DIR == tmp_path / "recordings"
-    assert checkout.DOWNLOADS_DIR == tmp_path / "downloads"
-
-
-def test_an_installed_package_writes_into_the_state_directory(tmp_path: Path) -> None:
-    installed = _constants_in(tmp_path)
-
-    assert not installed.IS_CHECKOUT
-    assert installed.WRITE_ROOT == installed.STATE_DIR
-    assert installed.LOG_DIR == installed.STATE_DIR / "logs"
-    assert installed.RECORDINGS_DIR == installed.STATE_DIR / "recordings"
-    assert installed.DOWNLOADS_DIR == installed.STATE_DIR / "downloads"
+    root = tmp_path if checkout else state_home / "dimos"
+    assert json.loads(result) == [
+        checkout,
+        str(root),
+        str(root / "logs"),
+        str(root / "recordings"),
+        str(root / "downloads"),
+    ]

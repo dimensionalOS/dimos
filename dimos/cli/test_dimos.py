@@ -100,12 +100,15 @@ def test_normalize_argv(argv: list[str], expected: list[str]) -> None:
     assert normalize_argv(argv) == expected
 
 
-def test_dotenv_in_the_working_directory_is_read(tmp_path: Path) -> None:
-    # The package where upward search finds this .env, like a checkout's.
+@pytest.mark.parametrize("checkout", [True, False], ids=["checkout", "installed"])
+def test_dotenv_in_the_working_directory_is_read(tmp_path: Path, checkout: bool) -> None:
     install = tmp_path / "install"
     install.mkdir()
     (install / "dimos").symlink_to(Path(__file__).resolve().parents[1])
-    (install / ".env").write_text("DIMOS_TEST_BOTH=next-to-the-code\n")
+    if checkout:
+        (install / ".git").mkdir()
+        (install / ".env").write_text("DIMOS_TEST_BOTH=next-to-the-code\n")
+    (tmp_path / ".env").write_text("DIMOS_TEST_BOTH=unrelated-project\n")
     work = tmp_path / "work"
     work.mkdir()
     (work / ".env").write_text(
@@ -114,7 +117,6 @@ def test_dotenv_in_the_working_directory_is_read(tmp_path: Path) -> None:
         "DIMOS_TEST_EXPORTED=working-directory\n"
     )
     names = ("DIMOS_TEST_WORK", "DIMOS_TEST_BOTH", "DIMOS_TEST_EXPORTED")
-    # A file, because python-dotenv searches from the working directory under `python -c`.
     script = tmp_path / "print_env.py"
     script.write_text(f"import os, dimos.cli.dimos\nprint(*map(os.getenv, {names}))\n")
 
@@ -129,7 +131,8 @@ def test_dotenv_in_the_working_directory_is_read(tmp_path: Path) -> None:
         check=True,
     )
 
-    assert result.stdout.split() == ["working-directory", "next-to-the-code", "environment"]
+    expected = "next-to-the-code" if checkout else "working-directory"
+    assert result.stdout.split() == ["working-directory", expected, "environment"]
 
 
 @pytest.mark.parametrize(

@@ -82,7 +82,6 @@ def test_rerun_bridge_forwards_bridge_and_global_options(
 def test_entry_module_runs_the_cli(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """`python -m dimos.cli.entry` is what `dimos restart` relaunches a stack with."""
     monkeypatch.setattr(sys, "argv", ["dimos", "--help"])
     # runpy warns when the module it runs as __main__ is already imported.
     monkeypatch.delitem(sys.modules, "dimos.cli.entry", raising=False)
