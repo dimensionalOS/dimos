@@ -18,6 +18,7 @@ import subprocess
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.simulation.dimsim import dimsim_process
 from dimos.simulation.dimsim.deno_utils import ensure_playwright_chromium
 
 
@@ -60,3 +61,34 @@ def test_browser_probe_failure_is_reported(mocker: MockerFixture) -> None:
         ensure_playwright_chromium("deno")
 
     install.assert_not_called()
+
+
+def test_prepare_installs_requested_system_deps_for_a_cached_browser(mocker: MockerFixture) -> None:
+    mocker.patch.object(dimsim_process, "ensure_deno", return_value="deno")
+    mocker.patch("subprocess.check_output", return_value=__file__)
+    run = mocker.patch("subprocess.run")
+
+    dimsim_process.prepare(with_deps=True)
+
+    run.assert_any_call(
+        [
+            "deno",
+            "run",
+            "--allow-all",
+            "npm:playwright@1.61.0",
+            "install",
+            "--with-deps",
+            "chromium",
+        ],
+        check=True,
+    )
+
+
+@pytest.mark.self_hosted_large
+def test_prepare_refuses_a_browser_that_cannot_launch(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("DIMSIM_CHROME_CHANNEL", "missing-browser-for-test")
+    with pytest.raises(subprocess.CalledProcessError):
+        dimsim_process.prepare()
+    assert "missing-browser-for-test" in capfd.readouterr().err

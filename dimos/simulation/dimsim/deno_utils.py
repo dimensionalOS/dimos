@@ -23,8 +23,8 @@ from dimos.utils.deno import DENO_VERSION, ensure_deno  # noqa: F401
 _PLAYWRIGHT_PACKAGE = "npm:playwright@1.61.0"
 
 
-def ensure_playwright_chromium(deno_path: str) -> None:
-    """Install Chromium only when the pinned Playwright browser is missing."""
+def ensure_playwright_chromium(deno_path: str, *, with_deps: bool = False) -> None:
+    """Install the pinned Chromium and, when requested, its host dependencies."""
     # Ask Playwright so platform revisions and PLAYWRIGHT_BROWSERS_PATH are
     # respected. DimSim launches full Chromium, even in headless mode.
     executable = subprocess.check_output(
@@ -37,10 +37,11 @@ def ensure_playwright_chromium(deno_path: str) -> None:
         ],
         text=True,
     ).strip()
-    if Path(executable).is_file():
+    if not with_deps and Path(executable).is_file():
         return
 
+    options = ["--with-deps"] if with_deps else []
     subprocess.run(
-        [deno_path, "run", "--allow-all", _PLAYWRIGHT_PACKAGE, "install", "chromium"],
+        [deno_path, "run", "--allow-all", _PLAYWRIGHT_PACKAGE, "install", *options, "chromium"],
         check=True,
     )
