@@ -32,4 +32,7 @@ LIDAR_RESOLUTION = 0.05
 VIDEO_FPS = 20
 LIDAR_FPS = 2
 
+# Upstream revision recorded in the bundled Unitree meshes' MENAGERIE.txt.
+MENAGERIE_COMMIT = "1b86ece576591213e2b666ebf59508454200ca97"
+
 LAUNCHER_PATH = Path(__file__).parent / "mujoco_process.py"

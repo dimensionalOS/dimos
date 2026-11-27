@@ -24,6 +24,7 @@ import numpy as np
 
 from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.simulation.mujoco.assets import unitree_meshes
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.simulation.mujoco.input_controller import InputController
 from dimos.simulation.mujoco.logging_config import configure_mujoco_logging
@@ -50,7 +51,7 @@ def get_assets() -> dict[str, bytes]:
     _update_assets(assets, data_dir, "*.xml")
     _update_assets(assets, data_dir / "scene_office1/textures", "*.png")
     _update_assets(assets, data_dir / "scene_office1/office_split", "*.obj")
-    menagerie = get_data("mujoco_menagerie")
+    menagerie = unitree_meshes()
     _update_assets(assets, menagerie / "unitree_go1" / "assets")
     _update_assets(assets, menagerie / "unitree_g1" / "assets")
 
