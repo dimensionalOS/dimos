@@ -43,7 +43,8 @@ class ViserRuntime:
     def url(self) -> str | None:
         if self.server is None:
             return None
-        return f"http://{self.config.host}:{self.config.port}"
+        # Viser moves to the next free port when the configured one is taken.
+        return f"http://{self.config.host}:{self.server.get_port()}"
 
     def start(self) -> ViserServer:
         if self.server is None:

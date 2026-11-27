@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
+import threading
 from typing import TYPE_CHECKING
 
 from dimos.manipulation.visualization.viser.animation import (
@@ -77,10 +78,18 @@ class ViserManipulationVisualizer:
         self._current_state: JointState | None = None
         self._model_config: RobotModelConfig | None = None
         self._closed = False
+        self._start_lock = threading.Lock()
 
     def _ensure_started(self) -> None:
         if self._closed or self._runtime is not None:
             return
+        # Callers on two threads, such as the first voxel map, must not start two servers.
+        with self._start_lock:
+            if self._closed or self._runtime is not None:
+                return
+            self._start()
+
+    def _start(self) -> None:
         runtime = ViserRuntime(self.config)
         scene: ViserManipulationScene | None = None
         gui: ViserPanelGui | None = None
