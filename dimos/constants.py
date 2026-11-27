@@ -49,16 +49,14 @@ RUNTIME_MODULES_DIR = STATE_DIR / "modules"
 # The on-robot agent's runtime state: agent module metadata and exports.
 HARNESS_STATE_DIR = STATE_DIR / "harness"
 
-if (DIMOS_PROJECT_ROOT / ".git").exists():
-    # Running from Git repository
-    LOG_DIR = DIMOS_PROJECT_ROOT / "logs"
-    RECORDINGS_DIR = DIMOS_PROJECT_ROOT / "recordings"
-    DOWNLOADS_DIR = DIMOS_PROJECT_ROOT / "downloads"
-else:
-    # Running from an installed package - use XDG_STATE_HOME
-    LOG_DIR = STATE_DIR / "logs"
-    RECORDINGS_DIR = STATE_DIR / "recordings"
-    DOWNLOADS_DIR = STATE_DIR / "downloads"
+# Standalone runs use the checkout when available, otherwise XDG state. The gateway supplies
+# its resolved recordings folder to its children, the same path it gives recording clients.
+_DATA_ROOT = DIMOS_PROJECT_ROOT if (DIMOS_PROJECT_ROOT / ".git").exists() else STATE_DIR
+LOG_DIR = _DATA_ROOT / "logs"
+DOWNLOADS_DIR = _DATA_ROOT / "downloads"
+RECORDINGS_DIR = Path(
+    os.environ.get("DIMOS_RECORDINGS_DIR") or _DATA_ROOT / "recordings"
+).expanduser()
 
 CREDENTIALS_PATH = CONFIG_DIR / "credentials"
 

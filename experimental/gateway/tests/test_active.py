@@ -913,7 +913,11 @@ def test_latest_log_uses_the_same_run_as_history(client: TestClient, home: Path)
 
 
 def test_recordings_is_the_standard_directory(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, checkout: Path
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    checkout: Path,
+    mocker: MockerFixture,
 ) -> None:
     # the served checkout isn't the gateway's own (Desktop's pinned copy serves the user's): its default, as its own
     # dimos would pick it, never the copy's recordings/ (replaced on the next move)
@@ -927,7 +931,28 @@ def test_recordings_is_the_standard_directory(
         f"recordings:\n  dir: {tmp_path / 'recs'}\n"
     )
     shared_config.shared_config.cache_clear()
-    assert client.get("/history/recordings").json() == {"path": str(tmp_path / "recs")}
+    folder = client.get("/history/recordings").json()["path"]
+    assert folder == str(tmp_path / "recs")
+    # A launch and an app must see the same folder even if Desktop's inherited hint predates the setting.
+    monkeypatch.setenv("DIMOS_RECORDINGS_DIR", str(tmp_path / "old"))
+    spawn = mocker.spy(launches, "_spawn")
+    assert (
+        client.post(
+            "/active/launch", json={"blueprint": "demo", "config": {"record": "sqlite"}}
+        ).status_code
+        == 200
+    )
+    run_env = spawn.call_args.args[3]
+    writer = subprocess.check_output(
+        [
+            sys.executable,
+            "-c",
+            "from dimos.memory.tap import recording_dir; print(recording_dir())",
+        ],
+        env={**run_env, "DIMOS_RUN_ID": "one-run"},
+        text=True,
+    )
+    assert Path(writer.strip()) == Path(folder) / "one-run"
 
 
 def test_a_reused_pid_is_not_the_launch(client: TestClient) -> None:
