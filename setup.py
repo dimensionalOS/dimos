@@ -114,9 +114,9 @@ class build_py(_build_py):
             # explicit env-var opt-out, which covers both products.
             if os.environ.get("DIMOS_ALLOW_MISSING_COCKPIT") != "1":
                 raise RuntimeError(
-                    f"web dist missing ({', '.join(missing)}); run `deno task build` "
-                    "in web/sdk and web/cockpit (or `dimos run --local-relay` from a "
-                    "checkout builds them), or set DIMOS_ALLOW_MISSING_COCKPIT=1 to "
+                    f"web dist missing ({', '.join(missing)}). From the checkout root, "
+                    "run `(cd web && deno task -r build)` (a blueprint run with --local-relay "
+                    "also builds the bundles), or set DIMOS_ALLOW_MISSING_COCKPIT=1 to "
                     "build a UI-less wheel anyway"
                 )
             self.warn(

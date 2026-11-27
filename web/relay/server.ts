@@ -135,6 +135,7 @@ const MIME: Record<string, string> = {
 // hosted relay's SDK works cross-origin. The viewer token is the access
 // boundary, not CORS; the one exception is /api/stats, which needs a bearer
 // token and carries no CORS header once auth is on.
+const WEB_BUILD_HINT = "From the checkout root, run `(cd web && deno task -r build)`.";
 const LOCAL_CORS = { "access-control-allow-origin": "*" };
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -403,8 +404,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
       // so serveFrom only returns 200 or null here.
       const found = sdkRoot === null ? null : await serveFrom(sdkRoot, "sdk.js");
       const res = found ?? new Response(
-        "sdk bundle not built (dimos run --local-relay builds it; " +
-          "or run `deno task build` in web/sdk)",
+        `sdk bundle not built. ${WEB_BUILD_HINT}`,
         { status: 404 },
       );
       // Also on the 404: a cross-origin page must be able to read the hint.
@@ -415,8 +415,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     }
     if (staticRoot === null) {
       return new Response(
-        "cockpit dist not built (dimos run --local-relay builds it; " +
-          "or run `deno task build` in web/cockpit)",
+        `cockpit dist not built. ${WEB_BUILD_HINT}`,
         { status: 404 },
       );
     }
