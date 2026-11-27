@@ -85,7 +85,6 @@ def test_map_pgo_finishes_when_window_contains_no_lidar(
 def test_map_exports_identify_compatible_blueprints(
     tmp_path: Path, map_app: typer.Typer, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("gtsam")  # no Python 3.10 wheel on Linux
     monkeypatch.chdir(tmp_path)
     source = tmp_path / "source.db"
     with SqliteStore(path=source) as store:
