@@ -24,7 +24,7 @@ from pytest_mock import MockerFixture
 
 from dimos.memory.replay import Playback, Replay
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.testing import HANDOFF_TIMEOUT, PLAYBACK_TIMEOUT
+from dimos.memory.testing import HUNG_TEST_TIMEOUT
 
 pytestmark = [
     pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning"),
@@ -75,7 +75,7 @@ def _record(
 def test_streams_publish_in_recorded_order(store: SqliteStore) -> None:
     playback, published, done = _record(store.replay(speed=10.0), list(_RECORDING))
     playback.play()
-    assert done.wait(PLAYBACK_TIMEOUT)
+    assert done.wait(HUNG_TEST_TIMEOUT)
     playback.stop()
 
     expected = sorted((ts, name) for name, stamps in _RECORDING.items() for ts in stamps)
@@ -88,7 +88,7 @@ def test_nothing_publishes_before_play(store: SqliteStore) -> None:
     assert not done.wait(0.2)
     assert published == []
     playback.play()
-    assert done.wait(PLAYBACK_TIMEOUT)
+    assert done.wait(HUNG_TEST_TIMEOUT)
     playback.stop()
     assert published == [("odom", ts) for ts in _RECORDING["odom"]]
 
@@ -103,7 +103,7 @@ def test_no_frame_publishes_before_its_recorded_offset(store: SqliteStore) -> No
     )
     started = time.monotonic()
     playback.play()
-    assert done.wait(PLAYBACK_TIMEOUT)
+    assert done.wait(HUNG_TEST_TIMEOUT)
     playback.stop()
 
     # At half speed the 20 ms recorded gaps take 40 ms. Timers only ever wake late.
@@ -127,7 +127,7 @@ def test_slow_subscriber_drops_nothing_and_warns_once(
 
     playback.add(replay.stream("odom")).subscribe(slow, on_completed=done.set)
     playback.play()
-    assert done.wait(PLAYBACK_TIMEOUT)
+    assert done.wait(HUNG_TEST_TIMEOUT)
     playback.stop()
 
     assert published == _RECORDING["odom"]
@@ -154,7 +154,7 @@ def test_load_returns_with_the_buffer_full(store: SqliteStore, mocker: MockerFix
     try:
         playback.load()
         assert len(playback._buffer._items) == 2
-        assert third_put.wait(HANDOFF_TIMEOUT)
+        assert third_put.wait(HUNG_TEST_TIMEOUT)
         assert len(playback._buffer._items) == 2  # the third waits on the full buffer
     finally:
         playback.stop()
@@ -181,7 +181,7 @@ def test_loop_replays_in_order_after_the_last_frame(store: SqliteStore) -> None:
 
     playback.add(replay.stream("odom")).subscribe(on_frame)
     playback.play()
-    assert enough.wait(PLAYBACK_TIMEOUT)
+    assert enough.wait(HUNG_TEST_TIMEOUT)
     playback.stop()
 
     assert published[:6] == [*_RECORDING["odom"], *_RECORDING["odom"]]
@@ -191,7 +191,7 @@ def test_empty_stream_completes(store: SqliteStore) -> None:
     store.stream("empty", float)
     playback, published, done = _record(store.replay(), ["empty", "lidar"])
     playback.play()
-    assert done.wait(PLAYBACK_TIMEOUT)
+    assert done.wait(HUNG_TEST_TIMEOUT)
     playback.stop()
     assert published == [("lidar", ts) for ts in _RECORDING["lidar"]]
 
@@ -212,7 +212,7 @@ def test_stop_from_a_callback_allows_closing_the_store(store: SqliteStore) -> No
     playback.add(replay.stream("odom")).subscribe(on_frame)
     try:
         playback.play()
-        assert stopped.wait(PLAYBACK_TIMEOUT)
+        assert stopped.wait(HUNG_TEST_TIMEOUT)
     finally:
         playback.stop()
 
@@ -232,7 +232,7 @@ def test_stop_waits_for_an_in_flight_publish(store: SqliteStore) -> None:
 
     playback.add(replay.stream("odom")).subscribe(on_frame)
     playback.play()
-    assert publishing.wait(PLAYBACK_TIMEOUT)
+    assert publishing.wait(HUNG_TEST_TIMEOUT)
     playback.stop()
     assert published.is_set()
 
@@ -273,7 +273,7 @@ def test_failing_subscriber_leaves_the_other_streams_playing(
     playback.add(replay.stream("odom")).subscribe(odom.append, on_completed=done.set)
     try:
         playback.play()
-        assert done.wait(PLAYBACK_TIMEOUT)
+        assert done.wait(HUNG_TEST_TIMEOUT)
     finally:
         playback.stop()
 
@@ -289,7 +289,7 @@ def test_play_again_returns_at_once(store: SqliteStore) -> None:
         # The publisher drains the buffer, so a load() that waited again could block.
         playback.play()
         playback.load()
-        assert done.wait(PLAYBACK_TIMEOUT)
+        assert done.wait(HUNG_TEST_TIMEOUT)
     finally:
         playback.stop()
 

@@ -40,8 +40,9 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.memory.replay import Playback
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.testing import PLAYBACK_TIMEOUT
+from dimos.memory.testing import HUNG_TEST_TIMEOUT, playback_finished
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -689,7 +690,7 @@ def test_replay_opens_recording_and_emits_typed_odometry(
         with conn.odom_stream().subscribe(received.append, errors.append, on_completed):
             conn.seal_subscriptions()
             conn.play()
-            assert finished.wait(PLAYBACK_TIMEOUT)
+            assert finished.wait(HUNG_TEST_TIMEOUT)
         assert errors == []
         assert completed == [True]
         assert [value.lcm_encode() for value in received] == [values[1].lcm_encode()]
@@ -740,7 +741,7 @@ def test_replay_metadata_only_opens_selected_streams(tmp_path, mocker, payload_m
         with conn.odom_stream().subscribe(received.append, on_completed=finished.set):
             conn.seal_subscriptions()
             conn.play()
-            assert finished.wait(PLAYBACK_TIMEOUT)
+            assert finished.wait(HUNG_TEST_TIMEOUT)
             conn.seal_subscriptions()
     assert [message.ts for message in received] == [10.0, 11.0]
     assert log.info.call_args_list == [
@@ -771,10 +772,7 @@ def test_replay_loop_cli_controls_repeated_playback(tmp_path, mocker, loop):
         g=GlobalConfig(**parsed.global_config_values()), **parsed.module_kwargs("go2connection")
     )
     log = mocker.patch("dimos.memory.replay_progress.logger")
-    finished = threading.Event()
-    log.info.side_effect = lambda message, **_fields: (
-        finished.set() if message == "Replay finished" else None
-    )
+    add = mocker.spy(Playback, "add")
     module = GO2Connection(g=cfg.g, replay_loop=cfg.replay_loop, lidar=False, camera=False)
     mocker.patch.object(module.cmd_vel, "subscribe", return_value=mocker.Mock())
     mocker.patch.object(module.velocity_command, "subscribe", return_value=mocker.Mock())
@@ -790,9 +788,10 @@ def test_replay_loop_cli_controls_repeated_playback(tmp_path, mocker, loop):
     try:
         with Disposable(module.odom.subscribe(on_odom)):
             module.start()
+            finished = playback_finished(add)
             module.on_system_modules_ready([])
             # A loop starts over 1.05 s after its last frame; a single pass finishes.
-            assert (third if loop else finished).wait(PLAYBACK_TIMEOUT)
+            assert (third if loop else finished).wait(HUNG_TEST_TIMEOUT)
     finally:
         module.stop()
     assert received[:2] == [1.0, 2.0]

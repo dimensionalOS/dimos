@@ -12,18 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""How long replay tests wait, from what they wait for."""
+"""Shared helpers for replay tests."""
 
-# The longest whole-machine stall seen on a CI runner: all four xdist workers froze
-# for 1.2 s right after a replay pinned its clock (the G1 replay flake). Doubled.
-CI_STALL_S = 2.4
+from __future__ import annotations
 
-# The longest a test recording takes to play: the Go2 loop test's third frame lands
-# after two 1 s frames and the 0.05 s loop gap.
-LONGEST_TEST_PLAYBACK_S = 2.05
+import threading
+from typing import TYPE_CHECKING
 
-# Until a replay delivers its frames or finishes: its playback, plus a stall.
-PLAYBACK_TIMEOUT = LONGEST_TEST_PLAYBACK_S + CI_STALL_S
+from reactivex import merge
 
-# Until another thread reaches a point, or a stop returns: no playback, only a stall.
-HANDOFF_TIMEOUT = CI_STALL_S
+if TYPE_CHECKING:
+    from unittest.mock import MagicMock
+
+# How long a test waits before declaring it hung. A healthy wait returns as soon as its
+# event fires, so this only decides how fast a broken test fails: far above any healthy
+# wait, far below pytest's 600 s --timeout, whose thread method kills the whole worker
+# with a stack dump instead of the test's own assertion message.
+HUNG_TEST_TIMEOUT = 30.0
+
+
+def playback_finished(add: MagicMock) -> threading.Event:
+    """Set once every stream that a ``mocker.spy(Playback, "add")`` saw has completed.
+
+    Call it after the module's ``start()`` added its streams, before it plays.
+    """
+    finished = threading.Event()
+    merge(*add.spy_return_list).subscribe(on_completed=finished.set)
+    return finished

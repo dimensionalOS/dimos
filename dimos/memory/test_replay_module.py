@@ -24,10 +24,10 @@ from reactivex.disposable import Disposable
 from reactivex.testing import TestScheduler
 
 from dimos.core.stream import Out
-from dimos.memory.replay import ReplayStream
+from dimos.memory.replay import Playback, ReplayStream
 from dimos.memory.replay_module import replay_module
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.testing import HANDOFF_TIMEOUT, PLAYBACK_TIMEOUT
+from dimos.memory.testing import HUNG_TEST_TIMEOUT, playback_finished
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
@@ -87,7 +87,7 @@ def test_stop_waits_for_in_flight_decode(recording: str, monkeypatch: pytest.Mon
             return decode(self, obs)
         entered.set()
         try:
-            assert release.wait(HANDOFF_TIMEOUT), "decode was not released"
+            assert release.wait(HUNG_TEST_TIMEOUT), "decode was not released"
             data = decode(self, obs)
             decoded.set()
             return data
@@ -103,13 +103,13 @@ def test_stop_waits_for_in_flight_decode(recording: str, monkeypatch: pytest.Mon
     stopper = threading.Thread(target=module.stop)
     try:
         module.start()
-        assert entered.wait(HANDOFF_TIMEOUT), "the reader did not decode ahead of the buffer"
+        assert entered.wait(HUNG_TEST_TIMEOUT), "the reader did not decode ahead of the buffer"
         stopper.start()
         assert not disposed.wait(0.1), "stop disposed before the in-flight decode finished"
     finally:
         release.set()
         if stopper.ident is not None:
-            stopper.join(timeout=HANDOFF_TIMEOUT)
+            stopper.join(timeout=HUNG_TEST_TIMEOUT)
         module.stop()
 
     assert disposed.is_set()
@@ -280,16 +280,8 @@ def test_replay_logs_source_and_finishes_after_all_timed_streams(recording, mock
                 info.append(PoseStamped(ts=0.0), ts=0.0)
     log = mocker.patch("dimos.memory.replay_progress.logger")
     module = replay_module(recording)(dataset=recording)
+    add = mocker.spy(Playback, "add")
     odom: list[float] = []
-    odom_at_finish: list[int] = []
-    finished = threading.Event()
-
-    def on_info(message: str, **_fields: Any) -> None:
-        if message == "Replay finished":
-            odom_at_finish.append(len(odom))
-            finished.set()
-
-    log.info.side_effect = on_info
     module.outputs["odom"].subscribe(lambda m: odom.append(m.ts))
     try:
         module.start()
@@ -301,10 +293,11 @@ def test_replay_logs_source_and_finishes_after_all_timed_streams(recording, mock
             speed=1.0,
             loop=False,
         )
+        finished = playback_finished(add)
         module.on_system_modules_ready([])
-        assert finished.wait(PLAYBACK_TIMEOUT)
+        assert finished.wait(HUNG_TEST_TIMEOUT)
+        assert len(odom) == 3  # goal ended first, with odom frames still to come
         assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=recording)]
-        assert odom_at_finish == [3]  # not when goal ended, with odom frames still to come
     finally:
         module.stop()
 

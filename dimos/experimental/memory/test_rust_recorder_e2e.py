@@ -56,7 +56,7 @@ from dimos.memory.cli.dataset import open_dataset
 from dimos.memory.replay_module import ReplayModule
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.testing import PLAYBACK_TIMEOUT
+from dimos.memory.testing import HUNG_TEST_TIMEOUT
 from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -636,7 +636,7 @@ def test_native_json_events_replay_to_the_live_quest_hud(
         cleanup.callback(subscription)
         replay.start()
         replay.on_system_modules_ready([])
-        assert both.wait(PLAYBACK_TIMEOUT)
+        assert both.wait(HUNG_TEST_TIMEOUT)
         assert [(p["ts"], p["last_event"]) for p in received] == [(12.0, "start"), (13.0, "save")]
         assert received[-1]["type"] == "episode_status"
         assert received[-1]["episodes_saved"] == 1

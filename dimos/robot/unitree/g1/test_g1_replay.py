@@ -18,8 +18,9 @@ import threading
 from mcap.writer import Writer
 import pytest
 
+from dimos.memory.replay import Playback
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.testing import PLAYBACK_TIMEOUT
+from dimos.memory.testing import HUNG_TEST_TIMEOUT, playback_finished
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.unitree.g1.g1_replay import G1Replay
 
@@ -77,10 +78,7 @@ def test_replay_logs_source_duration_and_completion(tmp_path, mocker):
         for ts in (1.0, 2.0):
             odom.append(Odometry(ts=ts), ts=ts)
     log = mocker.patch("dimos.memory.replay_progress.logger")
-    finished = threading.Event()
-    log.info.side_effect = lambda message, **_fields: (
-        finished.set() if message == "Replay finished" else None
-    )
+    add = mocker.spy(Playback, "add")
     with G1Replay(dataset=str(path)) as replay:
         log.info.assert_called_once_with(
             "Replay started",
@@ -90,6 +88,7 @@ def test_replay_logs_source_duration_and_completion(tmp_path, mocker):
             speed=1.0,
             loop=False,
         )
+        finished = playback_finished(add)
         replay.on_system_modules_ready([])
-        assert finished.wait(PLAYBACK_TIMEOUT)
+        assert finished.wait(HUNG_TEST_TIMEOUT)
         assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=str(path))]
