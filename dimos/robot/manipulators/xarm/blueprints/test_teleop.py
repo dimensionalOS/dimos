@@ -18,6 +18,7 @@ import sys
 from types import ModuleType
 from typing import Any, cast, get_type_hints
 
+import numpy as np
 import pytest
 
 # The tests extra excludes yourdfpy on Linux ARM because embreex has no wheel.
@@ -128,7 +129,24 @@ _SIM_BLUEPRINTS: dict[str, ModuleType] = {
     "coordinator_teleop_xarm6": teleop,
     "coordinator_teleop_xarm7": teleop,
     "coordinator_xarm6": basic,
+    "coordinator_xarm7": basic,
+    "xarm6_planner_coordinator": basic,
+    "xarm7_planner_coordinator": basic,
 }
+
+
+def _tcp_height_in_sim(model: Any, arm_positions: list[float]) -> float:
+    by_child = {j.child_link: j for j in model.load().joints}
+    positions = {f"arm/joint{i + 1}": v for i, v in enumerate(arm_positions)}
+    link, transform = "link_tcp", np.eye(4)
+    chain = []
+    while link != "link_base":
+        joint = by_child[link]
+        chain.append(joint.parent_from_child(positions.get(joint.name, 0.0)))
+        link = joint.parent_link
+    for step in reversed(chain):
+        transform = transform @ step
+    return float(xarm_config.XARM7_SIM_BASE_POSE.position.z + transform[2, 3])
 
 
 def _under_simulation(module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
@@ -157,11 +175,23 @@ def test_simulation_runs_the_arm_and_gripper_in_mujoco(
     blueprint = autoconnect(_under_simulation(_SIM_BLUEPRINTS[name], monkeypatch)[name]).solidify()
     connection = next(atom for atom in blueprint.blueprints if atom.module is MujocoArmConnection)
     sim = next(atom for atom in blueprint.blueprints if atom.module is MujocoSimModule)
+    dof = len(movable_joints(connection.kwargs["model"])) - 1
 
     assert not any(atom.module is XArmConnection for atom in blueprint.blueprints)
     assert connection.kwargs["gripper_joint"] == "arm/drive_joint"
     # The sim finds the gripper only in a scene joint past its dof.
-    assert sim.kwargs["dof"] == len(movable_joints(connection.kwargs["model"])) - 1
+    assert sim.kwargs["dof"] == dof
+    reset = sim.kwargs["reset_joint_positions"]
+    assert reset == (xarm_config.XARM6_SIM_HOME if dof == 6 else xarm_config.XARM7_SIM_HOME)
+    # table_top sits at z = 0.12 m; all-zero joints put link_tcp at z = 0.06-0.07 m inside it.
+    assert _tcp_height_in_sim(connection.kwargs["model"], reset) > 0.30
+    if name.endswith("_planner_coordinator"):
+        planner = next(
+            atom for atom in blueprint.blueprints if issubclass(atom.module, ManipulationModule)
+        )
+        model = ManipulationModuleConfig.model_validate(planner.kwargs).model
+        assert model.base_pose == xarm_config.XARM7_SIM_BASE_POSE
+        assert model.home_joints == reset
 
 
 @pytest.mark.parametrize(

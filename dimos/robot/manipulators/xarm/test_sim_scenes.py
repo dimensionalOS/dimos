@@ -18,6 +18,10 @@ import mujoco
 import numpy as np
 import pytest
 
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.robot.manipulators.xarm.blueprints.basic import xarm_connection
+from dimos.robot.manipulators.xarm.config import XArmType
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.utils.data import LfsPath
 
 pytestmark = pytest.mark.self_hosted
@@ -65,6 +69,28 @@ def test_shapes_stay_on_the_table(scene: str) -> None:
     for name in shapes:
         assert data.body(name).xpos[2] > 0.12, f"{name} fell off the table"
         assert np.linalg.norm(data.body(name).cvel) < 0.01, f"{name} is still moving"
+
+
+@pytest.mark.parametrize("arm", ["xarm6", "xarm7"])
+def test_default_sim_start_pose_clears_the_table(arm: XArmType) -> None:
+    _, sim_bp = xarm_connection(arm, simulated=True)
+    sim = next(
+        atom for atom in autoconnect(sim_bp).solidify().blueprints if atom.module is MujocoSimModule
+    )
+    model = mujoco.MjModel.from_xml_path(sim.kwargs["address"])
+    data = mujoco.MjData(model)
+    reset = sim.kwargs.get("reset_joint_positions") or []
+    data.qpos[: len(reset)] = reset
+    mujoco.mj_forward(model, data)
+
+    table = model.geom("table_top").id
+    touching_bodies = {
+        model.body(model.geom_bodyid[geom]).name
+        for i in range(data.ncon)
+        if table in (data.contact[i].geom1, data.contact[i].geom2)
+        for geom in (data.contact[i].geom1, data.contact[i].geom2)
+    } - {"world", "green_block"}
+    assert not touching_bodies
 
 
 def _joints(model: mujoco.MjModel) -> set[str]:

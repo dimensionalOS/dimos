@@ -183,10 +183,13 @@ def xarm_model(
 
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
+# Each arm's ready pose in its sim scene, joint angles in radians: the gripper tip
+# 0.40 m in front of the base and 0.23 m above it, pointing down, clear of table_top.
+XARM6_SIM_HOME = [0.0, -0.264, -0.922, 0.0, 1.186, 0.0]
 XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
-# The sim scene stands the arm on a pedestal: xarm7.xml mounts link_base at
-# z=0.12. Place the planning model to match, or the planner solves poses 12cm
-# below the arm it is driving and every grasp closes on air.
+# The sim scenes stand the arm on a pedestal: xarm6.xml and xarm7.xml mount
+# link_base at z=0.12. Place the planning model to match, or the planner solves
+# poses 12cm below the arm it is driving and every grasp closes on air.
 XARM7_SIM_BASE_POSE = PoseStamped(frame_id="world", position=Vector3(z=0.12))
 
 

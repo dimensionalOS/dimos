@@ -36,8 +36,10 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators._modeling import joint_names
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.xarm.config import (
+    XARM6_SIM_HOME,
     XARM6_SIM_PATH,
     XARM7_SIM_BASE_POSE,
+    XARM7_SIM_HOME,
     XARM7_SIM_PATH,
     XARM_ARMS,
     XArmType,
@@ -51,8 +53,9 @@ from dimos.simulation.engines.mujoco_arm_connection import MujocoArmConnection
 
 SIMULATED = bool(global_config.simulation)
 
-# The MuJoCo scene of each arm that has one; each has the xArm Gripper.
+# The MuJoCo scene and start pose of each arm that has one; each has the xArm Gripper.
 XARM_SIM_SCENES: dict[XArmType, Any] = {"xarm6": XARM6_SIM_PATH, "xarm7": XARM7_SIM_PATH}
+XARM_SIM_HOMES: dict[XArmType, list[float]] = {"xarm6": XARM6_SIM_HOME, "xarm7": XARM7_SIM_HOME}
 
 
 class XArmCoordinator(ControlCoordinator):
@@ -101,7 +104,7 @@ def xarm_connection(
         velocity: Drive the arm joints by speed (rad/s) instead of position (rad).
         simulated: Run the arm in its MuJoCo scene instead of over the SDK.
         sim_module_kwargs: When simulated, the ``MujocoSimModule`` settings
-            (scene, camera, start pose); the arm's plain scene if None.
+            (scene, camera, start pose); the arm's plain scene at its home pose if None.
         instance_name: The connection's name, for a blueprint with two xArms.
             The real arm's address flag follows it: ``--<instance_name>.ip``.
     """
@@ -136,6 +139,7 @@ def xarm_connection(
                 "address": str(XARM_SIM_SCENES[arm]),
                 "headless": False,
                 "dof": XARM_ARMS[arm][0],
+                "reset_joint_positions": list(XARM_SIM_HOMES[arm]),
             }
         sim = autoconnect(
             MujocoArmConnection.blueprint(**fields, gripper_joint=f"{robot}/drive_joint"),
@@ -229,7 +233,8 @@ def _planner_coordinator(arm: XArmType, *, simulated: bool = False) -> MetaBluep
                 dof,
                 robot_type=robot_type,
                 robot="arm",
-                base_pose=XARM7_SIM_BASE_POSE if simulated and arm == "xarm7" else None,
+                base_pose=XARM7_SIM_BASE_POSE if simulated else None,
+                home_joints=list(XARM_SIM_HOMES[arm]) if simulated else None,
             ),
             gripper_tasks={"manipulator": "arm_gripper"},
         ),
@@ -238,7 +243,7 @@ def _planner_coordinator(arm: XArmType, *, simulated: bool = False) -> MetaBluep
 
 
 xarm7_planner_coordinator = autoconnect(_planner_coordinator("xarm7", simulated=SIMULATED))
-xarm6_planner_coordinator = autoconnect(_planner_coordinator("xarm6"))
+xarm6_planner_coordinator = autoconnect(_planner_coordinator("xarm6", simulated=SIMULATED))
 
 # The real arm has no gripper here; the MuJoCo scene's comes with the arm.
 coordinator_xarm7 = autoconnect(xarm_coordinator("xarm7", gripper=SIMULATED, simulated=SIMULATED))
