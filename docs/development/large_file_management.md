@@ -199,3 +199,18 @@ When running from:
   - Linux: `~/.local/share/dimos/repo/data/`
   - macOS: `~/Library/Application Support/dimos/repo/data/`
   - Fallback: `/tmp/dimos/repo/data/`
+- **`DIMOS_DATA_DIR` set**: Uses that directory and nothing else. It takes precedence over both cases above.
+
+### A Data Directory Without a Repository
+
+Set `DIMOS_DATA_DIR` to a directory of unpacked data to run without Git, Git LFS or a network. This is for an install that ships its own data, such as a packaged image.
+
+```sh skip
+DIMOS_DATA_DIR=/opt/dimos/data dimos --simulation run unitree-go2
+```
+
+The directory holds what `data/` holds after extraction: `cafe.jpg`, `mujoco_sim/`, and so on. The `.tar.gz` archives are not needed.
+
+`get_data(name)` returns `$DIMOS_DATA_DIR/{name}`. A name that is not there raises `FileNotFoundError` with the name and the directory. Nothing is cloned, pulled or extracted.
+
+The directory can be read-only. Recordings are the exception: SQLite opens a `.db` for writing, so replay fails from a read-only directory. Keep recordings in a writable directory.
