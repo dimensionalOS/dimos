@@ -2,18 +2,6 @@
 
 Go2 hardware checks are in [hardware](09_hardware.md). This checklist covers the G1, several Go2s at once, the Go2 over DDS and the FlowBase. Simulation and replay checks need no robot. Hardware checks name what they need.
 
-## 10.1 G1 agent in simulation
-
-```bash
-uv run dimos --simulation run unitree-g1-agentic-sim
-# In another terminal, once the MuJoCo and DimOS Viewer windows are up:
-uv run dimos mcp list-tools
-uv run dimos mcp call move --arg x=0.3 --arg duration=3.0
-uv run dimos agent-send "walk forward one meter"
-```
-
-Expected result: MuJoCo shows the G1 standing in the office scene. The tool list includes `move`, `execute_arm_command` and `execute_mode_command`. The `move` call walks the robot forward, and the agent walks it forward again and confirms through the speakers.
-
 ## 10.2 G1 whole-body control in MuJoCo
 
 The first run pulls the GR00T model and the office scene. The arm teleop needs a Quest headset on the same network. MuJoCo runs headless in both blueprints, so no MuJoCo window opens. The GR00T blueprint opens the DimOS Viewer and the teleop blueprint opens no window.
@@ -34,7 +22,7 @@ Needs a G1 in sport mode with dimos installed on it, its Mid-360 and RealSense, 
 
 ```bash
 # On the G1:
-uv run dimos run unitree-g1-nav-simple --rerunbridgemodule.host 0.0.0.0 --rerunwebsocketserver.host 0.0.0.0
+uv run dimos run unitree-g1 --rerunbridgemodule.host 0.0.0.0 --rerunwebsocketserver.host 0.0.0.0
 # On the laptop:
 uv run dimos-viewer --connect rerun+http://<g1-ip>:9877/proxy --ws-url ws://<g1-ip>:3030/ws
 # Stop the nav blueprint, then on the G1:

@@ -13,10 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Replay a 29-DOF G1 joint trajectory through unitree-g1-coordinator.
+"""Replay a 29-DOF G1 joint trajectory file through unitree-g1-groot-wbc.
 
-Publishes JointState to /g1/joint_command. Trajectory file: positional 29-DOF
-(joint_names ignored, zipped onto make_humanoid_joints("g1")).
+Publishes 29-DOF JointState messages to /g1/joint_command (positional samples
+zipped onto make_humanoid_joints("g1")). Under unitree-g1-groot-wbc, the 14 arm
+joints follow the trajectory while groot_wbc keeps the 15 leg and waist joints.
 """
 
 from __future__ import annotations
@@ -123,7 +124,7 @@ def main() -> None:
     try:
         logger.info(f"waiting up to 10s for {_JOINT_STATE_TOPIC} ...")
         if not state_event.wait(timeout=10.0):
-            logger.error("no joint_state received — is `dimos run unitree-g1-coordinator` running?")
+            logger.error("no joint_state received — is `dimos run unitree-g1-groot-wbc` running?")
             return
         with state_lock:
             start_q = [current_q.get(n, 0.0) for n in CANONICAL_JOINTS]
