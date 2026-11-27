@@ -78,7 +78,7 @@ class DFineDetector(HuggingFaceModel, Detector):
         return AutoImageProcessor.from_pretrained(self.config.model_name, use_fast=True)
 
     def process_image(self, image: Image) -> ImageDetections2D:
-        """Detect the COCO classes in the image; boxes below the threshold are dropped."""
+        """Detect the COCO classes in the image. Boxes below the threshold are dropped."""
         with torch.inference_mode():
             inputs = self._processor(
                 images=image.to_rgb().data, return_tensors="pt", device=self.config.device

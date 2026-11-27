@@ -29,16 +29,22 @@ from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.detectors.base import Detector
-from dimos.perception.detection.detectors.dfine import DFineDetector
 from dimos.perception.detection.type.detection2d.base import Filter2D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure
 
 
+def _default_detector() -> Detector:
+    # Not at the top of the file: it imports torch, which takes seconds.
+    from dimos.perception.detection.detectors.dfine import DFineDetector
+
+    return DFineDetector()
+
+
 class Config(ModuleConfig):
     max_freq: float = 10
-    detector: Callable[[], Detector] | None = DFineDetector
+    detector: Callable[[], Detector] | None = _default_detector
     publish_detection_images: bool = True
     camera_info: CameraInfo
     filter: Annotated[
