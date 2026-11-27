@@ -161,10 +161,7 @@ class ReplayModule(Module):
                     interval(1.0).subscribe(partial(_republish, port, stream.first()))
                 )
                 continue
-            # Not a late subscriber, just behind by the setup of the streams
-            # subscribed before it, which on a loaded machine exceeds the
-            # late tolerance and would drop its first frames.
-            timed: Observable[DimosMsg] = stream.observable(skip_late=False)
+            timed: Observable[DimosMsg] = stream.observable()
             self.register_disposable(progress.track(timed).subscribe(port.publish))
         progress.seal()
 

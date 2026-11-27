@@ -120,7 +120,8 @@ class G1Replay(Module):
                 stream.count(),
                 self.config.speed,
             )
-            self.register_disposable(progress.track(stream.observable()).subscribe(port.publish))
+            timed = stream.observable()
+            self.register_disposable(progress.track(timed).subscribe(port.publish))
         progress.seal()
 
     @rpc

@@ -138,7 +138,7 @@ def test_read_failure_reports_one_error(phase: str, mocker: MockerFixture) -> No
             replay.pin_anchor(10.0)
         stream = replay.stream("pose")
         mocker.patch.object(stream, "_base_stream", side_effect=rows)
-        with stream.observable().subscribe(
+        with stream.observable(skip_late=phase == "skip").subscribe(
             received.append, on_error, completed, scheduler=scheduler
         ):
             scheduler.advance_by(10)

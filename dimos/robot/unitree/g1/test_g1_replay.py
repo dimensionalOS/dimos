@@ -14,11 +14,16 @@
 
 from pathlib import Path
 import threading
+import time
+from typing import Any
 
 from mcap.writer import Writer
 import pytest
+from pytest_mock import MockerFixture
+from reactivex.disposable import Disposable
 from reactivex.testing import TestScheduler
 
+from dimos.memory.replay import ReplayStream
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.unitree.g1.g1_replay import G1Replay
@@ -89,3 +94,25 @@ def test_replay_logs_source_duration_and_completion(tmp_path, mocker):
         )
         scheduler.advance_by(5)
         assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=str(path))]
+
+
+def test_slow_start_keeps_the_first_frames(tmp_path: Path, mocker: MockerFixture) -> None:
+    path = tmp_path / "g1.db"
+    with SqliteStore(path=str(path)) as store:
+        odom = store.stream("pointlio_odometry", Odometry)
+        for ts in (1.0, 2.0):
+            odom.append(Odometry(ts=ts), ts=ts)
+    scheduler = TestScheduler()
+    mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
+    base_stream = ReplayStream._base_stream
+
+    def slow_query(self: ReplayStream[Any]) -> Any:
+        time.sleep(0.1)  # twice the late tolerance, on every query the setup makes
+        return base_stream(self)
+
+    mocker.patch.object(ReplayStream, "_base_stream", slow_query)
+    replay = G1Replay(dataset=str(path))
+    received: list[float] = []
+    with Disposable(replay.pointlio_odometry.subscribe(lambda m: received.append(m.ts))), replay:
+        scheduler.advance_by(5)
+    assert received == [1.0, 2.0]
