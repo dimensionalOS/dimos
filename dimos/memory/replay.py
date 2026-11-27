@@ -29,6 +29,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
+from pydantic import Field
 from reactivex.subject import Subject
 
 from dimos.memory.cli.dataset import resolve_dataset
@@ -63,7 +64,7 @@ class ReplayConfig(BaseConfig):
     from_timestamp: float | None = None
     loop: bool = False
     # Frames read ahead of the publisher.
-    buffer_size: int = 128
+    buffer_size: int = Field(default=128, gt=0)
     # Seconds the publisher may fall behind schedule before it warns.
     lag_warning: float = 0.5
 
@@ -305,6 +306,7 @@ class Playback:
         self._state_lock = threading.Lock()
         self._reader: threading.Thread | None = None
         self._read_done = threading.Event()
+        self._loaded = threading.Event()
         self._publisher: threading.Thread | None = None
 
     def add(self, stream: ReplayStream[T]) -> Observable[T]:
@@ -320,7 +322,9 @@ class Playback:
             return subject
 
     def load(self) -> None:
-        """Fill the buffer, returning once it is full. Idempotent."""
+        """Fill the buffer, returning once it is full. Later calls return at once."""
+        if self._loaded.is_set():
+            return
         with self._state_lock:
             if self._reader is None and not self._stopped.is_set():
                 self._reader = threading.Thread(
@@ -328,6 +332,7 @@ class Playback:
                 )
                 self._reader.start()
         self._buffer.wait_full(self._read_done)
+        self._loaded.set()
 
     def play(self) -> None:
         """Start the clock at the first frame and publish. Idempotent."""
@@ -449,10 +454,11 @@ class Playback:
                 return
             if isinstance(item, _Ended):
                 ended.add(item.name)
+                subject = self._subjects[item.name]
                 if item.error is None:
-                    self._subjects[item.name].on_completed()
+                    self._deliver(item.name, subject.on_completed)
                 else:
-                    self._subjects[item.name].on_error(item.error)
+                    self._deliver(item.name, subject.on_error, item.error)
                 continue
             if first_ts is None:
                 first_ts = item.ts
@@ -467,4 +473,12 @@ class Playback:
                 logger.warning(
                     "Replay is behind schedule", lag_s=round(-early, 3), stream=item.name
                 )
-            self._subjects[item.name].on_next(item.value)
+            self._deliver(item.name, self._subjects[item.name].on_next, item.value)
+
+    @staticmethod
+    def _deliver(name: str, notify: Callable[..., None], *args: Any) -> None:
+        # A subscriber that raises (or has no on_error) must not stop the other streams.
+        try:
+            notify(*args)
+        except Exception:
+            logger.exception("Replay subscriber failed", stream=name)

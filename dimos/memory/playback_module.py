@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pydantic import Field
+
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
@@ -33,7 +35,7 @@ class PlaybackModuleConfig(ModuleConfig):
     seek: float | None = None
     duration: float | None = None
     # Decoded frames read ahead of the publisher; start() returns once this many are ready.
-    buffer_size: int = 128
+    buffer_size: int = Field(default=128, gt=0)
     # Seconds the publisher may fall behind schedule before it warns.
     lag_warning: float = 0.5
 

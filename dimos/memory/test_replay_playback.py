@@ -16,7 +16,9 @@ from collections.abc import Iterator
 from pathlib import Path
 import threading
 import time
+from typing import Any
 
+from pydantic import ValidationError
 import pytest
 from pytest_mock import MockerFixture
 
@@ -135,14 +137,26 @@ def test_slow_subscriber_drops_nothing_and_warns_once(
 def test_load_returns_with_the_buffer_full(store: SqliteStore, mocker: MockerFixture) -> None:
     replay = store.replay(buffer_size=2)
     playback, _published, _done = _record(replay, list(_RECORDING))
-    put = mocker.spy(type(playback._buffer), "put")
-    playback.load()
+    buffer_type = type(playback._buffer)
+    put = buffer_type.put
+    third_put = threading.Event()
+    calls = 0
 
-    assert len(playback._buffer._items) == 2
-    time.sleep(0.2)  # time to read everything, were it not for the buffer
-    # Two frames buffered, a third waiting on the full buffer.
-    assert put.call_count == 3
-    playback.stop()
+    def counting_put(self: Any, item: Any) -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            third_put.set()
+        return put(self, item)
+
+    mocker.patch.object(buffer_type, "put", counting_put)
+    try:
+        playback.load()
+        assert len(playback._buffer._items) == 2
+        assert third_put.wait(5)
+        assert len(playback._buffer._items) == 2  # the third waits on the full buffer
+    finally:
+        playback.stop()
 
 
 def test_load_returns_when_the_recording_is_shorter_than_the_buffer(store: SqliteStore) -> None:
@@ -186,15 +200,20 @@ def test_stop_from_a_callback_allows_closing_the_store(store: SqliteStore) -> No
     playback = replay.playback()
     published: list[float] = []
 
+    stopped = threading.Event()
+
     def on_frame(frame: float) -> None:
         published.append(frame)
         playback.stop()
         store.stop()
+        stopped.set()
 
     playback.add(replay.stream("odom")).subscribe(on_frame)
-    playback.play()
-    time.sleep(0.2)
-    playback.stop()
+    try:
+        playback.play()
+        assert stopped.wait(5)
+    finally:
+        playback.stop()
 
     assert published == [_RECORDING["odom"][0]]
 
@@ -235,3 +254,45 @@ def test_add_twice_or_after_load_is_refused(store: SqliteStore) -> None:
     with pytest.raises(RuntimeError):
         playback.add(replay.stream("lidar"))
     playback.stop()
+
+
+def test_failing_subscriber_leaves_the_other_streams_playing(
+    store: SqliteStore, mocker: MockerFixture
+) -> None:
+    log = mocker.patch("dimos.memory.replay.logger")
+    replay = store.replay(speed=10.0)
+    playback = replay.playback()
+    odom: list[float] = []
+    done = threading.Event()
+
+    def broken(_frame: float) -> None:
+        raise RuntimeError("subscriber bug")
+
+    playback.add(replay.stream("lidar")).subscribe(broken)
+    playback.add(replay.stream("odom")).subscribe(odom.append, on_completed=done.set)
+    try:
+        playback.play()
+        assert done.wait(5)
+    finally:
+        playback.stop()
+
+    assert odom == _RECORDING["odom"]
+    assert log.exception.call_count == len(_RECORDING["lidar"])
+
+
+def test_play_again_returns_at_once(store: SqliteStore) -> None:
+    replay = store.replay(buffer_size=1)
+    playback, _published, done = _record(replay, list(_RECORDING))
+    try:
+        playback.play()
+        # The publisher drains the buffer, so a load() that waited again could block.
+        playback.play()
+        playback.load()
+        assert done.wait(5)
+    finally:
+        playback.stop()
+
+
+def test_buffer_size_must_be_positive(store: SqliteStore) -> None:
+    with pytest.raises(ValidationError):
+        store.replay(buffer_size=0)
