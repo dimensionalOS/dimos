@@ -123,6 +123,7 @@ class FlowBaseConnection(ConnectionModule):
     times a second. When commands stop, the base is sent zero speed.
     """
 
+    required_imports = ("portal",)
     config: FlowBaseConfig
 
     cmd_vel: In[Twist]

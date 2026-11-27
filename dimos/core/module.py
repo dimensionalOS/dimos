@@ -56,6 +56,7 @@ from dimos.protocol.tf.tf import TF
 from dimos.utils import colors
 from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.optional_dependencies import check_imports
 
 logger = setup_logger()
 
@@ -219,6 +220,9 @@ class ModuleBase(Configurable, CompositeResource):
         Default is a no-op — override in subclasses that need a build step.
         """
 
+    # Packages imported lazily once an active module starts.
+    required_imports: ClassVar[tuple[str, ...]] = ()
+
     @classmethod
     def check_dependencies(cls, **kwargs: Any) -> None:
         """Raise ImportError with an install hint before starting any workers.
@@ -227,6 +231,7 @@ class ModuleBase(Configurable, CompositeResource):
         without constructing the module. These kwargs are sparse; overrides
         must resolve any missing config defaults and must not create runtime resources.
         """
+        check_imports(*cls.required_imports)
 
     @rpc
     def start(self) -> None:

@@ -106,6 +106,7 @@ class KeyboardTeleopModule(Module):
     Publishes routed TwistStamped commands for EEFTwistTask.
     """
 
+    required_imports = ("pygame",)
     config: KeyboardTeleopConfig
 
     ee_twist_command: Out[TwistStamped]

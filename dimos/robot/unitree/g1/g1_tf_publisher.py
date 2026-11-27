@@ -118,6 +118,7 @@ class G1TfPublisherConfig(ModuleConfig):
 class G1TfPublisher(Module):
     """Publishes the G1 sensor mount tree onto tf, waist edge live from lowstate."""
 
+    required_imports = ("unitree_sdk2py",)
     config: G1TfPublisherConfig
 
     tf: Out[TFMessage]

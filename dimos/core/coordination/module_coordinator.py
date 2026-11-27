@@ -62,6 +62,7 @@ from dimos.spec.utils import (
 )
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.optional_dependencies import explain_missing_extra
 from dimos.utils.safe_thread_map import ExceptionGroup, safe_thread_map
 
 if TYPE_CHECKING:
@@ -580,7 +581,7 @@ class ModuleCoordinator(Resource):
         blueprint: Blueprint,
         parsed_config: ParsedBlueprintConfig | None = None,
     ) -> None:
-        check_module_dependencies(blueprint, parsed_config)
+        check_module_dependencies(blueprint, parsed_config, live_config=self._global_config)
         global_values, module_kwargs, transport_overrides = _resolve_blueprint_config(
             blueprint, parsed_config, sparse_globals=True
         )
@@ -1065,14 +1066,22 @@ def _run_configurators(blueprint: Blueprint) -> None:
 
 
 def check_module_dependencies(
-    blueprint: Blueprint, parsed_config: ParsedBlueprintConfig | None = None
+    blueprint: Blueprint,
+    parsed_config: ParsedBlueprintConfig | None = None,
+    *,
+    live_config: GlobalConfig | None = None,
 ) -> None:
     """Check active modules' dependencies before allocating runtime resources."""
-    _, module_kwargs, _ = _resolve_blueprint_config(blueprint, parsed_config)
+    global_values, module_kwargs, _ = _resolve_blueprint_config(
+        blueprint, parsed_config, sparse_globals=live_config is not None
+    )
+    g = (global_config if live_config is None else live_config).model_copy(update=global_values)
     for atom in blueprint.active_blueprints:
         kwargs = dict(atom.kwargs)
         kwargs.update(module_kwargs.get(atom.name, {}))
-        atom.module.check_dependencies(**kwargs)
+        kwargs.setdefault("g", g)
+        with explain_missing_extra():
+            atom.module.check_dependencies(**kwargs)
 
 
 def _check_requirements(blueprint: Blueprint) -> None:

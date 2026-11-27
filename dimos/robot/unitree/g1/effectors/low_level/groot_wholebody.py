@@ -134,6 +134,7 @@ class G1LowStateSnapshot:
 class G1WholeBodyConnection(ConnectionModule):
     """G1 humanoid Module - owns the DDS connection in its own worker."""
 
+    required_imports = ("unitree_sdk2py",)
     config: G1WholeBodyConnectionConfig
 
     position_command: In[JointState]
