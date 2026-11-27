@@ -34,3 +34,8 @@ def rerun_bridge() -> None:
     """Run the standalone bridge through the shared CLI."""
     sys.argv = ["dimos", "rerun-bridge", *sys.argv[1:]]
     main()
+
+
+# `python -m dimos.cli.entry` is the `dimos` script without its path. `dimos restart` uses it.
+if __name__ == "__main__":
+    main()

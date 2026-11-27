@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 import subprocess
+import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -222,3 +223,38 @@ class TestStopCLI:
                 break
             time.sleep(0.1)
         assert proc.poll() is not None, "Process should be dead after SIGTERM"
+
+
+class TestRestartCLI:
+    """Tests for `dimos restart` command."""
+
+    def test_restart_runs_the_stored_arguments_on_this_python(
+        self, sleeper, monkeypatch: pytest.MonkeyPatch
+    ):
+        proc = sleeper()
+        # Started from an install that has since been replaced by one in another folder.
+        stored = ["/opt/dimos/old/bin/dimos", "--replay", "run", "test", "--daemon"]
+        _entry("restart-test", proc.pid, original_argv=stored)
+        executed: list[tuple[str, list[str]]] = []
+        monkeypatch.setattr(os, "execv", lambda path, argv: executed.append((path, argv)))
+
+        result = CliRunner().invoke(main, ["restart"])
+
+        assert result.exit_code == 0
+        command = [sys.executable, "-m", "dimos.cli.entry", *stored[1:]]
+        assert executed == [(sys.executable, command)]
+        assert proc.wait(timeout=10) is not None
+
+    def test_restart_without_stored_arguments_leaves_the_run_alone(
+        self, sleeper, monkeypatch: pytest.MonkeyPatch
+    ):
+        proc = sleeper()
+        entry = _entry("restart-no-argv", proc.pid)
+        monkeypatch.setattr(os, "execv", lambda path, argv: pytest.fail("must not relaunch"))
+
+        result = CliRunner().invoke(main, ["restart"])
+
+        assert result.exit_code == 1
+        assert "missing original command" in result.output
+        assert proc.poll() is None
+        assert entry.registry_path.exists()

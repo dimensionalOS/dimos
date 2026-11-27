@@ -537,8 +537,11 @@ def restart(
         typer.echo("Cannot restart: run entry missing original command", err=True)
         raise typer.Exit(1)
 
-    # Save argv and pid before stopping (stop removes the entry)
-    argv = entry.original_argv
+    # Worked out before stopping, which removes the entry. The stored arguments run on
+    # the Python that runs this command: the stored program path is gone when the
+    # install was replaced by one in another folder. dimos.cli.entry and not
+    # dimos.cli.dimos, because every worker imports the main module again.
+    argv = [sys.executable, "-m", "dimos.cli.entry", *entry.original_argv[1:]]
     old_pid = entry.pid
 
     typer.echo(f"Restarting {entry.run_id} ({entry.blueprint})...")
@@ -553,7 +556,7 @@ def restart(
 
     typer.echo(f"  Running: {' '.join(argv)}")
     try:
-        os.execvp(argv[0], argv)
+        os.execv(argv[0], argv)
     except OSError as exc:
         typer.echo(f"Error: failed to restart — {exc}", err=True)
         raise typer.Exit(1)
