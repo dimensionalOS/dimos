@@ -22,9 +22,12 @@ pinned DENO_VERSION there, exactly as it does on a customer machine.
 """
 
 import json
+import os
 from pathlib import Path
 import urllib.request
 
+from dimos.constants import CACHE_DIR
+from dimos.core.native_module import NativeModuleConfig
 from dimos.navigation.go2.replanning_a_star.min_cost_astar_ext import (
     min_cost_astar_cpp,  # noqa: F401
 )
@@ -45,7 +48,33 @@ REQUIRED = (
 RELAY_READY_TIMEOUT_S = 120.0
 
 
+def check_native_sources() -> None:
+    """Exercise the installed resolver against the inputs used by the different builders."""
+    checkout = Path(__file__).resolve().parents[2]
+    projects = {
+        "dimos/mapping/ray_tracing/rust": ("flake.lock", "src/voxel_ray_tracer.rs"),
+        "dimos/hardware/sensors/lidar/virtual_mid360": ("Cargo.lock", "src/main.rs"),
+        "dimos/simulation/habitat/nix": ("install.sh", "../server.py", "../frames.py"),
+        "examples/native-modules/cpp": ("CMakeLists.txt", "src/ping.cpp"),
+        "examples/native-modules/rust": ("Cargo.toml", "src/ping.rs"),
+    }
+    for directory, inputs in projects.items():
+        cwd, _ = NativeModuleConfig(
+            source_dir=directory, executable="result/bin/module"
+        ).resolve_paths()
+        if cwd is None or not Path(cwd).is_relative_to(CACHE_DIR / "native"):
+            raise SystemExit(f"installed native sources resolved outside the build cache: {cwd}")
+        for name in inputs:
+            staged = Path(cwd) / name
+            original = checkout / directory / name
+            if staged.read_bytes() != original.read_bytes():
+                raise SystemExit(f"native build input differs from this release: {staged}")
+            if os.access(original, os.X_OK) and not os.access(staged, os.X_OK):
+                raise SystemExit(f"native build script lost its executable bit: {staged}")
+
+
 def main() -> None:
+    check_native_sources()
     dist = Path(locate.__file__).resolve().parent / "_relay_dist"
     for rel in REQUIRED:
         if not (dist / rel).is_file():
