@@ -243,6 +243,18 @@ def test_ast_extraction_matches_runtime() -> None:
         assert runtime_dir == (DIMOS_PROJECT_ROOT / module.build_dir).resolve()
 
 
+def test_no_two_modules_share_an_executable_name() -> None:
+    """An install keeps each module in a folder named after its executable (DIMOS_NATIVE_DIR)."""
+    owners: dict[str, str] = {}
+    for module in _SCRIPT.discover():
+        dotted, class_name = module.qualname.rsplit(".", 1)
+        config_class = getattr(importlib.import_module(dotted), class_name)
+        name = Path(config_class.model_fields["executable"].default).name
+        assert owners.setdefault(name, module.build_dir) == module.build_dir, (
+            f"{name} is built by both {owners[name]} and {module.build_dir}"
+        )
+
+
 def test_every_module_builds_from_its_own_directory() -> None:
     """`path:.` from the module dir, hashing nothing outside it: a root ref copies all of LFS, an outside input escapes the publish key."""
     modules = _SCRIPT.discover()
