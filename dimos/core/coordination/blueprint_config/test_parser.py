@@ -266,10 +266,7 @@ def test_namespaced_instance_accepts_slash_qualified_option() -> None:
         environ={},
     )
 
-    assert parsed.module_kwargs("robot0/primarymodule") == {
-        "frame_id_prefix": "robot0",
-        "map_file": "map",
-    }
+    assert parsed.module_kwargs("robot0/primarymodule") == {"map_file": "map"}
 
 
 def test_disabled_module_does_not_make_shorthand_ambiguous() -> None:

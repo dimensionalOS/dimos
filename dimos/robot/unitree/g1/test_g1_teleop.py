@@ -36,15 +36,15 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
-from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
-    _G1_TELEOP_MODEL,
-    _G1GrootCoordinator,
-    unitree_g1_groot_wbc,
-)
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import (
     G1CollectionRecorder,
     G1ManipulationModule,
     unitree_g1_teleop,
+)
+from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_groot_wbc import (
+    _G1_TELEOP_MODEL,
+    _G1GrootCoordinator,
+    unitree_g1_groot_wbc,
 )
 from dimos.robot.unitree.g1.manip_config import (
     G1_LEFT_ARM_JOINTS,

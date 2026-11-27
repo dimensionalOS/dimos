@@ -35,11 +35,12 @@ async def read_log(
     query: str | None,
     limit: int | None,
 ) -> dict[str, Any]:
-    file = await asyncio.to_thread(logs.find, state.dimos_dir, run_id)
-    if file is None:
+    found = await asyncio.to_thread(logs.find, state.dimos_dir, run_id)
+    if found is None:
         raise ApiError(
             404, "no run has a log yet" if run_id == "latest" else f"no log for run {run_id}"
         )
+    run_id, file = found
     page = await asyncio.to_thread(
         logs.read,
         file,
@@ -69,10 +70,10 @@ async def past_run(state: GatewayState, run_id: RunId) -> dict[str, Any]:
     runs = await asyncio.to_thread(logs.history, state.dimos_dir)
     wanted = runs[:1] if run_id == "latest" else [run for run in runs if run["runId"] == run_id]
     found = wanted[0] if wanted else None
-    file = await asyncio.to_thread(logs.find, state.dimos_dir, found["runId"]) if found else None
-    if found is None or file is None:
+    entry = await asyncio.to_thread(logs.find, state.dimos_dir, found["runId"]) if found else None
+    if found is None or entry is None:
         raise ApiError(404, f"no run {run_id}")
-    return {**found, "logDir": str(file.parent)}
+    return {**found, "logDir": str(entry[1].parent)}
 
 
 @router.get("/{runId}/logs", response_model=responses.RunLog)

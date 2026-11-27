@@ -16,10 +16,12 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+import os
 from pathlib import Path
 import subprocess
 import sys
-from typing import Any
+from typing import Any, TextIO
 
 from dimos.experimental.isolated_python.module import (
     isolated_python_environment,
@@ -64,6 +66,42 @@ def _failure_detail(output: str) -> str:
     return lines[-1].strip() if lines else "no diagnostic output"
 
 
+def _forward_stderr(stream: TextIO) -> str:
+    lines = []
+    for line in stream:
+        sys.stderr.write(line)
+        sys.stderr.flush()
+        lines.append(line)
+    return "".join(lines)
+
+
+def _run_with_progress(
+    command: list[str], *, cwd: Path, env: dict[str, str], input: str
+) -> subprocess.CompletedProcess[str]:
+    """Stream diagnostics while retaining them for the failure summary."""
+    read_fd, write_fd = os.pipe()
+    with (
+        os.fdopen(read_fd) as reader,
+        os.fdopen(write_fd, "w") as writer,
+        ThreadPoolExecutor(max_workers=1) as executor,
+    ):
+        diagnostics = executor.submit(_forward_stderr, reader)
+        try:
+            result = subprocess.run(
+                command,
+                cwd=cwd,
+                env=env,
+                input=input,
+                stdout=subprocess.PIPE,
+                stderr=writer,
+                text=True,
+            )
+        finally:
+            writer.close()
+        result.stderr = diagnostics.result()
+    return result
+
+
 def _run(request: Request) -> Result:
     """Run one typed request under the locked LeRobot dependency stack."""
     project = lerobot_project()
@@ -76,19 +114,23 @@ def _run(request: Request) -> Result:
     env = isolated_python_environment(project)
     try:
         with cache_usage_guard():
-            print(
-                "Preparing LeRobot environment and running dataprep "
-                "(first use may download several GB and take minutes)...",
-                file=sys.stderr,
-                flush=True,
+            if not (Path(env["UV_PROJECT_ENVIRONMENT"]) / "pyvenv.cfg").is_file():
+                print(
+                    "Creating LeRobot environment (may download several GB and take minutes)...",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            activity = (
+                "Preparing LeRobot dataset"
+                if isinstance(request, BuildRequest)
+                else "Inspecting LeRobot dataset"
             )
-            result = subprocess.run(
+            print(f"{activity}...", file=sys.stderr, flush=True)
+            result = _run_with_progress(
                 command,
                 cwd=project,
                 env=env,
                 input=request.model_dump_json(),
-                capture_output=True,
-                text=True,
             )
     except FileNotFoundError as error:
         raise RuntimeError(

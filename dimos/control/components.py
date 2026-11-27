@@ -12,15 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hardware component schema for the ControlCoordinator."""
-
-from dataclasses import dataclass, field
-from enum import Enum
-from pathlib import Path
-from typing import Any
-
-from dimos.hardware.spec import JointLimits
-from dimos.hardware.whole_body.spec import WholeBodyConfig
+"""Joint and task names used by the ControlCoordinator."""
 
 HardwareId = str
 JointName = str
@@ -36,64 +28,6 @@ def split_joint_name(joint_name: str) -> tuple[str, str]:
     if len(parts) != 2:
         raise ValueError(f"Joint name '{joint_name}' missing separator '/'")
     return parts[0], parts[1]
-
-
-class HardwareType(Enum):
-    MANIPULATOR = "manipulator"
-    BASE = "base"
-    WHOLE_BODY = "whole_body"
-
-
-@dataclass(frozen=True)
-class JointState:
-    """State of a single joint."""
-
-    position: float
-    velocity: float
-    effort: float
-
-
-@dataclass
-class HardwareComponent:
-    """Configuration for a hardware component.
-
-    ``joints`` is the adapter's complete array order. Joint semantics
-    belong to tasks and concrete adapters, not this shared component model.
-
-    Attributes:
-        hardware_id: Unique identifier, also used as joint name prefix
-        hardware_type: Type of hardware (MANIPULATOR, BASE)
-        joints: Every joint name in adapter order.
-        adapter_type: Adapter type ("mock", "xarm", "piper")
-        address: Connection address - IP for TCP, port for CAN
-        auto_enable: Whether to auto-enable servos
-        domain_id: DDS domain ID for adapters that use DDS transport
-            (e.g. Unitree G1). Real robot uses 0; unitree_mujoco sim
-            defaults to 1. Ignored by non-DDS adapters.
-        limits: Optional joint limits in adapter array order.
-        adapter_kwargs: Generic untyped kwargs forwarded to the adapter
-            constructor — use for adapter-specific knobs that don't
-            belong in the spec.
-        wb_config: Whole-body-specific config (PD gains etc.).  Populate
-            on hardware_type=WHOLE_BODY components.  Keeps WB-only knobs
-            off the generic HardwareComponent shared by manipulators,
-            bases, and grippers.
-        mock_limits: Limits of the mock adapter that stands in for this
-            hardware while no address reaches it, from the blueprint or the
-            coordinator's ``addresses``. None: the adapter needs its address.
-    """
-
-    hardware_id: HardwareId
-    hardware_type: HardwareType
-    joints: list[JointName] = field(default_factory=list)
-    adapter_type: str = "mock"
-    address: str | Path | None = None
-    auto_enable: bool = True
-    domain_id: int = 0
-    limits: JointLimits | None = None
-    adapter_kwargs: dict[str, Any] = field(default_factory=dict)
-    wb_config: WholeBodyConfig | None = None
-    mock_limits: JointLimits | None = None
 
 
 def make_joints(hardware_id: HardwareId, dof: int) -> list[JointName]:

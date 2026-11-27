@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import contextlib
+from importlib import import_module
 import threading
 import time
 from typing import Any
@@ -83,6 +84,17 @@ class A750Connection(ConnectionModule):
 
     position_command: In[JointState]
     joint_state: Out[JointState]
+
+    @classmethod
+    def check_dependencies(cls, **kwargs: Any) -> None:
+        try:
+            import_module("a750_control")
+        except ImportError as exc:
+            raise ImportError(
+                f"A-750 vendor SDK unavailable: {exc}. "
+                "Install the third-party binding with `uv pip install a750-control` "
+                "(see docs/capabilities/manipulation/a750.md)."
+            ) from exc
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

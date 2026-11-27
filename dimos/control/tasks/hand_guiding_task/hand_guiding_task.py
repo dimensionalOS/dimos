@@ -19,7 +19,6 @@ from collections.abc import Mapping
 import math
 from typing import TYPE_CHECKING, Protocol
 
-from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
 from dimos.control.task import BaseControlTask, CoordinatorState, JointCommandOutput, ResourceClaim
 from dimos.protocol.service.spec import BaseConfig
 
@@ -38,10 +37,10 @@ class ZeroStiffnessSource(Protocol):
 
 
 class HandGuidingTask(BaseControlTask):
-    """Follow measured positions while the adapter supplies damping and gravity torque.
+    """Follow measured positions while the connection supplies damping and gravity torque.
 
     The hardware must have zero position gains. This task supplies the periodic
-    writes needed by torque-compensating adapters; it does not compute gravity.
+    writes needed by torque-compensating connections; it does not compute gravity.
     """
 
     def __init__(self, name: str, joint_names: list[str], priority: int) -> None:
@@ -89,41 +88,22 @@ class HandGuidingTask(BaseControlTask):
 
 
 def create_task(
-    cfg: "TaskConfig",
-    hardware: Mapping[str, ConnectedHardware | ConnectedWholeBody],
-    connections: Mapping[str, ZeroStiffnessSource] | None = None,
+    cfg: "TaskConfig", connections: Mapping[str, ZeroStiffnessSource]
 ) -> HandGuidingTask:
-    """Build the task only where the deployment declares zero stiffness.
+    """Build the task only for joints whose connection declares zero stiffness.
 
-    Hardware adapters prove it with whole-body gains; connection modules
-    declare it on the coordinator and expose it per robot through their
-    ``ConnectionSource``. A robot that declares nothing is refused, so a
-    position-holding stack cannot silently fight the operator.
+    A robot that declares nothing is refused, so a position-holding stack
+    cannot fight the operator.
     """
     BaseConfig.model_validate(cfg.params)
     remaining = set(cfg.joint_names)
-    for connected in hardware.values():
-        if not remaining.intersection(connected.joint_names):
-            continue
-        gains = connected.component.wb_config
-        if (
-            not isinstance(connected, ConnectedWholeBody)
-            or gains is None
-            or gains.kp is None
-            or any(gain != 0.0 for gain in gains.kp)
-        ):
-            raise ValueError("Hand guiding requires whole-body hardware with explicit zero kp")
-        remaining.difference_update(connected.joint_names)
-    for source in (connections or {}).values():
+    for source in connections.values():
         claimed = remaining.intersection(source.joint_names)
         if not claimed:
             continue
         if not claimed <= source.zero_stiffness_joints:
-            raise ValueError(
-                "Hand guiding requires whole-body hardware with explicit zero kp "
-                "or a connection that declares zero stiffness"
-            )
+            raise ValueError("Hand guiding requires a connection that declares zero stiffness")
         remaining.difference_update(source.joint_names)
     if remaining:
-        raise ValueError(f"Hand guiding joints have no connected hardware: {sorted(remaining)}")
+        raise ValueError(f"Hand guiding joints belong to no connected robot: {sorted(remaining)}")
     return HandGuidingTask(cfg.name, cfg.joint_names, cfg.priority)

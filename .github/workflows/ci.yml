@@ -1076,7 +1076,14 @@ jobs:
             exit 1
           fi
           echo "$bin" >> "$GITHUB_PATH"
-          echo "NIX_CONFIG=experimental-features = nix-command flakes" >> "$GITHUB_ENV"
+          # The daemon honours the substituter and key only if the runner user is trusted; otherwise the host's nix.conf must list them.
+          {
+            echo "NIX_CONFIG<<EOF"
+            echo "experimental-features = nix-command flakes"
+            echo "extra-substituters = https://dimensionalos.cachix.org"
+            echo "extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI="
+            echo "EOF"
+          } >> "$GITHUB_ENV"
       - name: Configure LCM networking (macOS)
         # LCM sends datagrams up to 64 KB; macOS caps UDP at 9216 bytes by default, so point clouds never leave the sender.
         if: matrix.os == 'macOS'
@@ -1114,7 +1121,12 @@ jobs:
         # Without a marker (expired artifact) this falls back to the full nix build.
         run: |
           if [ "${{ steps.native-marker.outcome }}" = "success" ]; then
-            python3 bin/native-modules --link-results .cachix-marker/links.txt
+            # A macOS host whose store lacks the paths and whose daemon distrusts Cachix cannot substitute, so it builds them into its persistent store once.
+            python3 bin/native-modules --link-results .cachix-marker/links.txt || {
+              [ "${{ matrix.os }}" = "macOS" ] || exit 1
+              echo "::warning::$RUNNER_NAME could not substitute the native modules from Cachix (add dimensionalos.cachix.org's key to its /etc/nix/nix.conf); building them instead"
+              python3 bin/native-modules --build
+            }
           else
             python3 bin/native-modules --build
           fi

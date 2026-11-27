@@ -121,6 +121,25 @@ def discover(
         if failed:
             raise typer.Exit(1)
 
+        if do_lan and not interrupted:
+            if not seen_lan:
+                typer.echo(
+                    "No LAN robots found. LAN discovery uses UDP multicast, which Wi-Fi "
+                    "multicast filtering or client isolation may block even when a robot "
+                    "is reachable by IP. Check the robot and laptop are on the same LAN "
+                    "and check network/firewall settings. Match the robot's serial before "
+                    "choosing an IP. A BLE row alone does not identify its LAN address.",
+                    err=True,
+                )
+            else:
+                unmatched = {serial for _, serial in seen_ble if serial} - seen_lan
+                if unmatched:
+                    typer.echo(
+                        f"No LAN match for BLE serial(s): {', '.join(sorted(unmatched))}. "
+                        "Use only an IP whose LAN serial matches the intended robot.",
+                        err=True,
+                    )
+
         if interrupted:
             typer.echo("\nStopped.")
         elif not seen_ble and not seen_lan:
