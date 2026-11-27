@@ -1,0 +1,19 @@
+[build-system]
+requires = ["scikit-build-core>=1.0,<2", "dimos-build-config"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "dimos-package-rust"
+version = "0.1.0"
+dynamic = ["entry-points"]
+requires-python = ">=3.10,<3.13"
+dependencies = ["dimos==0.0.14"]
+
+[tool.dimos]
+package = "src/dimos_package_rust"
+
+[tool.dimos.blueprints]
+ping = "dimos_package_rust.module:RustPing"
+
+[[tool.dynamic-metadata]]
+provider = "dimos"
