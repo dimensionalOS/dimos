@@ -30,6 +30,7 @@ from dimos.memory.vectorstore.base import VectorStore
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
+    from dimos.models.embedding.base import Embedding
 
 pytestmark = pytest.mark.self_hosted
 
@@ -305,13 +306,13 @@ class SpyBlobStore(BlobStore):
 
 
 class SpyVectorStore(VectorStore):
-    """VectorStore that records all calls for verification."""
+    """Index implementing the original put/search/delete interface."""
 
     def __init__(self) -> None:
         super().__init__()
         self.puts: list[tuple[str, int]] = []
         self.searches: list[tuple[str, int]] = []
-        self.vectors: dict[str, dict[int, Any]] = {}
+        self.vectors: dict[str, dict[int, Embedding]] = {}
 
     def start(self) -> None:
         pass
@@ -319,7 +320,7 @@ class SpyVectorStore(VectorStore):
     def stop(self) -> None:
         pass
 
-    def put(self, stream: str, key: int, embedding: Any) -> None:
+    def put(self, stream: str, key: int, embedding: Embedding) -> None:
         self.puts.append((stream, key))
         self.vectors.setdefault(stream, {})[key] = embedding
 
