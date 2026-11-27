@@ -323,6 +323,55 @@ def test_slow_stream_setup_does_not_skip_the_first_frames(recording: str) -> Non
     assert [round(t, 3) for t in got["goal"]] == [1.05]
 
 
+@pytest.mark.parametrize(
+    ("topics", "expected"),
+    [
+        ("odom", [(0.0, "odom", 1.0), (0.1, "odom", 1.1), (0.2, "odom", 1.2)]),
+        (
+            "*",
+            [
+                (0.0, "odom", 1.0),
+                (0.05, "goal", 1.05),
+                (0.1, "odom", 1.1),
+                (0.2, "odom", 1.2),
+            ],
+        ),
+    ],
+)
+def test_slow_cursor_open_anchors_after_all_streams_are_ready(
+    recording: str,
+    mocker: MockerFixture,
+    topics: str,
+    expected: list[tuple[float, str, float]],
+) -> None:
+    scheduler = TestScheduler()
+    mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
+    mocker.patch("dimos.memory.replay.time.time", side_effect=lambda: scheduler.clock)
+    base_stream = ReplayStream._base_stream
+
+    def slow_open(self: ReplayStream[Any]) -> Any:
+        scheduler.advance_by(0.15)
+        return base_stream(self)
+
+    mocker.patch.object(ReplayStream, "_base_stream", slow_open)
+    module = replay_module(recording, topics=topics)(dataset=recording, topics=topics)
+    events: list[tuple[float, str, float]] = []
+
+    def record(name: str) -> Any:
+        return lambda msg: events.append((scheduler.clock, name, msg.ts))
+
+    for name, port in module.outputs.items():
+        port.subscribe(record(name))
+    try:
+        module.start()
+        start = scheduler.clock
+        assert events == []
+        scheduler.advance_by(1.0)
+    finally:
+        module.stop()
+    assert [(round(t - start, 3), name, round(ts, 3)) for t, name, ts in events] == expected
+
+
 def test_recorded_rerun_config_from_run_dir(tmp_path: Path) -> None:
     from dimos.memory.replay_module import recorded_rerun_config
 

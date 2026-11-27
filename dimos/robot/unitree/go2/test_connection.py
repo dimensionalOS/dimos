@@ -19,7 +19,7 @@ dimos/robot/unitree/test_connection.py; this pins the go2-local routing.
 """
 
 from collections.abc import Callable, Iterator
-from contextlib import closing
+from contextlib import ExitStack, closing
 import json
 import math
 from pathlib import Path
@@ -29,9 +29,10 @@ import time
 from unittest.mock import MagicMock
 
 from mcap.writer import Writer
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
-from reactivex import Subject, empty, timer
+from reactivex import Observable, Subject, empty, timer
 from reactivex.disposable import Disposable
 from reactivex.testing import TestScheduler
 
@@ -785,3 +786,80 @@ def test_replay_loop_cli_controls_repeated_playback(tmp_path, mocker, loop):
     assert (len(received) > 2) is loop
     finished = [call for call in log.info.call_args_list if call.args == ("Replay finished",)]
     assert len(finished) == (0 if loop else 1)
+
+
+@pytest.mark.parametrize("with_lidar", [False, True])
+def test_direct_sensor_subscriptions_wait_for_seal_and_preserve_early_odom(
+    tmp_path: Path, mocker: MockerFixture, with_lidar: bool
+) -> None:
+    path = tmp_path / "sensors.db"
+    with SqliteStore(path=str(path)) as store:
+        for ts in (10.0, 11.0):
+            store.stream("odom", PoseStamped).append(PoseStamped(ts=ts), ts=ts)
+        store.stream("lidar", PointCloud2).append(
+            PointCloud2.from_numpy(np.zeros((1, 3)), timestamp=10.5), ts=10.5
+        )
+    scheduler = TestScheduler()
+    mocker.patch("dimos.memory.replay.time.time", side_effect=lambda: scheduler.clock)
+    received: list[tuple[float, float]] = []
+    late: list[tuple[float, float]] = []
+    with go2_conn.ReplayConnection(dataset=str(path)) as conn, ExitStack() as cleanup:
+        streams: list[Callable[[], Observable[PointCloud2] | Observable[PoseStamped]]] = (
+            [conn.lidar_stream, conn.odom_stream] if with_lidar else [conn.odom_stream]
+        )
+        for stream in streams:
+            cleanup.enter_context(
+                stream().subscribe(
+                    lambda msg: received.append((round(scheduler.clock, 2), msg.ts)),
+                    scheduler=scheduler,
+                )
+            )
+            scheduler.advance_by(0.25)
+        assert received == []
+        conn.seal_subscriptions()
+        start = round(scheduler.clock, 2)
+        scheduler.advance_by(0.5)
+        cleanup.enter_context(
+            conn.odom_stream().subscribe(
+                lambda msg: late.append((round(scheduler.clock, 2), msg.ts)),
+                scheduler=scheduler,
+            )
+        )
+        scheduler.advance_by(1.5)
+    expected = [(start, 10.0), (round(start + 1.0, 2), 11.0)]
+    if with_lidar:
+        expected.insert(1, (round(start + 0.5, 2), 10.5))
+    assert received == expected
+    assert late == [(round(start + 1.0, 2), 11.0)]
+
+
+def test_go2_replay_starts_at_earliest_enabled_sensor(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    path = tmp_path / "sensors.db"
+    with SqliteStore(path=str(path)) as store:
+        for ts in (10.0, 11.0):
+            store.stream("odom", PoseStamped).append(PoseStamped(ts=ts), ts=ts)
+        store.stream("lidar", PointCloud2).append(
+            PointCloud2.from_numpy(np.zeros((1, 3)), timestamp=10.5), ts=10.5
+        )
+        store.stream("unused", int).append(1, ts=1.0)
+    scheduler = TestScheduler()
+    mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
+    mocker.patch("dimos.memory.replay.time.time", side_effect=lambda: scheduler.clock)
+    module = GO2Connection(g=GlobalConfig(replay=True, replay_db=str(path)), camera=False)
+    mocker.patch.object(module.cmd_vel, "subscribe", return_value=mocker.Mock())
+    mocker.patch.object(module.velocity_command, "subscribe", return_value=mocker.Mock())
+    received: list[tuple[float, str, float]] = []
+
+    def record(name: str) -> Callable[[PoseStamped | PointCloud2], None]:
+        return lambda msg: received.append((round(scheduler.clock, 2), name, msg.ts))
+
+    with ExitStack() as cleanup:
+        cleanup.callback(module.stop)
+        for name in ("lidar", "odom"):
+            module.set_transport(name, mocker.Mock())
+            cleanup.enter_context(Disposable(module.outputs[name].subscribe(record(name))))
+        module.start()
+        scheduler.advance_by(2.0)
+    assert received == [(0.0, "odom", 10.0), (0.5, "lidar", 10.5), (1.0, "odom", 11.0)]

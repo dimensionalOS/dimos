@@ -40,10 +40,19 @@ class ReplayProgress:
         self._source = source
         self._on_complete = on_complete
         self._lock = Lock()
+        self._replay: Replay | None = None
         self._subscribed = 0
         self._completed = 0
         self._sealed = False
         self._finished = False
+
+    def hold(self, replay: Replay) -> None:
+        """Hold initial subscriptions on *replay* until :meth:`seal`."""
+        with self._lock:
+            if self._sealed:
+                return
+            self._replay = replay
+        replay.hold()
 
     def start(
         self,
@@ -53,6 +62,7 @@ class ReplayProgress:
         path: str | None = None,
     ) -> None:
         """Log the selected replay window's duration in source seconds."""
+        self.hold(replay)
         bounds = [(stream.first_ts(), stream.last_ts()) for stream in streams]
         starts = [start for start, _ in bounds if start is not None]
         ends = [end for _, end in bounds if end is not None]
@@ -81,7 +91,12 @@ class ReplayProgress:
         With no timed subscriptions, playback is already complete.
         """
         with self._lock:
+            if self._sealed:
+                return
             self._sealed = True
+            replay = self._replay
+        if replay is not None:
+            replay.release()
         self._maybe_finish()
 
     def _stream_completed(self) -> None:

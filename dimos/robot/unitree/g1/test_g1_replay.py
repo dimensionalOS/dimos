@@ -14,13 +14,18 @@
 
 from pathlib import Path
 import threading
+from typing import Any
 
 from mcap.writer import Writer
 import pytest
+from pytest_mock import MockerFixture
 from reactivex.testing import TestScheduler
 
+from dimos.memory.replay import ReplayStream
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.g1.g1_replay import G1Replay
 
 
@@ -89,3 +94,34 @@ def test_replay_logs_source_duration_and_completion(tmp_path, mocker):
         )
         scheduler.advance_by(5)
         assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=str(path))]
+
+
+def test_slow_setup_preserves_initial_tf_and_sensor_order(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    path = tmp_path / "g1.db"
+    with SqliteStore(path=str(path)) as store:
+        for ts in (10.0, 10.75):
+            store.stream("tf", TFMessage).append(TFMessage(Transform(ts=ts)), ts=ts)
+        store.stream("pointlio_odometry", Odometry).append(Odometry(ts=11.0), ts=11.0)
+    scheduler = TestScheduler()
+    mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
+    mocker.patch("dimos.memory.replay.time.time", side_effect=lambda: scheduler.clock)
+    base_stream = ReplayStream._base_stream
+
+    def slow_open(self: ReplayStream[Any]) -> Any:
+        scheduler.advance_by(0.1)
+        return base_stream(self)
+
+    mocker.patch.object(ReplayStream, "_base_stream", slow_open)
+    events: list[tuple[str, float]] = []
+    replay = G1Replay(dataset=str(path))
+    replay.tf.subscribe(lambda msg: events.append(("tf", msg.transforms[0].ts)))
+    replay.pointlio_odometry.subscribe(lambda msg: events.append(("odom", msg.ts)))
+    try:
+        replay.start()
+        assert events == []
+        scheduler.advance_by(2.0)
+    finally:
+        replay.stop()
+    assert events == [("tf", 10.0), ("tf", 10.75), ("odom", 11.0)]

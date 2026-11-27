@@ -141,18 +141,12 @@ class ReplayModule(Module):
         streams: dict[str, ReplayStream[DimosMsg]] = {
             name: replay.stream(name) for name in self.outputs
         }
-        starts = [ts for stream in streams.values() if (ts := stream.first_ts()) is not None]
-
         progress = ReplayProgress(str(path))
         progress.start(replay, streams.values())
-        replay.pin_anchor(min(starts) if starts else None)
         for name, stream in streams.items():
             port = self.outputs[name]
             logger.info("Replaying %s -> %s", name, port)
-            # Not a late subscriber, just behind by the setup of the streams
-            # subscribed before it, which on a loaded machine exceeds the
-            # late tolerance and would drop its first frames.
-            timed: Observable[DimosMsg] = stream.observable(skip_late=False)
+            timed: Observable[DimosMsg] = stream.observable()
             self.register_disposable(progress.track(timed).subscribe(port.publish))
         progress.seal()
 

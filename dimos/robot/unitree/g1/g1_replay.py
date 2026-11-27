@@ -98,8 +98,6 @@ class G1Replay(Module):
 
         progress = ReplayProgress(str(path))
         progress.start(replay, streams.values())
-        starts = [t for s in streams.values() if (t := s.first_ts()) is not None]
-        replay.pin_anchor(min(starts) if starts else None)
 
         for info_name in ("realsense_camera_info", "realsense_depth_camera_info"):
             if info_name in streams:

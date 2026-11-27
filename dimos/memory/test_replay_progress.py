@@ -12,11 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
+from typing import Any
 
 import pytest
+from pytest_mock import MockerFixture
 from reactivex import Subject, empty
+from reactivex.testing import TestScheduler
 
+from dimos.memory.replay import ReplayStream
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.memory import MemoryStore
 
@@ -113,3 +119,71 @@ def test_empty_recording_logs_zero_duration_and_completion(mocker):
         ),
         mocker.call("Replay finished", source="empty.db"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("streams", "pin", "expected"),
+    [
+        ({"odom": [10.0, 10.2]}, None, [(0.3, "odom", 10.0), (0.5, "odom", 10.2)]),
+        (
+            {"lidar": [10.2, 10.6], "odom": [10.0, 11.0]},
+            None,
+            [(0.3, "odom", 10.0), (0.5, "lidar", 10.2), (0.9, "lidar", 10.6), (1.3, "odom", 11.0)],
+        ),
+        (
+            {"lidar": [10.2], "odom": [10.0]},
+            10.0,
+            [(0.3, "odom", 10.0), (0.3, "lidar", 10.2)],
+        ),
+    ],
+)
+def test_progress_holds_streams_and_releases_in_recorded_order(
+    mocker: MockerFixture,
+    streams: dict[str, list[float]],
+    pin: float | None,
+    expected: list[tuple[float, str, float]],
+) -> None:
+    scheduler = TestScheduler()
+    mocker.patch("dimos.memory.replay.time.time", side_effect=lambda: scheduler.clock)
+    progress = ReplayProgress("recording")
+    events: list[tuple[float, str, float]] = []
+    late: list[tuple[float, float]] = []
+
+    def record(name: str) -> Callable[[float], None]:
+        return lambda ts: events.append((round(scheduler.clock, 2), name, ts))
+
+    with MemoryStore() as store, ExitStack() as subscriptions:
+        for name, timestamps in streams.items():
+            for ts in timestamps:
+                store.stream(name, float).append(ts, ts=ts)
+        replay = store.replay()
+        selected: dict[str, ReplayStream[float]] = {name: replay.stream(name) for name in streams}
+        progress.start(replay, selected.values())
+        if pin is not None:
+            replay.pin_anchor(pin)
+        odom = selected["odom"]
+        base = odom._base_stream
+
+        def slow_odom() -> Any:
+            scheduler.advance_by(0.2)
+            return base()
+
+        mocker.patch.object(odom, "_base_stream", side_effect=slow_odom)
+        for name, stream in selected.items():
+            subscriptions.enter_context(
+                progress.track(stream.observable()).subscribe(record(name), scheduler=scheduler)
+            )
+        scheduler.advance_by(0.1)
+        assert events == []
+        progress.seal()
+        scheduler.advance_by(0.5)
+        late_odom: ReplayStream[float] = replay.stream("odom")
+        subscriptions.enter_context(
+            late_odom.observable().subscribe(
+                lambda ts: late.append((round(scheduler.clock, 2), ts)),
+                scheduler=scheduler,
+            )
+        )
+        scheduler.advance_by(1.0)
+    assert events == expected
+    assert late == ([(1.3, 11.0)] if streams["odom"][-1] == 11.0 else [])

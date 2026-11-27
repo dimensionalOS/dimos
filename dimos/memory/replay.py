@@ -77,6 +77,9 @@ class Replay(Configurable):
         self._first_ts: float | None = None
         self._loop_period: float | None = None
         self._anchor: tuple[float, float] | None = None
+        self._holding = False
+        self._held: dict[int, tuple[float, Callable[[tuple[float, float]], None]]] = {}
+        self._next_held_id = 0
         self._anchor_lock = threading.Lock()
 
     @property
@@ -143,6 +146,46 @@ class Replay(Configurable):
         """Forget the pinned anchor. Next ``.observable()`` re-pins it."""
         with self._anchor_lock:
             self._anchor = None
+
+    def hold(self) -> None:
+        """Hold new subscriptions until :meth:`release` so all selected streams open their
+        cursors before anchoring the clock."""
+        with self._anchor_lock:
+            self._holding = True
+
+    def release(self) -> None:
+        """Anchor the clock once all held streams are ready and schedule their first frames
+        in recorded-time order."""
+        with self._anchor_lock:
+            if not self._holding:
+                return
+            self._holding = False
+            held = sorted(self._held.values(), key=lambda item: item[0])
+            self._held.clear()
+            if not held:
+                return
+            if self._anchor is None:
+                self._anchor = (time.time(), held[0][0])
+            anchor = self._anchor
+        for _, start in held:
+            start(anchor)
+
+    def _hold_or_resolve(
+        self, first_ts: float, start: Callable[[tuple[float, float]], None]
+    ) -> tuple[int | None, tuple[float, float] | None]:
+        with self._anchor_lock:
+            if self._holding:
+                held_id = self._next_held_id
+                self._next_held_id += 1
+                self._held[held_id] = (first_ts, start)
+                return held_id, None
+            if self._anchor is None:
+                self._anchor = (time.time(), first_ts)
+            return None, self._anchor
+
+    def _discard_held(self, held_id: int) -> None:
+        with self._anchor_lock:
+            self._held.pop(held_id, None)
 
 
 class ReplayStream(Generic[T]):
@@ -309,9 +352,14 @@ class ReplayStream(Generic[T]):
                     offset += replay.loop_period()
 
             iterator = make_iterator()
+            held_id: int | None = None
+            wall_t0 = 0.0
+            replay_t0 = 0.0
 
             def dispose() -> None:
                 disposed.set()
+                if held_id is not None:
+                    replay._discard_held(held_id)
                 pending.dispose()
                 # Reentrant for disposal from observer callbacks. An external
                 # stop waits here until decoding and cursor reads have finished.
@@ -335,20 +383,6 @@ class ReplayStream(Generic[T]):
             except Exception as error:
                 terminate(error)
                 return Disposable()
-
-            wall_t0, replay_t0 = replay._resolve_anchor(first_ts)
-            now_replay = replay_t0 + (time.time() - wall_t0) * speed
-
-            # Late-subscribe skip: drop frames behind the wall clock.
-            while skip_late and first_ts < now_replay - _LATE_TOLERANCE:
-                try:
-                    first_ts, first_data = next(iterator)
-                except StopIteration:
-                    terminate()
-                    return Disposable()
-                except Exception as error:
-                    terminate(error)
-                    return Disposable()
 
             def schedule(message: tuple[float, Any]) -> None:
                 if disposed.is_set():
@@ -388,6 +422,31 @@ class ReplayStream(Generic[T]):
                 scheduled = SingleAssignmentDisposable()
                 pending.disposable = scheduled
                 scheduled.disposable = sched.schedule_relative(delay, emit)
+
+            def start(anchor: tuple[float, float]) -> None:
+                nonlocal wall_t0, replay_t0
+                if disposed.is_set():
+                    return
+                wall_t0, replay_t0 = anchor
+                schedule((first_ts, first_data))
+
+            held_id, anchor = replay._hold_or_resolve(first_ts, start)
+            if anchor is None:
+                return Disposable(dispose)
+
+            wall_t0, replay_t0 = anchor
+            now_replay = replay_t0 + (time.time() - wall_t0) * speed
+
+            # Late-subscribe skip: drop frames behind the wall clock.
+            while skip_late and first_ts < now_replay - _LATE_TOLERANCE:
+                try:
+                    first_ts, first_data = next(iterator)
+                except StopIteration:
+                    terminate()
+                    return Disposable()
+                except Exception as error:
+                    terminate(error)
+                    return Disposable()
 
             schedule((first_ts, first_data))
 

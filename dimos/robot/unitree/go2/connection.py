@@ -294,7 +294,9 @@ class ReplayConnection(CompositeResource):
         self._replay_path = str(path.resolve())
         store = self.register_disposable(open_store(path))
         store.start()
-        return store.replay(loop=self._loop, seek=self._seek, duration=self._duration)
+        replay = store.replay(loop=self._loop, seek=self._seek, duration=self._duration)
+        self._progress.hold(replay)
+        return replay
 
     def start(self) -> None:
         pass
@@ -345,7 +347,7 @@ class ReplayConnection(CompositeResource):
         return self._tracked(stream.observable())
 
     def seal_subscriptions(self) -> None:
-        """Mark the subscription set complete so end-of-playback can be reported."""
+        """Start held sensor subscriptions together and allow completion reporting."""
         if self._pending_streams:
             # Only inspect selected streams: unused recordings may depend on
             # unavailable payload types or contain unrelated timestamp ranges.
