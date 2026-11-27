@@ -110,6 +110,22 @@ def spawn_frames_in_file(path: Path) -> list[str]:
     return sorted(str(spec.path)[1:] for spec in _prim_specs(layer) if _spec_is_spawn(spec))
 
 
+def spawn_volume_paths(layer: Path) -> set[str]:
+    """The prim paths of every spawn point's volume in a layer file, read without composing it; a renderer or physics engine leaves these out."""
+    pxr = load_pxr()
+    opened = pxr.Sdf.Layer.FindOrOpen(str(layer))
+    if opened is None:
+        return set()
+    return {
+        str(child.path)
+        for spec in _prim_specs(opened)
+        if _spec_is_spawn(spec)
+        for child in spec.nameChildren
+        if child.attributes.get("purpose") is not None
+        and child.attributes["purpose"].default == pxr.UsdGeom.Tokens.guide
+    }
+
+
 def with_spawn_frames(usd: str, root: Path | str | None = None) -> str:
     """``usd`` with each spawn point made a tf frame: a rigid body welded where it stands to the rigid body it is under."""
     pxr = load_pxr()

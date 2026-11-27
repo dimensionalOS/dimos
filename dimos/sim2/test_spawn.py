@@ -21,7 +21,7 @@ from dimos.sim2.assets.logistics import LOGISTICS
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.scene import scene_usd
 from dimos.sim2.sim import compose_usds
-from dimos.sim2.spawn import scene_spawn_points, spawn_frames_in_file
+from dimos.sim2.spawn import scene_spawn_points, spawn_frames_in_file, spawn_volume_paths
 from dimos.simulation.scenes.office_555.room import SCENE
 
 pytest.importorskip("pxr")
@@ -85,3 +85,7 @@ def test_office_555_floor_spots_stand_on_its_two_floors() -> None:
         if point.name.startswith(("ground_", "upper_")) and "_on_" not in point.name
     }
     assert floors == {0.0, 4.7}
+
+
+def test_a_spawn_points_volume_is_found_without_composing_its_layer() -> None:
+    assert spawn_volume_paths(LOGISTICS) == {f"/{_SPOT}/volume"}
