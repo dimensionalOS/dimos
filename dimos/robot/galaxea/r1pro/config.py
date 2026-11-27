@@ -17,11 +17,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
+from dimos.robot.assets.model import JointDescription, PlanarBaseDefinition, RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.galaxea.r1pro.joints import (
+    CONTROL_PASSIVE_JOINTS,
+    GRIPPER_JOINT_RENAMES,
     LEFT_ARM_JOINTS,
     PASSIVE_JOINTS,
     RIGHT_ARM_JOINTS,
@@ -33,6 +37,12 @@ from dimos.robot.galaxea.r1pro.joints import (
 # Chassis Mid-360 and host NIC addresses from the vendor's livox_ros_driver2 config.
 R1PRO_CHASSIS_LIDAR_IP = "192.168.2.100"
 R1PRO_CHASSIS_LIDAR_HOST_IP = "192.168.2.150"
+
+# First-pass chassis clearances for navigation; tune on the robot.
+R1PRO_CHASSIS_WIDTH_M = 0.65
+R1PRO_ROTATION_DIAMETER_M = 0.9
+R1PRO_OVERHEAD_CLEARANCE_M = 1.9
+R1PRO_MAX_STEP_HEIGHT_M = 0.03
 
 
 R1PRO_DESCRIPTION_SOURCE = RobotDescriptionSource(
@@ -84,6 +94,27 @@ R1PRO_COLLISION_EXCLUSIONS = (
 )
 
 
+#: The vendor jaw controller's opening range, in metres on the contract: the
+#: gripper topics speak millimetres, 0-100 mm fully closed to fully open (the
+#: URDF finger joints are welded at zero with empty limits and carry no
+#: range of their own).
+R1PRO_GRIPPER_OPENING_RANGE = (0.0, 0.1)
+
+
+def _with_contract_grippers(model: RobotModel, *, prefix: str) -> RobotModel:
+    """Give the model real gripper drive joints: the vendor's opening range in
+    metres, renamed to their contract names (``prefix``-prefixed)."""
+    for urdf_joint in GRIPPER_JOINT_RENAMES:
+        model = model.with_joint_position_limits(
+            urdf_joint,
+            lower=R1PRO_GRIPPER_OPENING_RANGE[0],
+            upper=R1PRO_GRIPPER_OPENING_RANGE[1],
+        )
+    return model.with_renamed_joints(
+        {urdf: f"{prefix}{name}" for urdf, name in GRIPPER_JOINT_RENAMES.items()}
+    )
+
+
 R1PRO_MODEL = (
     RobotModel.from_file(
         R1PRO_MODEL_PATH,
@@ -93,7 +124,44 @@ R1PRO_MODEL = (
     .with_fixed_joints(*PASSIVE_JOINTS)
     .with_renamed_joints({joint: coordinator_name(joint) for joint in UPPER_BODY_JOINTS})
 )
+# Velocity-only actuator resources, not generalized planar coordinates.
+R1PRO_BODY_AXES = ("r1pro/base_forward", "r1pro/base_lateral", "r1pro/base_turn")
+R1PRO_CONTROL_MODEL = _with_contract_grippers(
+    RobotModel.from_file(R1PRO_MODEL_PATH, package_paths={"r1pro_urdf": R1PRO_PACKAGE_ROOT})
+    .with_default_joint_acceleration_limit(2.0)
+    .with_fixed_joints(*CONTROL_PASSIVE_JOINTS)
+    .with_renamed_joints({joint: coordinator_name(joint) for joint in UPPER_BODY_JOINTS}),
+    prefix="r1pro/",
+).with_added_joints(
+    *(
+        JointDescription(
+            name=name,
+            type="continuous" if i == 2 else "prismatic",
+            parent_link="base_link",
+            child_link=f"r1pro_body_control_{i}",
+            axis=axis,
+            velocity=velocity,
+            acceleration=acceleration,
+        )
+        for i, (name, axis, velocity, acceleration) in enumerate(
+            zip(
+                R1PRO_BODY_AXES,
+                ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+                R1PRO_PLANAR_BASE.velocity_limits,
+                R1PRO_PLANAR_BASE.acceleration_limits,
+                strict=True,
+            )
+        )
+    )
+)
 R1PRO_PLANAR_MODEL = R1PRO_MODEL.with_planar_base(R1PRO_PLANAR_BASE)
+
+R1PRO_URDF_MANAGER_CONFIG: dict[str, Any] = {
+    "model": R1PRO_MODEL,
+    # Replaying a 10-14 recording, self-hits per scan rose from 13 at 1 cm to 20 at 5 cm and stayed 20 at 10 cm.
+    "padding_m": 0.05,
+    "state_tolerance_s": 0.1,
+}
 R1PRO_UPPER_BODY_PLANNING_JOINTS = tuple(coordinator_name(joint) for joint in UPPER_BODY_JOINTS)
 R1PRO_PLANNING_JOINTS = (
     *R1PRO_PLANAR_BASE.joint_names,
@@ -118,6 +186,15 @@ _R1PRO_UPPER_BODY_PLANNING_GROUPS = (
         base_link="base_link",
     ),
 )
+
+
+#: The manipulation-API gripper binding: each arm's planning group drives its
+#: own jaw through a dedicated gripper task; the torso declares none. Task
+#: names match the ``TaskConfig`` names in the manipulation blueprint.
+R1PRO_GRIPPER_TASKS = {
+    "left_arm": "r1pro_left_gripper",
+    "right_arm": "r1pro_right_gripper",
+}
 
 
 def make_r1pro_model_config() -> RobotModelConfig:

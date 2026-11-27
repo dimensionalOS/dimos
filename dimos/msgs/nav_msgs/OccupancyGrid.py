@@ -325,7 +325,7 @@ class OccupancyGrid(Timestamped):
             f"▦ OccupancyGrid[{self.frame_id}]",
             f"{self.width}x{self.height}",
             f"({self.width * self.resolution:.1f}x{self.height * self.resolution:.1f}m @",
-            f"{1 / self.resolution:.0f}cm res)",
+            f"{self.resolution * 100:.0f}cm res)",
             f"Origin: ({origin_pos.x:.2f}, {origin_pos.y:.2f})",
             f"▣ {self.occupied_percent:.1f}%",
             f"□ {self.free_percent:.1f}%",

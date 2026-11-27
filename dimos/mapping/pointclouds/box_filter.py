@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Leave the points inside named boxes out of a point cloud."""
+"""Leave the points inside named boxes, and those outside a workspace, out of a point cloud."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -72,13 +72,23 @@ def inside_boxes(
     return inside
 
 
+class PointCloudBoxFilterConfig(ModuleConfig):
+    # Points farther than this (metres) from keep_within_frame's origin are left out.
+    keep_within_m: float | None = None
+    # The workspace's centre, e.g. the arm's base link; None for the cloud's frame.
+    keep_within_frame: str | None = None
+
+
 class PointCloudBoxFilter(Module):
     """Pass a point cloud on with the points inside named boxes left out.
 
     A box is fixed in the cloud's frame or rides on another frame from tf.
     Changing the boxes re-sends the last cloud at once, so a consumer sees
-    the change before the next cloud arrives.
+    the change before the next cloud arrives. With ``keep_within_m`` set, the
+    points outside that sphere are left out as well.
     """
+
+    config: PointCloudBoxFilterConfig
 
     cloud: In[PointCloud2]
     tf: In[TFMessage]
@@ -89,6 +99,8 @@ class PointCloudBoxFilter(Module):
         self._lock = RLock()
         self._boxes: dict[str, Box] = {}
         self._last_cloud: PointCloud2 | None = None
+        # The workspace's frame is often missing for the first clouds; say so once.
+        self._workspace_warned = False
 
     @rpc
     def start(self) -> None:
@@ -138,13 +150,36 @@ class PointCloudBoxFilter(Module):
     def _filtered(self, cloud: PointCloud2) -> PointCloud2:
         points = cloud.points_f32()
         boxes = [placed for box in self._boxes.values() if (placed := self._placed(box, cloud))]
-        if not boxes or not len(points):
+        center = self._workspace_center(cloud)
+        if (not boxes and center is None) or not len(points):
             return cloud
         keep = ~inside_boxes(points, boxes)
+        if center is not None and self.config.keep_within_m is not None:
+            offsets = np.asarray(points, dtype=np.float64) - center
+            keep &= np.einsum("ij,ij->i", offsets, offsets) <= self.config.keep_within_m**2
         filtered = PointCloud2(frame_id=cloud.frame_id, ts=cloud.ts, seq=cloud.seq)
         for name, values in cloud.pointcloud_tensor.point.items():
             filtered.pointcloud_tensor.point[name] = values[keep]
         return filtered
+
+    def _workspace_center(self, cloud: PointCloud2) -> NDArray[np.float64] | None:
+        """The workspace's centre in the cloud's frame; None keeps every distance."""
+        if self.config.keep_within_m is None:
+            return None
+        frame = self.config.keep_within_frame
+        if frame is None or frame == cloud.frame_id:
+            return np.zeros(3)
+        transform = self.tfbuffer.get(cloud.frame_id, frame, warn=False)
+        if transform is None:
+            if not self._workspace_warned:
+                self._workspace_warned = True
+                logger.warning(
+                    "No workspace frame yet; the cloud keeps every distance",
+                    cloud_frame=cloud.frame_id,
+                    workspace_frame=frame,
+                )
+            return None
+        return np.asarray(transform.to_matrix()[:3, 3], dtype=np.float64)
 
     def _placed(
         self, box: Box, cloud: PointCloud2

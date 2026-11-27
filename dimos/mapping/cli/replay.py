@@ -32,14 +32,13 @@ their entity path (no parent transform). Entities written:
 from __future__ import annotations
 
 from pathlib import Path
-import subprocess
 from typing import TYPE_CHECKING, Any
 
 import typer
 
 from dimos.memory.utils.progress import progress
 from dimos.memory.utils.time_window import RecordingWindow
-from dimos.utils.executable import find_executable
+from dimos.utils.executable import find_executable, spawn_detached
 
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
@@ -357,7 +356,7 @@ def main(
     if no_gui:
         print(f"open with: rerun {out}")
     else:
-        subprocess.Popen([find_executable("rerun") or "rerun", str(out)])
+        spawn_detached([find_executable("rerun") or "rerun", str(out)])
 
 
 if __name__ == "__main__":

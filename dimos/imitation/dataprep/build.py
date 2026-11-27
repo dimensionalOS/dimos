@@ -30,7 +30,6 @@ from pathlib import Path
 from typing import Any
 
 from dimos.imitation.dataprep.core import (
-    extract_episodes,
     get_writer,
     inspect_episode_quality,
     inspect_episodes,
@@ -129,8 +128,19 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
     )
     store = _open_recording(config.source)
     try:
-        logger.info("[dataprep] streams in source: %s", store.list_streams())
-        all_eps = extract_episodes(store, config.recording_schema.episodes)
+        stream_names = store.list_streams()
+        logger.info("[dataprep] streams in source: %s", stream_names)
+        episode_config = config.recording_schema.episodes
+        if (
+            episode_config.extractor == "episode_status"
+            and episode_config.status_stream not in stream_names
+        ):
+            raise RuntimeError(
+                f"No saved episodes in {config.source!r}. "
+                f"Episode status stream {episode_config.status_stream!r} is missing."
+            )
+        episode_report = inspect_episodes(store, episode_config)
+        all_eps = episode_report.episodes
         successful = [e for e in all_eps if e.success]
         logger.info(
             "[dataprep] episodes extracted: %d total / %d successful",
@@ -139,12 +149,16 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
         )
 
         if not successful:
+            if episode_config.extractor == "episode_status":
+                raise RuntimeError(
+                    f"No saved episodes in {config.source!r}. "
+                    f"0 saved, {len(all_eps)} discarded, {len(episode_report.incomplete)} incomplete. "
+                    "Finish and save at least one episode before preparing the dataset."
+                )
             raise RuntimeError(
                 f"No successful episodes extracted from {config.source!r} "
-                f"using extractor={config.recording_schema.episodes.extractor!r}. "
-                f"Available streams: {store.list_streams()}. "
-                f"For a recording with no episode_status stream, set "
-                f"extractor='ranges' with explicit (start, end) tuples."
+                f"using extractor={episode_config.extractor!r}. "
+                "No episode ranges were configured."
             )
 
         obs_keys = set(config.recording_schema.observation)

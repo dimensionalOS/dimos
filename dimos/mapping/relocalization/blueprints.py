@@ -30,7 +30,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
+from dimos.mapping.relocalization.module import PremapModule
 from dimos.memory.replay import ReplayStream
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.sqlite import SqliteStore
@@ -111,7 +111,7 @@ relocalize_mid360 = autoconnect(
         [(RayTracingVoxelMap, "loaded_map", "loaded_map_unused")]
     ),
     # Scans are recorded in the sensor frame, so match the mapper's registered local map.
-    LocalMapRelocalization.blueprint(world_frame=WORLD),
+    PremapModule.blueprint(world_frame=WORLD, live_cloud="local_map"),
     vis_module(
         "rerun",
         {"visual_override": {"world/loaded_map": _fine_points}, "blueprint": _view},

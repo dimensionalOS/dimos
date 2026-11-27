@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from pathlib import Path
+import shlex
 from typing import TYPE_CHECKING, Any, cast
 
 import typer
@@ -212,7 +213,8 @@ def main(
     for name, n in written.items():
         print(f"  {name}: {n}")
     print(f"wrote {dest}")
-    print(f"now run: dimos map global {dest.stem} --pgo")
+    command = shlex.join(["dimos", "mem", "summary", str(dest.resolve())])
+    print(f"now run: {command}")
 
 
 if __name__ == "__main__":

@@ -159,7 +159,7 @@ def run_command(
         "all", help="all, or failures to delete the recording of a success once it is scored."
     ),
 ) -> None:
-    """Run every case of the split, several at a time, and score each recording.
+    """Validate and run the selected cases, several at a time, and score each recording.
 
     Several suites run one after another, each into its own directory under the run directory,
     with one report for all of them.
