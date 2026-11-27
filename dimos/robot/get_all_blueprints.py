@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Iterator
-from contextlib import contextmanager
 import difflib
 import re
 from typing import NoReturn
@@ -27,10 +25,6 @@ from dimos.robot.external_blueprints import (
     is_namespaced_blueprint_name,
     resolve_external_blueprint_by_name,
 )
-from dimos.utils.optional_dependencies import (
-    OptionalDependencyError as OptionalDependencyError,
-    explain_missing_extra,
-)
 
 all_names = sorted(set(all_blueprints.keys()) | set(all_modules.keys()))
 
@@ -43,6 +37,10 @@ OPTIONAL_ERROR_SUBSTRINGS = {
     # cockpit() blueprints without the [web] extra installed.
     "needs the web extra",
 }
+
+
+class OptionalDependencyError(ImportError):
+    """A blueprint could not import because an optional dependency is missing."""
 
 
 def class_name_to_registry_key(class_name: str) -> str:
@@ -64,21 +62,14 @@ def get_blueprint_by_name(name: str) -> Blueprint | MetaBlueprint:
     if name not in all_blueprints:
         _raise_unknown(name, list(all_blueprints.keys()))
     module_path, attr = all_blueprints[name].split(":")
-    with explain_missing_extra():
-        module = __import__(module_path, fromlist=[attr])
-        return getattr(module, attr)  # type: ignore[no-any-return]
+    module = __import__(module_path, fromlist=[attr])
+    return getattr(module, attr)  # type: ignore[no-any-return]
 
 
 def load_blueprint(name: str) -> Blueprint | MetaBlueprint:
-    """The named blueprint. Raises OptionalDependencyError when an allowed dependency is absent."""
+    """The named blueprint. Raises OptionalDependencyError when its extras are absent."""
     try:
         return get_blueprint_by_name(name)
-    except OptionalDependencyError as e:
-        # Every missing extra is explained with this error; only the allow-list may be absent.
-        missing = e.__cause__
-        if isinstance(missing, ModuleNotFoundError) and missing.name not in OPTIONAL_DEPENDENCIES:
-            raise missing from None
-        raise
     except ModuleNotFoundError as e:
         if e.name in OPTIONAL_DEPENDENCIES:
             raise OptionalDependencyError(str(e.name)) from e
@@ -94,9 +85,8 @@ def get_module_by_name(name: str) -> Blueprint:
     if name not in all_modules:
         _raise_unknown(name, list(all_modules.keys()))
     module_path, class_name = all_modules[name].rsplit(".", 1)
-    with explain_missing_extra():
-        python_module = __import__(module_path, fromlist=[class_name])
-        return getattr(python_module, class_name).blueprint()  # type: ignore[no-any-return]
+    python_module = __import__(module_path, fromlist=[class_name])
+    return getattr(python_module, class_name).blueprint()  # type: ignore[no-any-return]
 
 
 def get_by_name(name: str) -> Blueprint | MetaBlueprint:
@@ -125,15 +115,6 @@ def _exit_with_error(message: str) -> NoReturn:
     raise typer.Exit(1)
 
 
-@contextmanager
-def _exit_on_missing_extra() -> Iterator[None]:
-    try:
-        yield
-    except OptionalDependencyError as error:
-        _exit_with_error(str(error))
-
-
-@_exit_on_missing_extra()
 def get_by_name_or_exit(name: str) -> Blueprint | MetaBlueprint:
     if name in all_blueprints:
         return get_blueprint_by_name(name)
@@ -148,7 +129,6 @@ def get_by_name_or_exit(name: str) -> Blueprint | MetaBlueprint:
         _fail_or_exit(name, all_names)
 
 
-@_exit_on_missing_extra()
 def get_module_by_name_or_exit(name: str) -> Blueprint:
     if name not in all_modules:
         _fail_or_exit(name, list(all_modules.keys()))

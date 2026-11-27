@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections import Counter
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
@@ -30,6 +29,7 @@ from typing import Any, Literal, TypeAlias, get_type_hints
 
 import numpy as np
 from pydantic import Field, TypeAdapter, model_validator
+from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.components import TaskName
@@ -98,6 +98,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -116,6 +117,11 @@ ObstacleShape: TypeAlias = Literal["box", "sphere", "cylinder", "mesh"]
 # One stable id for the mapped workspace: every map message is complete, so it
 # replaces this obstacle rather than adding another.
 VOXEL_MAP_OBSTACLE_ID = "mapping/voxel-map"
+
+# Odometry older than this (seconds) leaves the planar base joints out of the
+# model state, so it counts as incomplete. The world monitor allows the model
+# state itself the same age.
+BASE_POSE_MAX_AGE = 1.0
 
 _SHAPE_TO_OBSTACLE_TYPE: dict[str, ObstacleType] = {
     "box": ObstacleType.BOX,
@@ -160,9 +166,6 @@ class ManipulationModuleConfig(ModuleConfig):
     default_speed_scale: float = Field(default=1.0, gt=0.0, le=1.0)
     linear_speed_scale: float = Field(default=0.5, gt=0.0, le=1.0)
     execution_timeout: float = Field(default=60.0, gt=0.0)
-    # Coordinator joint name -> model joint name, so a twist base's odometry
-    # joints (chassis/vx, ...) can feed the model's planar base joints.
-    joint_state_aliases: dict[str, str] = Field(default_factory=dict)
     # Trajectory task -> the joints it drives. Empty means the joint trajectory
     # task drives every model joint; joints no task is bound to are preview-only.
     trajectory_tasks: dict[str, list[str]] = Field(default_factory=dict)
@@ -186,20 +189,6 @@ class ManipulationModuleConfig(ModuleConfig):
                 owners[joint] = task
         return self
 
-    @model_validator(mode="after")
-    def _validate_joint_state_aliases(self) -> ManipulationModuleConfig:
-        model_joints = set(self.model.joint_names)
-        if unknown := sorted(set(self.joint_state_aliases.values()) - model_joints):
-            raise ValueError(f"joint_state_aliases targets are not model joints: {unknown}")
-        if shadowed := sorted(set(self.joint_state_aliases) & model_joints):
-            raise ValueError(f"joint_state_aliases sources are model joints: {shadowed}")
-        # Two sources for one model joint: whichever lands later in a JointState
-        # message would win, so the same message could mean two different poses.
-        targets = Counter(self.joint_state_aliases.values())
-        if collided := sorted(name for name, count in targets.items() if count > 1):
-            raise ValueError(f"joint_state_aliases targets are not unique: {collided}")
-        return self
-
 
 class ManipulationModule(Module):
     """Primitive manipulation RPCs; agent skills live in a separate adapter."""
@@ -209,6 +198,8 @@ class ManipulationModule(Module):
 
     # Input: Joint state from coordinator (for world sync)
     coordinator_joint_state: In[JointState]
+    # Input: where a planar-base model's base is; its x, y and yaw joints come from here.
+    odometry: In[Odometry]
     # Input: occupied cells of a mapped workspace, in the planning frame. Each
     # message is a complete map, so it replaces the obstacle rather than adding.
     voxel_map: In[PointCloud2]
@@ -217,9 +208,6 @@ class ManipulationModule(Module):
 
     @classmethod
     def check_dependencies(cls, **kwargs: Any) -> None:
-        super().check_dependencies(**kwargs)
-        if kwargs.get("model") is not None:
-            RobotModelConfig.model_validate(kwargs["model"]).model.check_dependencies()
         fields = get_type_hints(cls)["config"].model_fields
         if kwargs.get("world_backend", fields["world_backend"].default) != "roboplan":
             return
@@ -261,6 +249,9 @@ class ManipulationModule(Module):
         self._error_message = ""
         self._state_epoch = 0
         self._started = False
+        # The planar base's [x, y, yaw, x rate, y rate, yaw rate] from odometry,
+        # and the time.monotonic() it arrived at.
+        self._base_state: tuple[list[float], float] | None = None
 
         # Planning components (initialized in start())
         self._world_monitor: WorldMonitor | None = None
@@ -308,6 +299,8 @@ class ManipulationModule(Module):
             if self.coordinator_joint_state is not None:
                 self.coordinator_joint_state.subscribe(self._on_joint_state)
                 logger.info("Subscribed to coordinator_joint_state port")
+            if self.config.model.model.planar_base is not None:
+                self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
             logger.info("ManipulationModule started")
         except BaseException:
             self._started = False
@@ -386,14 +379,25 @@ class ManipulationModule(Module):
             if self._world_monitor is None:
                 return
 
-            aliases = self.config.joint_state_aliases
-            name_to_idx = {aliases.get(name, name): i for i, name in enumerate(msg.name)}
-            names = self.config.model.joint_names
-            canonical_names = [aliases.get(name, name) for name in msg.name]
+            received, position = list(msg.name), list(msg.position)
+            velocity = list(msg.velocity) if len(msg.velocity) == len(msg.name) else []
+            planar_base = self.config.model.model.planar_base
+            base = self._base_state
             if (
-                len(msg.name) != len(msg.position)
-                or len(set(canonical_names)) != len(canonical_names)
-                or not np.isfinite(msg.position).all()
+                planar_base is not None
+                and base is not None
+                and time.monotonic() - base[1] <= BASE_POSE_MAX_AGE
+            ):
+                base_state = base[0]
+                received += planar_base.joint_names
+                position += base_state[:3]
+                velocity += base_state[3:] if velocity else []
+            name_to_idx = {name: i for i, name in enumerate(received)}
+            names = self.config.model.joint_names
+            if (
+                len(received) != len(position)
+                or len(name_to_idx) != len(received)
+                or not np.isfinite(position).all()
                 or not np.isfinite(msg.ts)
             ):
                 logger.warning("Skipping malformed model state")
@@ -406,10 +410,8 @@ class ManipulationModule(Module):
             state = JointState(
                 ts=msg.ts,
                 name=list(names),
-                position=[msg.position[index] for index in indices],
-                velocity=[msg.velocity[index] for index in indices]
-                if len(msg.velocity) == len(msg.name)
-                else [],
+                position=[position[index] for index in indices],
+                velocity=[velocity[index] for index in indices] if velocity else [],
             )
             self._world_monitor.on_joint_state(state)
             if self._init_joints is None:
@@ -418,6 +420,22 @@ class ManipulationModule(Module):
         except Exception as e:
             logger.error("Joint-state handling failed", error=str(e))
             logger.error(traceback.format_exc())
+
+    def _on_odometry(self, msg: Odometry) -> None:
+        """Keep the planar base's x (m), y (m), yaw (rad) and their rates in the odom frame."""
+        cos_yaw, sin_yaw = math.cos(msg.yaw), math.sin(msg.yaw)
+        vx, vy = msg.twist.linear.x, msg.twist.linear.y
+        self._base_state = (
+            [
+                msg.x,
+                msg.y,
+                msg.yaw,
+                cos_yaw * vx - sin_yaw * vy,
+                sin_yaw * vx + cos_yaw * vy,
+                msg.twist.angular.z,
+            ],
+            time.monotonic(),
+        )
 
     def _tf_publish_loop(self) -> None:
         """Publish TF transforms at 10Hz for EE and extra links."""
@@ -1318,8 +1336,12 @@ class ManipulationModule(Module):
         shape: str,
         dimensions: list[float] | None = None,
         mesh_path: str | None = None,
+        touch_links: list[str] | None = None,
     ) -> str:
-        """Add obstacle: shape='box'|'sphere'|'cylinder'|'mesh'. Returns obstacle_id."""
+        """Add obstacle: shape='box'|'sphere'|'cylinder'|'mesh'. Returns obstacle_id.
+
+        ``touch_links`` are robot links that may touch it, e.g. a base inside a table box.
+        """
         if not self._world_monitor:
             return ""
 
@@ -1339,6 +1361,7 @@ class ManipulationModule(Module):
             pose=PoseStamped(position=pose.position, orientation=pose.orientation),
             dimensions=tuple(dimensions) if dimensions else (),
             mesh_path=mesh_path,
+            touch_links=tuple(touch_links or ()),
         )
         return self._world_monitor.add_obstacle(obstacle)
 
@@ -1527,8 +1550,11 @@ class ManipulationModule(Module):
         with self._command_lock:
             with self._lock:
                 self._started = False
+                executing = self._state is OperationStatus.EXECUTING
             execution_manager = getattr(self, "_execution_manager", None)
-            if execution_manager is not None:
+            # The coordinator may already have closed its RPC service. Only
+            # contact it when this module still owns active or uncertain motion.
+            if execution_manager is not None and executing:
                 cancellation = self.cancel()
                 if cancellation.status in {
                     ExecutionStatus.UNCERTAIN,
@@ -1540,10 +1566,12 @@ class ManipulationModule(Module):
                         "Shutdown could not confirm coordinator trajectory safety: %s",
                         cancellation.message,
                     )
-                execution_manager.close()
             else:
                 epoch, _ = self._invalidate()
+                self._dismiss_preview()
                 self._finish(epoch, self.get_error(), expected=None)
+            if execution_manager is not None:
+                execution_manager.close()
 
         # Stop TF thread
         if self._tf_thread is not None:

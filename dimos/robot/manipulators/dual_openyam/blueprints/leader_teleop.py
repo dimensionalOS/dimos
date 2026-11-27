@@ -54,8 +54,8 @@ from dimos.robot.manipulators.dual_openyam.config import (
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 from dimos.robot.manipulators.feetech.connection import (
     GUARDED_JOINT_FRAME_ID,
-    DualFeetechConnectionConfig,
     FeetechConnection,
+    FeetechConnectionConfig,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -101,7 +101,7 @@ def dual_openyam_leader_velocity_limits() -> dict[str, float]:
     }
 
 
-class DualOpenYamLeaderConnectionConfig(DualFeetechConnectionConfig):
+class DualOpenYamLeaderConnectionConfig(FeetechConnectionConfig):
     """Serial ports and calibration files of the two YAM leader arms.
 
     Attributes:
@@ -112,6 +112,8 @@ class DualOpenYamLeaderConnectionConfig(DualFeetechConnectionConfig):
         right_calibration_path: The right leader's calibration file, if not the default.
     """
 
+    left_serial_port: str = ""
+    right_serial_port: str = ""
     left_calibration_path: Path | None = None
     right_calibration_path: Path | None = None
 
@@ -130,7 +132,7 @@ class DualOpenYamLeaderConnection(FeetechConnection):
     robot = DUAL_OPENYAM_LEADERS
 
     def serial_ports(self) -> dict[str, str]:
-        return self.config.serial_ports()
+        return {"left": self.config.left_serial_port, "right": self.config.right_serial_port}
 
     def calibration_path(self, bus: str) -> Path:
         explicit = {

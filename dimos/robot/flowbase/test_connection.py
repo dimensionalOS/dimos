@@ -26,6 +26,14 @@ from typing import Any
 
 import pytest
 
+from dimos.control.blueprints.mobile import (
+    coordinator_flowbase,
+    coordinator_flowbase_keyboard_teleop,
+)
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import MetaBlueprint
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.flowbase import connection
@@ -160,6 +168,15 @@ def test_no_command_within_the_deadman_sends_zero_speed(rig: Callable[..., Rig])
     assert r.client.speeds[-1] == [0.0, 0.0, 0.0]
 
 
+def test_a_twist_on_cmd_vel_goes_out_flipped_and_the_deadman_halts_it(
+    rig: Callable[..., Rig],
+) -> None:
+    r = rig(deadman_timeout_s=0.05)
+    r.ports["cmd_vel"].publish(Twist(linear=Vector3(0.5, 0.2, 0.0), angular=Vector3(0.0, 0.0, 1.0)))
+    wait_until(lambda: r.module.status().deadman_fired, timeout=2.0)
+    assert r.client.speeds == [[0.5, -0.2, -1.0], [0.0, 0.0, 0.0]]
+
+
 def test_odometry_and_body_speeds_come_out_in_ros_frame(rig: Callable[..., Rig]) -> None:
     r = rig()
     r.client.odometry = (1.0, 2.0, 0.5)
@@ -203,3 +220,12 @@ def test_body_speeds_between_two_poses(
     speeds: tuple[float, float, float],
 ) -> None:
     assert _body_speeds(start, end, 0.1) == pytest.approx(speeds, abs=1e-9)
+
+
+@pytest.mark.parametrize("blueprint", [coordinator_flowbase, coordinator_flowbase_keyboard_teleop])
+def test_coordinator_blueprints_pass_config_validation(blueprint: MetaBlueprint) -> None:
+    # The check `dimos run` makes before starting any module; nothing connects.
+    parsed = BlueprintConfigParser(blueprint.solidify()).parse(environ={})
+    (connection,) = parsed.module_kwargs("ControlCoordinator")["connections"]
+    assert connection["source"] == "base"
+    assert list(connection["joint_commands"]) == list(FLOWBASE_BASE_JOINTS)

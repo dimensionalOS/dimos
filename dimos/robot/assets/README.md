@@ -44,7 +44,7 @@ the preserved checkouts too.
 
 ## Using a robot description source
 
-Create a source handle wherever the robot adapter or catalog is defined, then
+Create a source handle wherever the robot's config or catalog is defined, then
 join paths from the repository root:
 
 ```python

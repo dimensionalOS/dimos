@@ -16,7 +16,7 @@
 """Unitree Go2 keyboard teleop via WebRTC with Rage Mode enabled.
 
 Same topology as unitree-go2-webrtc-keyboard-teleop, but GO2Connection is
-configured with rage_mode=True so FsmRageMode is toggled on after
+configured with mode="rage" so FsmRageMode is toggled on after
 BalanceStand at connection start.
 
 Usage:

@@ -1558,11 +1558,3 @@ def test_spec_provider_without_rpc_fails_to_resolve() -> None:
 
     with pytest.raises(Exception, match="PlainPingProvider has ping without @rpc"):
         resolve_module_refs(blueprint)
-
-
-def test_webrtc_preflight_checks_only_the_selected_streams(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(sys.modules, "aiortc", None)
-    bp = ModuleA.blueprint().transports({("data1", Data1): CloudflareTransport.spec("state")})
-    check_module_dependencies(bp.disabled_modules(ModuleA))
-    with pytest.raises(ImportError, match=r"dimos\[webrtc\]"):
-        check_module_dependencies(bp)

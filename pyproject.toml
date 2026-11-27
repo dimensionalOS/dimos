@@ -47,6 +47,9 @@ exclude = [
     "**/*.js",
     "**/*.svg",
     "**/*.tcss",
+    # orchestration workflow files (not every Cargo.toml / pyproject.toml)
+    "orchestration/**/*.toml",
+    "robot/**/blueprints/**/*.toml",
     "**/*.pyi",
     "robot/galaxea/r1pro/vendor_setup.sh",
     "robot/manipulators/piper/can_setup.sh",
@@ -121,6 +124,7 @@ dependencies = [
     "sortedcontainers==2.4.0",
     "pydantic",
     "pydantic-core", # blueprint_config, sensor_msgs/CameraInfo
+    "cel-expr-python==0.1.4", # Orchestrator expressions (orchestration/expressions.py)
     "cbor2>=6.1.5,<7", # RPC and worker-pipe serialization (protocol/encode/cbor.py)
     "python-dotenv",
     "packaging>=24.0",
@@ -324,7 +328,6 @@ cpu = [
 ]
 
 cuda = [
-    "cupy-cuda12x==13.6.0; platform_machine == 'x86_64'",
     "onnxruntime-gpu>=1.21; platform_machine == 'x86_64'",  # >=1.21 for onnxruntime.preload_dlls()
     # MeshModule's marching cubes
     "warp-lang>=1.13",
@@ -334,7 +337,6 @@ sim = [
     # Simulation
     "mujoco>=3.3.4",
     "mjcf-to-urdf>=0.1.1",
-    "playground>=0.0.5",
     "pygame>=2.6.1",
 ]
 
@@ -548,7 +550,7 @@ docs = {requires-python = ">=3.11"}
 required-version = ">=0.9.25"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false, mjcf-to-urdf = false }
+exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false, mjcf-to-urdf = false, cel-expr-python = false }
 constraint-dependencies = [
     # TODO(PY311): drop this fork. onnxruntime(-gpu) 1.24 dropped cp310
     # wheels, so 3.10 environments resolve 1.23.x (matching what a 3.10
@@ -623,6 +625,7 @@ DEP001 = [
     "lcm_msgs",
     "nav_msgs",
     "omni",
+    "pyorbbecsdk",
     "pyzed",
     "rclpy",
     "sensor_msgs",
@@ -646,6 +649,7 @@ DEP003 = [
     "lcm_msgs",
     "nav_msgs",
     "omni",
+    "pyorbbecsdk",
     "pyzed",
     "rclpy",
     "sensor_msgs",
@@ -670,7 +674,6 @@ opencv-contrib-python = "cv2"
 Pillow = "PIL"
 pin = "pinocchio"
 pin-pink = "pink"
-playground = "mujoco_playground"
 plum-dispatch = "plum"
 python-can = "can"
 python-dotenv = "dotenv"
@@ -761,6 +764,8 @@ module = [
     "bosdyn",
     "bosdyn.*",
     "builtin_interfaces.*",
+    "cel_expr_python",
+    "cel_expr_python.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
@@ -777,7 +782,6 @@ module = [
     "mcap.*",
     "mcap_ros2.*",
     "mujoco",
-    "mujoco_playground.*",
     "nav_msgs.*",
     "openevals.*",
     "pinocchio",
@@ -793,6 +797,8 @@ module = [
     "pydrake.*",
     "pyarrow",
     "pyarrow.*",
+    "pyorbbecsdk",
+    "pyorbbecsdk.*",
     "pyzed",
     "pyzed.*",
     "rclpy.*",
@@ -849,7 +855,6 @@ follow_imports = "skip"
 testpaths = ["dimos", "experimental/gateway/tests"]
 env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
-  "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
 addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (self_hosted or self_hosted_large or web_browser or bake_e2e or native_e2e)'"
 asyncio_mode = "auto"

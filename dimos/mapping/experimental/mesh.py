@@ -310,8 +310,6 @@ class MeshModule(Module):
     """Meshes the voxel map that ``map_regions`` streams, chunks that changed most
     recently first, a batch at a time, always from the current map."""
 
-    required_imports = ("warp",)
-
     config: MeshModuleConfig
 
     map_regions: In[PointCloud2]

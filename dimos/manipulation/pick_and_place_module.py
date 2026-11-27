@@ -174,6 +174,11 @@ class PickAndPlaceModule(Module):
         }
 
     @skill
+    def list_grasp_generators(self) -> list[str]:
+        """List running grasp generator names accepted by propose_grasps."""
+        return sorted(self._grasp_generators)
+
+    @skill
     def propose_grasps(
         self,
         object_id: str,
@@ -184,9 +189,10 @@ class PickAndPlaceModule(Module):
     ) -> dict[str, Any]:
         """Ask one grasp generator for grasps on a localized object, coming in from about one direction.
 
-        Choose the generator for the object. GraspGenXModule is a learned model:
-        grasps on any shape from many directions, such as mugs, tools and side
-        grasps, in about a second on a GPU. HeuristicGraspModule makes one
+        First call list_grasp_generators and choose only from the returned names.
+        Not every blueprint runs every generator. When available, GraspGenXModule
+        is a learned model: grasps on any shape from many directions, such as mugs,
+        tools and side grasps, in about a second on a GPU. HeuristicGraspModule makes one
         straight-down grasp, instantly, for boxes, cans and other upright
         objects. A name that is not running gets an error naming the ones that
         are. The grasps are not checked for reach or collisions. Pass one entry
@@ -194,7 +200,7 @@ class PickAndPlaceModule(Module):
 
         Args:
             object_id: An id localize gave, or a label only one localized object has.
-            generator: Name of the grasp generator to ask, such as GraspGenXModule.
+            generator: A name returned by list_grasp_generators.
             approach: Unit vector [x, y, z] in the arm's base frame: the direction
                 the gripper moves in, from the operator's hand into the object.
                 [0, 0, -1] is straight down. None accepts any direction.

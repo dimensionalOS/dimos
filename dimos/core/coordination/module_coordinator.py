@@ -33,13 +33,17 @@ from dimos.core.coordination.blueprint_config.fields import (
     validate_module_config,
 )
 from dimos.core.coordination.blueprint_config.values import deep_merge, plain
-from dimos.core.coordination.blueprints import MetaBlueprint, transport_config_name
+from dimos.core.coordination.blueprints import (
+    MetaBlueprint,
+    config_defaults,
+    transport_config_name,
+)
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.introspection.module.info import StreamDescriptor
-from dimos.core.module import ModuleBase, ModuleConfig, ModuleSpec, is_module_type
+from dimos.core.module import ModuleBase, ModuleSpec, is_module_type
 from dimos.core.resource import Resource
 from dimos.core.stream import Transport, TransportSpec
 from dimos.core.transport import (
@@ -58,8 +62,7 @@ from dimos.spec.utils import (
 )
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.optional_dependencies import check_imports
-from dimos.utils.safe_thread_map import safe_thread_map
+from dimos.utils.safe_thread_map import ExceptionGroup, safe_thread_map
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprint_config.parsed import ParsedBlueprintConfig
@@ -188,6 +191,7 @@ class ModuleCoordinator(Resource):
             "restart_module_by_class_name": self.restart_module_by_class_name,
             "restart_module_by_name": self.restart_module_by_name,
             "unload_module_by_class_name": self.unload_module_by_class_name,
+            "unload_module_by_name": self.unload_module_by_name,
             "shutdown": self.shutdown,
         }
 
@@ -405,12 +409,17 @@ class ModuleCoordinator(Resource):
                 self._transport_observers.remove(callback)
 
     def _send_on_system_modules(self) -> None:
+        """Refresh module discovery, then notify consumers of the completed discovery.
+
+        Both phases run on startup and whenever the deployed module list changes.
+        """
         modules = list(self._deployed_modules.values())
-        for module in modules:
-            # Only an @rpc counts: a plain method would be fetched over the worker
-            # pipe as a bound method, which cannot cross it.
-            if "on_system_modules" in getattr(module, "rpcs", ()):
-                cast("Any", module).on_system_modules(modules)
+        for hook in ("on_system_modules", "on_system_modules_ready"):
+            for module in modules:
+                # Only an @rpc counts: a plain method would be fetched over the worker
+                # pipe as a bound method, which cannot cross it.
+                if hook in getattr(module, "rpcs", ()):
+                    getattr(module, hook)(modules)
 
     def _connect_streams(
         self, blueprint: Blueprint, transports: Mapping[tuple[str, type], Transport[Any]]
@@ -571,7 +580,7 @@ class ModuleCoordinator(Resource):
         blueprint: Blueprint,
         parsed_config: ParsedBlueprintConfig | None = None,
     ) -> None:
-        check_module_dependencies(blueprint, parsed_config, live_config=self._global_config)
+        check_module_dependencies(blueprint, parsed_config)
         global_values, module_kwargs, transport_overrides = _resolve_blueprint_config(
             blueprint, parsed_config, sparse_globals=True
         )
@@ -648,6 +657,10 @@ class ModuleCoordinator(Resource):
         with self._modules_lock:
             self.unload_module(self._instance_key_of_class_name(class_name))
 
+    def unload_module_by_name(self, name: str) -> None:
+        """Unload one instance by its name (``robot0/go2connection``), not every copy of its class."""
+        self.unload_module(name)
+
     def _instance_key_of_class_name(self, class_name: str) -> str:
         names = [n for n, c in self._instance_classes.items() if c.__name__ == class_name]
         if len(names) > 1:
@@ -710,15 +723,17 @@ class ModuleCoordinator(Resource):
         name: str,
         *,
         reload_source: bool = True,
+        config: Mapping[str, Any] | None = None,
     ) -> None:
         with self._modules_lock:
-            self._restart_module(name, reload_source=reload_source)
+            self._restart_module(name, reload_source=reload_source, config=config)
 
     def restart_module(
         self,
         module: type[ModuleBase] | str,
         *,
         reload_source: bool = True,
+        config: Mapping[str, Any] | None = None,
     ) -> ModuleProxyProtocol:
         """Restart a single deployed module in place.
 
@@ -727,16 +742,19 @@ class ModuleCoordinator(Resource):
         via ``importlib.reload`` so edited code is picked up, then redeploys it
         onto a fresh worker process, reconnects its streams to the existing
         transports, and re-injects the new proxy into every other module that
-        held a reference to it.
+        held a reference to it. ``config`` (field -> value) is merged over the
+        module's config first, so a changed setting takes effect, and is kept for
+        later restarts.
         """
         with self._modules_lock:
-            return self._restart_module(module, reload_source=reload_source)
+            return self._restart_module(module, reload_source=reload_source, config=config)
 
     def _restart_module(
         self,
         module: type[ModuleBase] | str,
         *,
         reload_source: bool = True,
+        config: Mapping[str, Any] | None = None,
     ) -> ModuleProxyProtocol:
         name = self._resolve_instance_key(module)
         module_class = self._instance_classes[name]
@@ -746,7 +764,7 @@ class ModuleCoordinator(Resource):
             )
 
         old_atom = self._deployed_atoms[name]
-        kwargs = dict(old_atom.kwargs)
+        kwargs = {**old_atom.kwargs, **(config or {})}
         saved_transports = dict(self._module_transports.get(name, {}))
         inbound_refs = [
             (consumer, ref_name)
@@ -1047,38 +1065,14 @@ def _run_configurators(blueprint: Blueprint) -> None:
 
 
 def check_module_dependencies(
-    blueprint: Blueprint,
-    parsed_config: ParsedBlueprintConfig | None = None,
-    *,
-    live_config: GlobalConfig | None = None,
+    blueprint: Blueprint, parsed_config: ParsedBlueprintConfig | None = None
 ) -> None:
-    """Check active modules using the global settings they will receive in their workers."""
-    global_values, module_kwargs, _ = _resolve_blueprint_config(
-        blueprint, parsed_config, sparse_globals=live_config is not None
-    )
-    g = (global_config if live_config is None else live_config).model_copy(update=global_values)
+    """Check active modules' dependencies before allocating runtime resources."""
+    _, module_kwargs, _ = _resolve_blueprint_config(blueprint, parsed_config)
     for atom in blueprint.active_blueprints:
         kwargs = dict(atom.kwargs)
         kwargs.update(module_kwargs.get(atom.name, {}))
-        kwargs["g"] = g
         atom.module.check_dependencies(**kwargs)
-        config_cls = module_config_cls(atom)
-        if (
-            issubclass(config_cls, ModuleConfig)
-            and config_cls.check_dependencies is not ModuleConfig.check_dependencies
-        ):
-            module_config = validate_module_config(
-                atom, {k: v for k, v in kwargs.items() if k in config_cls.model_fields}, g
-            )
-            cast("ModuleConfig", module_config).check_dependencies()
-    active_streams = stream_name_types(blueprint)
-    for key, transport in blueprint.transport_map.items():
-        if key in active_streams:
-            if isinstance(transport, TransportSpec):
-                config = transport.kwargs.get("config") or transport.config_cls
-            else:
-                config = getattr(transport, "_config", None)
-            check_imports(*getattr(config, "required_imports", ()))
 
 
 def _check_requirements(blueprint: Blueprint) -> None:
@@ -1129,6 +1123,31 @@ def _deploy_all_modules(
         module_specs.append((bp.module, gc, kwargs))
         deployed_atoms[bp.name] = dataclasses.replace(bp, kwargs=dict(kwargs))
 
+    # Checks see every config field, defaults included, not just the ones someone set.
+    atoms = [
+        dataclasses.replace(atom, kwargs={**config_defaults(atom.module), **atom.kwargs})
+        for atom in [*module_coordinator._deployed_atoms.values(), *deployed_atoms.values()]
+    ]
+    # Every base's own check (so mixins each keep theirs), and each distinct function once.
+    checkers = list(
+        dict.fromkeys(
+            vars(base)["blueprint_checks"]
+            for atom in atoms
+            for base in atom.module.__mro__
+            if "blueprint_checks" in vars(base)
+        )
+    )
+    errors = []
+    for checker in checkers:
+        try:
+            checker(atoms)
+        except Exception as error:
+            errors.append(error)
+    # One failed check raises its own error; several raise them together.
+    if len(errors) == 1:
+        raise errors[0]
+    if errors:
+        raise ExceptionGroup("blueprint checks failed", errors)
     module_coordinator.deploy_parallel(module_specs)
 
     for bp in blueprint.active_blueprints:
