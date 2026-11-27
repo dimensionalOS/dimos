@@ -30,7 +30,7 @@ warnings.filterwarnings("ignore", category=LangChainPendingDeprecationWarning)
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages.base import BaseMessage
-from langchain_core.tools import StructuredTool
+from langchain_core.tools import StructuredTool, ToolException
 from langgraph.graph.state import CompiledStateGraph
 from reactivex.disposable import Disposable
 import requests
@@ -39,6 +39,7 @@ from dimos.agents.base_agent import BaseAgent
 from dimos.agents.llm_trace import tracing_http_client
 from dimos.agents.mcp import tool_stream
 from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY, TURN_FAILED_KEY
+from dimos.agents.mcp.mcp_adapter import McpError, checked_tool_content, tool_content_text
 from dimos.agents.mcp.spec import McpServerSpec
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
@@ -167,9 +168,9 @@ class Agent(BaseAgent):
         result: dict[str, Any] = data.get("result")
         return result
 
-    def _mcp_tool_call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _mcp_tool_call(self, name: str, arguments: dict[str, Any]) -> list[dict[str, Any]]:
         progress_token = str(uuid.uuid4())
-        return self._mcp_request(
+        result = self._mcp_request(
             "tools/call",
             {
                 "name": name,
@@ -177,6 +178,7 @@ class Agent(BaseAgent):
                 "_meta": {"progressToken": progress_token},
             },
         )
+        return checked_tool_content(name, result)
 
     def _on_tool_stream_message(self, msg: dict[str, Any]) -> None:
         method = msg.get("method")
@@ -230,10 +232,11 @@ class Agent(BaseAgent):
         input_schema = mcp_tool.get("inputSchema", {"type": "object", "properties": {}})
 
         def call_tool(**kwargs: Any) -> str:
-            result = self._mcp_tool_call(name, kwargs)
-            content = result.get("content", [])
-            parts = [c.get("text", "") for c in content if c.get("type") == "text"]
-            text = "\n".join(parts)
+            try:
+                content = self._mcp_tool_call(name, kwargs)
+            except McpError as exc:
+                raise ToolException(str(exc)) from exc
+            text = tool_content_text(content)
 
             # Images need to be added to the history separately because they
             # cannot be included in the tool response for OpenAI models and
@@ -251,6 +254,7 @@ class Agent(BaseAgent):
             description=description,
             func=call_tool,
             args_schema=input_schema,
+            handle_tool_error=True,
         )
 
     @rpc
@@ -378,10 +382,7 @@ class Agent(BaseAgent):
                     tool_args[key] = continuation_context[context_key]
 
         try:
-            result = self._mcp_tool_call(tool_name, tool_args)
-            content = result.get("content", [])
-            parts = [c.get("text", "") for c in content if c.get("type") == "text"]
-            text = "\n".join(parts)
+            text = tool_content_text(self._mcp_tool_call(tool_name, tool_args))
         except Exception as e:
             self._message_queue.put(
                 HumanMessage(f"Continuation '{tool_name}' failed with error: {e}")

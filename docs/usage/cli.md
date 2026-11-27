@@ -423,7 +423,7 @@ Returns JSON with tool names, descriptions, and parameter schemas.
 
 #### `dimos mcp call`
 
-Call a skill by name.
+Call a skill by name. When the server reports a failed tool call, this command and the `status`, `modules` and `agent-send` shortcuts print the diagnostic to stderr and exit with status 1.
 
 ```bash
 dimos mcp call <tool_name> [--arg key=value ...] [--json-args '{}'] [--timeout SECONDS]

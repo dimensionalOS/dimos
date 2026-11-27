@@ -166,6 +166,33 @@ def test_tool_invocation_via_mcp(mcp_client: Agent) -> None:
     assert greet_tool.func(name="Alice") == "Hello, Alice!"
 
 
+def test_marked_failure_reaches_langchain_and_continuations(mcp_client: Agent) -> None:
+    def failed_tool(body: dict[str, object]) -> dict[str, object]:
+        if body["method"] != "tools/call":
+            return _mock_payload(body)
+        return {
+            "jsonrpc": "2.0",
+            "id": body["id"],
+            "result": {"isError": True, "content": [{"type": "text", "text": "unavailable"}]},
+        }
+
+    mcp_client._http_client = _mock_session(failed_tool)
+    greet = next(t for t in mcp_client._fetch_tools() if t.name == "greet")
+    call = {"type": "tool_call", "name": "greet", "args": {}, "id": "first"}
+    reply = greet.invoke(call)
+    assert isinstance(reply, ToolMessage)
+    assert reply.status == "error"
+    assert reply.content == "unavailable"
+
+    mcp_client.dispatch_continuation({"tool": "greet"}, {})
+    assert "failed with error: unavailable" in str(mcp_client._message_queue.get_nowait().content)
+
+    mcp_client._http_client = _mock_session(_mock_payload)
+    retry = greet.invoke({**call, "id": "second"})
+    assert retry.status == "success"
+    assert retry.content == "Hello, world!"
+
+
 def test_image_result_follows_as_a_tool_tagged_user_turn(mcp_client: Agent) -> None:
     """An image cannot ride the tool response, so it follows as a HumanMessage
     naming its tool, or chat UIs would show it as typed input."""
