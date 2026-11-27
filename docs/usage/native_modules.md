@@ -307,6 +307,40 @@ Data downloads and IsolatedPython behavior are unchanged.
 Nix-based modules still require Nix and their normal build dependencies. This
 change does not establish additional platform or hardware support.
 
+## Prebuilt binaries in an installation
+
+An installation can ship its native modules already built. Set `DIMOS_NATIVE_DIR`
+to the folder that holds them. dimOS then runs those binaries and needs no
+checkout, no Nix and no compiler.
+
+```sh skip
+DIMOS_NATIVE_DIR=/opt/dimos/native dimos --simulation run go2-sim-nav
+```
+
+Each module has a folder named after its executable, with the binary in `bin/`.
+Libraries that the binary brings along go next to it, for example in `lib/`.
+
+```
+/opt/dimos/native/
+    local_planner/
+        bin/local_planner
+        lib/
+    dim_slam/
+        bin/dim_slam
+        lib/
+```
+
+With the setting:
+
+- A module with a `source_dir` runs `$DIMOS_NATIVE_DIR/{name}/bin/{name}`. `{name}`
+  is the file name of its `executable`. The process runs from that `bin/` folder.
+- Nothing is built. `build_command`, `auto_build` and `--build-native` have no effect.
+- A missing binary raises `FileNotFoundError` when the blueprint is built. The
+  message names the module and the path.
+- The folder holds one build of each module. Modules that choose a build by
+  machine (dim_slam, depth2depth_cloud, the V4L2 camera) run the one that is there.
+- An external binary (`source_dir=None`) is used as given.
+
 ## Auto Building
 
 Creating a config or module does not fetch native sources. `build()` resolves the

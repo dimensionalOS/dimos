@@ -39,6 +39,8 @@ The engine automatically prepares `dimos-memory-recorder` through the shared
 [native source workflow](/docs/usage/native_modules.md#native-sources-in-pip-installations).
 This works from pip installations and editable checkouts; a cache miss builds
 from source. Sources come from the shared `get_project_root()` checkout (initially `main`).
+With `DIMOS_NATIVE_DIR` set, the engine runs the
+[prebuilt recorder](/docs/usage/native_modules.md#prebuilt-binaries-in-an-installation) and builds nothing.
 
 Selected LCM streams must use one explicit connection URL. The recorder uses
 that URL even when it differs from `LCM_DEFAULT_URL`. Conflicting URLs and
