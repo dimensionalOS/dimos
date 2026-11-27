@@ -4,8 +4,9 @@
 row identifies its consumer, the robot or subsystem owner who should review it,
 the licence evidence, and any open question. An owner records their name or
 review reference in `reviewed_by` after checking the need for the archive and
-the terms for its contents. Resolve each `NOASSERTION` or remove that archive
-before release. Keep the applicable licence notices and attributions in the image.
+the terms for its contents. Ticket 04 records project approval for seven rows with
+components marked `licence unspecified`. Their upstream terms are recorded
+where known. Keep the applicable licence notices and attributions in the image.
 
 Run the inventory check from the DimOS checkout:
 
