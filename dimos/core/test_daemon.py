@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 import os
 from pathlib import Path
 import re
@@ -517,14 +518,23 @@ with (
             text=True,
             start_new_session=True,
         ) as child:
-            wait_until(
-                lambda: recorder_pid_file.exists() and recorder_pid_file.read_text().endswith("\n"),
-                timeout=10,
-            )
-            recorder_pid = int(recorder_pid_file.read_text())
-            os.kill(child.pid, getattr(signal, sig))
-            release_file.touch()
-            output, _ = child.communicate(timeout=15)
+            try:
+                wait_until(
+                    lambda: (
+                        recorder_pid_file.exists() and recorder_pid_file.read_text().endswith("\n")
+                    ),
+                    timeout=10,
+                )
+                recorder_pid = int(recorder_pid_file.read_text())
+                os.kill(child.pid, getattr(signal, sig))
+                release_file.touch()
+                output, _ = child.communicate(timeout=15)
+            finally:
+                if child.poll() is None:
+                    with suppress(ProcessLookupError):
+                        os.killpg(child.pid, signal.SIGKILL)
+                    child.wait(timeout=5)
+                    kill_run_processes(run_id)
         assert child.returncode != 0, output
         assert not ready_file.exists(), output
         assert not registry_dir.exists() or not list(registry_dir.iterdir())
