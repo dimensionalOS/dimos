@@ -56,6 +56,7 @@ _JSON = 1
 _HEADER = struct.Struct("<4sHHB7s")
 _MODE_TYPE = 1101
 _MODE_COMMAND = 5
+_LIGHT_COMMAND = 2
 _HEARTBEAT_TYPE = 100
 _HEARTBEAT_COMMAND = 100
 _HEARTBEAT_PERIOD_S = 0.5
@@ -85,6 +86,12 @@ class BatteryReport(NamedTuple):
     received_at: float
 
 
+class LightReport(NamedTuple):
+    front: bool
+    back: bool
+    received_at: float
+
+
 class BasicServerLink:
     """Heartbeat, status reports and commands for the M20 basic_server."""
 
@@ -109,6 +116,7 @@ class BasicServerLink:
         self._threads: list[Thread] = []
         self.charge: ChargeReport | None = None
         self.battery: BatteryReport | None = None
+        self.lights: LightReport | None = None
         self.charge_error: int | None = None
         self.usage_mode: int | None = None
 
@@ -143,16 +151,25 @@ class BasicServerLink:
         return True
 
     def set_usage_mode(self, mode: int) -> bool:
-        device = self._request(_MODE_TYPE, _MODE_COMMAND, {"Mode": mode})
+        return self._checked_request(_MODE_TYPE, _MODE_COMMAND, {"Mode": mode}, "usage-mode")
+
+    def set_lights(self, front: bool, back: bool) -> bool:
+        items = {"Front": int(front), "Back": int(back)}
+        return self._checked_request(_MODE_TYPE, _LIGHT_COMMAND, items, "flashlight")
+
+    def _checked_request(
+        self, message_type: int, command: int, items: dict[str, Any], name: str
+    ) -> bool:
+        device = self._request(message_type, command, items)
         if device is None:
             return False
         try:
             error_code = int(device["Items"]["ErrorCode"])
         except (KeyError, TypeError, ValueError):
-            logger.error("M20 basic_server returned an invalid usage-mode response")
+            logger.error("M20 basic_server returned an invalid %s response", name)
             return False
         if error_code != 0:
-            logger.error("M20 basic_server usage-mode switch failed: error %s", error_code)
+            logger.error("M20 basic_server %s switch failed: error %s", name, error_code)
             return False
         return True
 
@@ -256,7 +273,9 @@ class BasicServerLink:
             if battery is not None:
                 self.battery = battery
                 self._on_battery(battery)
-            return
+            lights = _light_report(items.get("Led"))
+            if lights is not None:
+                self.lights = lights
         else:
             return
         self._on_report()
@@ -288,6 +307,16 @@ def _battery_report(status: Any) -> BatteryReport | None:
     if packs[0] is None or packs[1] is None:
         return None
     return BatteryReport(packs[0], packs[1], time.monotonic())
+
+
+def _light_report(led: Any) -> LightReport | None:
+    fill = led.get("Fill") if isinstance(led, dict) else None
+    if not isinstance(fill, dict):
+        return None
+    front, back = fill.get("Front"), fill.get("Back")
+    if front not in (0, 1) or back not in (0, 1):
+        return None
+    return LightReport(bool(front), bool(back), time.monotonic())
 
 
 def _pack_report(status: dict[str, Any], side: str) -> PackReport | None:

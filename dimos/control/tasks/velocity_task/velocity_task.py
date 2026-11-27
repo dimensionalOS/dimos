@@ -148,10 +148,13 @@ class JointVelocityTask(BaseControlTask):
                 time_since_update = state.t_now - self._last_update_time
                 if time_since_update > self._config.timeout:
                     if not self._timed_out:
-                        logger.warning(
-                            f"JointVelocityTask {self._name} timed out "
-                            f"(no update for {time_since_update:.3f}s)"
-                        )
+                        # Teleop sends a zero command on release, then stays silent.
+                        # Only stale motion commands indicate an unexpected timeout.
+                        if any(self._velocities):
+                            logger.warning(
+                                f"JointVelocityTask {self._name} timed out "
+                                f"(no update for {time_since_update:.3f}s)"
+                            )
                         self._timed_out = True
 
                     if self._config.zero_on_timeout:
@@ -290,7 +293,7 @@ class JointVelocityTaskParams(BaseConfig):
     zero_on_timeout: bool = True
 
 
-def create_task(cfg: Any, hardware: Any) -> JointVelocityTask:
+def create_task(cfg: Any) -> JointVelocityTask:
     params = JointVelocityTaskParams.model_validate(cfg.params)
     return JointVelocityTask(
         cfg.name,

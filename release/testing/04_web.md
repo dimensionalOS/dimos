@@ -18,7 +18,7 @@ Expected result: the views agree with the robot's motion, and navigation, keyboa
 
 ## 4.2 Agentic cockpit
 
-Needs the agent credentials, ffmpeg and a microphone.
+Needs the agent credentials and a microphone.
 
 ```bash
 uv run dimos --simulation run unitree-go2-agentic-cockpit

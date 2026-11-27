@@ -21,9 +21,12 @@ The end-to-end `dimos map pose-fill` path against a real recording lives in
 from __future__ import annotations
 
 from pathlib import Path
+import shlex
 
 import pytest
+from typer.testing import CliRunner
 
+from dimos.cli.dimos import main as cli_app
 from dimos.mapping.cli.pose_fill import pose_fill, pose_fill_db
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
@@ -77,6 +80,25 @@ def pose_fill_source(tmp_path: Path) -> Path:
         )
         store.stream("other", str).append("preserved", ts=1.0, pose=(4, 5, 6))
     return src
+
+
+@pytest.mark.parametrize("out", [[], ["--out", "camera #1's copy.db"]], ids=["default", "explicit"])
+def test_printed_command_inspects_the_copy(pose_fill_source, tmp_path, monkeypatch, out):
+    monkeypatch.chdir(tmp_path)
+    runner = CliRunner()
+    args = ["map", "pose-fill", str(pose_fill_source), "--target", "other", "--streams", "other"]
+    written = runner.invoke(cli_app, [*args, *out])
+    assert written.exit_code == 0, written.output
+    command = shlex.split(written.output.split("now run: ")[1].strip())
+    assert command[:3] == ["dimos", "mem", "summary"]
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    summary = runner.invoke(cli_app, command[1:])
+    assert summary.exit_code == 0, summary.output
+    assert "other" in summary.output and "Poses" in summary.output
+    assert "odom" not in summary.output
 
 
 @pytest.mark.parametrize(

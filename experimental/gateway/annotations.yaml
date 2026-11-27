@@ -109,7 +109,6 @@ modules:
   basic-path-follower: {abilities: [navigation]}
   camera-mux-module: {abilities: [remote-teleop]}
   cartesian-motion-controller: {abilities: [arm-control]}
-  cloud-relocalization: {abilities: [relocalization]}
   collection-recorder: {abilities: [data-collection]}
   cost-mapper: {abilities: [costmap]}
   dan-holonomic-tc: {abilities: [navigation]}
@@ -125,7 +124,6 @@ modules:
   g1-collection-recorder: {abilities: [data-collection]}
   g1-manipulation-module: {abilities: [motion-planning]}
   g1-recorder: {abilities: [recording]}
-  g1-sim-connection: {abilities: [simulation]}
   go2-audio-bridge-module: {abilities: [remote-teleop]}
   go2-command-module: {abilities: [remote-teleop]}
   go2-l1-lidar: {abilities: [lidar-odometry]}
@@ -145,8 +143,6 @@ modules:
   keyboard-teleop: {abilities: [keyboard-teleop]}
   keyboard-teleop-module: {abilities: [keyboard-teleop]}
   le-robot-policy-module: {abilities: [learned-policy]}
-  lidar-window-relocalization: {abilities: [relocalization]}
-  local-map-relocalization: {abilities: [relocalization]}
   local-planner-native: {abilities: [navigation]}
   manipulation-module: {abilities: [arm-control, motion-planning]}
   manipulation-skills: {abilities: [grasping]}
@@ -177,6 +173,7 @@ modules:
   point-lio: {abilities: [lidar-odometry]}
   point-nav-skill-container: {abilities: [navigation]}
   pointlio-recorder: {abilities: [recording]}
+  premap-module: {abilities: [relocalization]}
   r1-pro-lio: {abilities: [lidar-odometry]}
   ray-tracing-voxel-map: {abilities: [mapping]}
   recorder: {abilities: [recording]}
@@ -310,10 +307,6 @@ robots:
           title: Go2 holonomic controller
           description: A standalone holonomic full-pose controller for a Go2, with keyboard driving.
           recommended_config: *robot_ip_only
-        unitree-go2-keyboard-teleop:
-          title: Go2 keyboard driving (DDS)
-          description: Drive a Go2 with the keyboard through the ControlCoordinator over DDS (SDK2).
-          recommended_config: *robot_ip_only
         unitree-go2-markers:
           title: Go2 with marker detection
           description: Map and navigation plus fiducial marker detection mirrored into TF.
@@ -388,24 +381,36 @@ robots:
         go2-dds:
           title: 'Go2 over DDS'
           description: 'The Go2''s own streams and driving over DDS, on the Jetson wired to it; also the zenoh router a viewer dials.'
+          recommended_config: &go2_dds_config
+          - module: go2dds
+            field: iface
+            label: DDS network interface
         go2-dds-mid360:
           title: 'Go2 over DDS + Mid-360'
           description: 'DDS Go2 with a Mid-360: Point-LIO odometry in place of the head lidar''s.'
+          recommended_config: *go2_dds_config
         go2-nav:
           title: 'Go2: navigation'
           description: 'DDS Go2 with a Mid-360 (Point-LIO), MLS global planner and local planner; headless, watch it with the nav viewer.'
+          recommended_config: *go2_dds_config
         go2-nav-l1:
           title: 'Go2: navigation + head L1'
           description: 'go2-nav plus the head L1 lidar''s deskewed scans, in Point-LIO''s odometry frame.'
+          recommended_config: *go2_dds_config
         go2-nav-viewer:
           title: 'Go2: nav viewer'
           description: 'The screen for go2-nav on another machine: dials the Go2''s zenoh router and shows its maps and plans.'
+          recommended_config: &go2_nav_viewer_config
+          - global: zenoh_connect
+            label: Robot router endpoint
         go2-nav-viewer-mesh:
           title: 'Go2: nav viewer (meshed map)'
           description: 'The go2-nav viewer, meshing the map regions on this machine''s GPU.'
+          recommended_config: *go2_nav_viewer_config
         go2-nav-hosted:
           title: 'Go2: navigation across hosts'
           description: 'go2-nav split over dimos hosts: the stack on the Go2''s host, the mesher on the GPU host, the viewer here.'
+          recommended_config: *go2_dds_config
         go2-sim:
           title: 'Go2 in simulation (keyboard)'
           description: 'The Go2 with its Mid-360 lidar in a generated office, driven from the keyboard. No robot needed.'
@@ -414,9 +419,14 @@ robots:
           title: 'Go2 in simulation (navigation)'
           description: 'The simulated Go2 with the navigation stack: click a spot and it plans its way there. No robot needed.'
           recommended_config: []
+        go2-sim-patrol:
+          title: 'Go2 in simulation (patrol)'
+          description: 'The simulated Go2 patrolling waypoints and docking to recharge, run by an orchestration workflow. No robot needed.'
+          recommended_config: []
         go2-sim-nav-episode:
           title: 'Go2 in simulation (nav-bench episode)'
           description: 'One nav-bench case driven against the simulated Go2 navigation stack. Run by dimos nav-bench.'
+          recommended_config: []
           hidden: true
         go2-localize:
           title: 'Go2 with object localization'
@@ -438,43 +448,10 @@ robots:
           required: true
           docs: https://docs.dimensional.org/platforms/humanoid/g1/#1-get-ssh-access
       blueprints:
-        unitree-g1-basic:
-          title: G1 basic
-          description: A G1's camera, a voxel map and a costmap, with frontier exploration. Needs the robot on this network.
-          starter: 7
-        unitree-g1-basic-sim:
-          title: G1 in simulation
-          description: 'The basic G1 stack against a simulated G1: no robot needed.'
-          starter: 8
-          recommended_config: []
         unitree-g1:
-          title: G1 with perception + memory
-          description: The basic G1 stack plus spatial memory and object tracking.
-          starter: 9
-        unitree-g1-agentic:
-          title: G1 with an agent
-          description: G1 with perception and memory, plus an AI agent with G1 skills (move, observe, speak).
-          starter: 10
-        unitree-g1-agentic-sim:
-          title: G1 agent in simulation
-          description: 'The G1 agent against a simulated G1: no robot needed.'
-          recommended_config: []
-        unitree-g1-sim:
-          title: G1 perception in simulation
-          description: G1 perception and memory against a simulated G1.
-          recommended_config: []
-        unitree-g1-coordinator:
-          title: G1 control coordinator
-          description: The G1's whole-body connection behind a ControlCoordinator servo task.
-        unitree-g1-detection:
-          title: G1 with 3D detection
-          description: The basic G1 stack plus person tracking and 3D detection.
-        unitree-g1-full:
-          title: G1 full
-          description: 'Everything: perception, memory, the agent with G1 skills, and keyboard driving.'
-        unitree-g1-groot-wbc:
-          title: G1 GR00T whole-body control
-          description: GR00T whole-body control with a Mid-360, costmap and A* navigation; on the robot or in MuJoCo.
+          title: G1
+          description: 'The default G1 stack: onboard sensors, the locomotion SDK and navigation, or GR00T whole-body control under --simulation mujoco.'
+          starter: 7
           recommended_config:
           - &robot_or_simulator
             label: Run it on
@@ -483,16 +460,21 @@ robots:
             - {label: Simulator, set: {simulation: mujoco}}
           - global: robot_ip
             when: {simulation: ''}
-        unitree-g1-joystick:
-          title: G1 keyboard driving
-          description: The basic G1 stack plus keyboard driving.
-        unitree-g1-nav-simple:
-          title: G1 simple navigation
-          description: Onboard sensors, a ray-traced costmap and A* replanning (needs the Unitree SDK).
-        unitree-g1-primitive-no-nav:
-          title: G1 primitive (building block)
-          description: The minimal G1 stack without navigation that bigger G1 blueprints build on.
-          hidden: true
+        unitree-g1-groot:
+          title: G1 GR00T + navigation
+          description: GR00T whole-body control plus Mid-360 Point-LIO and ray-traced A* navigation; on the robot or in MuJoCo.
+          starter: 8
+          recommended_config:
+          - *robot_or_simulator
+          - global: robot_ip
+            when: {simulation: ''}
+        unitree-g1-groot-wbc:
+          title: G1 GR00T whole-body control
+          description: GR00T whole-body control with a Mid-360, costmap and A* navigation; on the robot or in MuJoCo.
+          recommended_config:
+          - *robot_or_simulator
+          - global: robot_ip
+            when: {simulation: ''}
         unitree-g1-record:
           title: G1 recording
           description: Drive a G1 and record what it sees (needs the Unitree SDK).
@@ -514,15 +496,12 @@ robots:
       blueprints:
         r1pro-nav:
           title: R1 Pro click-to-drive
-          description: 'Ray-traced costmap and A* replanning: click where the R1 Pro should go.'
+          description: 'Point-LIO, a ray-traced 3D map and the MLS planner: click where the R1 Pro should go.'
           starter: 11
-        r1pro-teleop:
-          title: R1 Pro driving
-          description: Drive the R1 Pro's base from the viewer.
-          starter: 12
         r1pro-coordinator:
-          title: R1 Pro control coordinator
-          description: The R1 Pro's ROS connection behind a ControlCoordinator.
+          title: R1 Pro driving
+          description: The R1 Pro's ROS connection behind a ControlCoordinator; drive its base from the viewer.
+          starter: 12
         r1pro-manipulation:
           title: R1 Pro manipulation (experimental)
           description: Upper-body manipulation planning on the R1 Pro.
@@ -600,7 +579,7 @@ robots:
             field: basic_server_host
             label: M20 control host
             placeholder: 10.21.31.103
-          - module: localmaprelocalization
+          - module: premapmodule
             field: map_file
             label: Premap (.db/.mcap)
         m20-sim-nav:
@@ -618,7 +597,7 @@ robots:
       dirs: [dimos/robot/diy/alfred]
       defaults:
         recommended_config:
-        - module: alfredhighlevel
+        - module: flowbaseconnection
           field: address
           label: Alfred address
       blueprints:
@@ -641,13 +620,9 @@ robots:
       manufacturer: UFactory
       dirs: [dimos/robot/manipulators/xarm]
       defaults:
-        recommended_config:
+        recommended_config: &xarm7_connection_config
         - *robot_or_simulator
-        - module: controlcoordinator
-          field: addresses.arm
-          label: xArm7 IP
-          placeholder: 192.168.1.185
-          required: false
+        - <<: &xarm7_connection_ip {module: xarmconnection, field: ip, label: xArm7 IP, placeholder: 192.168.1.185, required: true}
           when: {simulation: ''}
       blueprints:
         xarm-perception-sim:
@@ -659,10 +634,7 @@ robots:
           title: xArm pick and place
           description: Perception, grasping and pick-and-place on a real xArm with a RealSense.
           starter: 18
-          recommended_config: &xarm7_connection_config
-          - *robot_or_simulator
-          - <<: &xarm7_connection_ip {module: xarmconnection, field: ip, label: xArm7 IP, placeholder: 192.168.1.185, required: true}
-            when: {simulation: ''}
+          recommended_config: *xarm7_connection_config
         keyboard-teleop-xarm7:
           title: xArm7 keyboard driving
           description: Move an xArm7 with this computer's keyboard.
@@ -673,19 +645,14 @@ robots:
           recommended_config: &xarm6_config
           - *robot_or_simulator
           - &xarm6_ip
-            <<: &xarm6_ip_anywhere {module: controlcoordinator, field: addresses.arm, label: xArm6 IP, placeholder: 192.168.1.185, required: false}
+            <<: &xarm6_ip_anywhere {module: xarmconnection, field: ip, label: xArm6 IP, placeholder: 192.168.1.185, required: true}
             when: {simulation: ''}
         keyboard-teleop-lite6:
           title: Lite6 keyboard driving
           description: Move a UFactory Lite6 with this computer's keyboard.
+          # The Lite 6 has no MuJoCo scene, so it always needs its address.
           recommended_config: &lite6_config
-          - *robot_or_simulator
-          - module: controlcoordinator
-            field: addresses.arm
-            label: Lite6 IP
-            placeholder: 192.168.1.185
-            required: false
-            when: {simulation: ''}
+          - {module: xarmconnection, field: ip, label: Lite6 IP, placeholder: 192.168.1.185, required: true}
         xarm7-teleop:
           title: xArm7 teleop
           description: Move a real xArm7's end and its gripper from the Desktop Manipulation app, through XArmConnection.
@@ -763,35 +730,27 @@ robots:
         coordinator-dual-xarm:
           title: Dual xArm coordinator
           description: Two xArms behind one ControlCoordinator (a building block).
-          recommended_config: [*robot_or_simulator]
-        coordinator-combined-xarm6:
-          title: xArm6 combined coordinator
-          description: xArm6 with trajectory and velocity tasks in one coordinator (a building block).
-          recommended_config: *xarm6_config
+          recommended_config:
+          - {module: left_arm, field: ip, label: Left xArm7 IP, placeholder: 192.168.1.185, required: true}
+          - {module: right_arm, field: ip, label: Right xArm6 IP, placeholder: 192.168.1.186, required: true}
         coordinator-teleop-xarm6:
           title: xArm6 teleop coordinator
           description: The xArm6 teleop coordinator (a building block).
-          recommended_config: &teleop_xarm6_config
-          - *robot_or_simulator
-          - {<<: *xarm6_ip, module: teleopcontrolcoordinator}
+          recommended_config: *xarm6_config
         coordinator-teleop-xarm7:
           title: xArm7 teleop coordinator
           description: The xArm7 teleop coordinator (a building block).
-        coordinator-trajectory-xarm6:
-          title: xArm6 trajectory coordinator
-          description: xArm6 with a trajectory task (a building block).
-          recommended_config: *xarm6_config
         coordinator-velocity-xarm6:
           title: xArm6 velocity coordinator
           description: xArm6 with a velocity task (a building block).
-          recommended_config: *xarm6_config
+          recommended_config: [*xarm6_ip_anywhere]
         teleop-webxr-xarm7:
           title: xArm7 VR teleop
           description: Move an xArm7 with a VR headset's right controller (simulated with the simulator).
         teleop-webxr-xarm6:
           title: xArm6 VR teleop
           description: Move an xArm6 with a VR headset's right controller (simulated with the simulator).
-          recommended_config: *teleop_xarm6_config
+          recommended_config: *xarm6_config
         teleop-webxr-hand-xarm7:
           title: xArm7 VR hand teleop
           description: 'Move an xArm7 with your hand in VR: pinch to start and stop tracking.'
@@ -801,15 +760,15 @@ robots:
         teleop-hosted-xarm6:
           title: xArm6 remote teleop
           description: Move an xArm6 from anywhere through the hosted (Cloudflare) teleop broker.
-          recommended_config: [{<<: *xarm6_ip_anywhere, module: teleopcontrolcoordinator}]
+          recommended_config: [*xarm6_ip_anywhere]
         teleop-hosted-xarm7:
           title: xArm7 remote teleop
           description: Move an xArm7 from anywhere through the hosted (Cloudflare) teleop broker.
-          recommended_config: [{module: controlcoordinator, field: addresses.arm, label: xArm7 IP}]
+          recommended_config: [*xarm7_connection_ip]
         learning-collect-webxr-xarm7:
           title: xArm7 demonstration recording
           description: Teleoperate an xArm7 in VR and record episodes for imitation learning.
-          recommended_config: [{module: controlcoordinator, field: addresses.arm, label: xArm7 IP}]
+          recommended_config: [*xarm7_connection_ip]
         xarm-feed:
           title: xArm camera feed (recording)
           description: A depth-camera recording published at wall-clock pace, as if live.
@@ -825,6 +784,7 @@ robots:
         xarm-sim:
           title: 'xArm7 in simulation (robot only)'
           description: 'A simulated xArm7: control and sensors as plain zenoh topics, for agents without dimOS. Needs MuJoCo.'
+          recommended_config: []
     piper:
       name: AgileX Piper
       description: AgileX's 6-axis arm, over CAN.
@@ -832,14 +792,9 @@ robots:
       manufacturer: AgileX
       dirs: [dimos/robot/manipulators/piper]
       defaults:
-        recommended_config: &can_arm_config
+        recommended_config:
         - *robot_or_simulator
-        - &can_port
-          module: controlcoordinator
-          field: addresses.arm
-          label: CAN port
-          placeholder: can0
-          when: {simulation: ''}
+        - &piper_can_port {module: piperconnection, field: can_port, label: CAN port, placeholder: can0, required: true, when: {simulation: ''}}
       blueprints:
         keyboard-teleop-piper:
           title: Piper keyboard driving
@@ -853,6 +808,7 @@ robots:
         coordinator-cartesian-ik-piper:
           title: Piper Cartesian IK
           description: Cartesian pose control of a Piper through IK.
+          recommended_config: [{<<: *piper_can_port, required: false}]
         coordinator-cartesian-ik-mock:
           title: Cartesian IK (mock arm)
           description: 'Cartesian IK on a mock Piper: no robot needed.'
@@ -863,7 +819,7 @@ robots:
         learning-collect-webxr-piper:
           title: Piper demonstration recording
           description: Teleoperate a Piper in VR and record episodes for imitation learning.
-          recommended_config: [{module: controlcoordinator, field: addresses.arm, label: CAN port}]
+          recommended_config: [*piper_can_port]
         piper-teleop:
           title: Piper teleop
           description: Move a real Piper's end and its gripper from the Desktop Manipulation app, through PiperConnection.
@@ -888,6 +844,12 @@ robots:
         makermods-metal-planner-coordinator:
           title: Metal motion planning
           description: Motion planning, execution, and Viser for a Metal arm.
+        metal-calibrate:
+          title: Metal calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: metalconnection, field: can_port, label: CAN port or USB serial}
     dual_makermods_metal:
       name: Dual MakerMods Metal
       description: Two Metal arms in one planning and collision world.
@@ -902,6 +864,13 @@ robots:
         dual-makermods-metal-planner-coordinator:
           title: Dual Metal motion planning
           description: Coordinated motion planning, execution, and Viser for two Metal arms.
+        dual-metal-calibrate:
+          title: Dual Metal calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: dualmetalconnection, field: left_can_port, label: Left CAN port or USB serial}
+          - {module: dualmetalconnection, field: right_can_port, label: Right CAN port or USB serial}
     openyam:
       name: OpenYAM
       description: The OpenYAM arm, over CAN.
@@ -950,6 +919,12 @@ robots:
         teleop-webxr-openyam:
           title: OpenYAM VR teleop
           description: Move an OpenYAM arm with a VR headset's right controller.
+        openyam-calibrate:
+          title: OpenYAM calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: openyamconnection, field: can_port, label: CAN port or USB serial}
     dual_openyam:
       name: Dual OpenYAM
       description: Two OpenYAM arms as one robot.
@@ -978,6 +953,13 @@ robots:
         learning-collect-leader-dual-openyam:
           title: Dual OpenYAM leader demonstration recording
           description: Drive both OpenYAM arms from the leader arms and record demonstrations.
+        dual-openyam-calibrate:
+          title: Dual OpenYAM calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: dualopenyamconnection, field: left_can_port, label: Left CAN port or USB serial}
+          - {module: dualopenyamconnection, field: right_can_port, label: Right CAN port or USB serial}
     openarm:
       name: OpenArm
       description: The bimanual OpenArm, over CAN.
@@ -1023,6 +1005,13 @@ robots:
         openarm-mini-follower-collection:
           title: OpenArm Mini follower recording
           description: Record demonstrations on the robot machine while the Mini leaders run on another.
+        openarm-calibrate:
+          title: OpenArm calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: openarmconnection, field: left_can_port, label: Left CAN port or USB serial}
+          - {module: openarmconnection, field: right_can_port, label: Right CAN port or USB serial}
     seeed_b601_dm:
       name: Seeed reBot B601-DM
       description: Seeed's 6-axis arm with a gripper, over the Damiao USB-CAN box it ships with or SocketCAN.
@@ -1044,6 +1033,12 @@ robots:
         coordinator-seeed-b601-dm:
           title: B601-DM coordinator
           description: A B601-DM behind a ControlCoordinator (a building block).
+        b601-dm-calibrate:
+          title: B601-DM calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: b601dmconnection, field: can_port, label: CAN port, placeholder: /dev/ttyACM0}
     a1z:
       name: Galaxea A1Z
       description: Galaxea's A1Z arm, over CAN.
@@ -1051,7 +1046,9 @@ robots:
       manufacturer: Galaxea
       dirs: [dimos/robot/manipulators/a1z]
       defaults:
-        recommended_config: *can_arm_config
+        recommended_config:
+        - *robot_or_simulator
+        - {module: a1zconnection, field: can_port, label: CAN port, placeholder: a1zcan, when: {simulation: ''}}
       blueprints:
         a1z-planner-coordinator:
           title: A1Z motion planning
@@ -1101,9 +1098,8 @@ robots:
           title: Piper + xArm6 coordinator
           description: A Piper and an xArm6 behind one coordinator.
           recommended_config: &piper_xarm6_config
-          - *robot_or_simulator
-          - {<<: *xarm6_ip, field: addresses.xarm_arm}
-          - {<<: *can_port, field: addresses.piper_arm}
+          - {<<: *xarm6_ip_anywhere, module: xarm_arm}
+          - {module: piper_arm, field: can_port, label: CAN port, placeholder: can0}
         coordinator-teleop-dual:
           title: Dual-arm teleop coordinator
           description: Teleop coordinator for a Piper and an xArm6 together (a building block).
@@ -1146,6 +1142,9 @@ robots:
           title: RealSense viewer
           description: A RealSense's color, depth and RGBD cloud in Rerun.
           starter: 21
+        orbbec-camera-vis:
+          title: Orbbec viewer
+          description: An Orbbec Gemini's color, depth and RGBD cloud in Rerun.
         demo-camera:
           title: Webcam demo
           description: 'This computer''s camera as a dimos stream: the smallest blueprint there is.'
@@ -1183,7 +1182,7 @@ robots:
           recommended_config:
           - {module: recordingplayer, field: dataset, label: Recording, kind: recording, streams: [[pointlio_lidar], [tf]], placeholder: the SF office recording}
           # the map made from the player's default recording, so a launch with nothing filled in relocalizes
-          - {module: localmaprelocalization, field: map_file, label: Saved map, required: true, default: go2_mid360_sf_office_outdoors_2026-05-29}
+          - {module: premapmodule, field: map_file, label: Saved map, required: true, default: go2_mid360_sf_office_outdoors_2026-05-29}
         demo-dim-slam-realsense:
           title: dimSLAM on a RealSense
           description: dimSLAM visual SLAM on a RealSense stereo camera.
