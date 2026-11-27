@@ -149,7 +149,6 @@ def new_run_dir(suite: str) -> Path:
 def run(config: RunConfig, report: Report | None = None) -> Path:
     """Run every selected case once and return the run directory."""
     manifest = Manifest.load(config.suite)
-    manifest.check_drift()
     cases = [
         c
         for c in manifest.cases
@@ -160,6 +159,7 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
         raise ValueError(
             f"no cases match split {config.split!r} and {config.cases} in {config.suite}"
         )
+    replace(manifest, cases=cases).check_drift()
     run_dir = config.out_dir or new_run_dir(manifest.suite)
     run_dir.mkdir(parents=True, exist_ok=False)
     RUNS_INDEX.parent.mkdir(parents=True, exist_ok=True)

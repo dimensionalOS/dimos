@@ -4,6 +4,8 @@ These checks need the `manipulation` extra. Most run on mock arms or in MuJoCo w
 
 ## 3.1 Motion planning in Viser
 
+Use the Lite6 mock without an arm address configured. This checks the shared planning stack. The xArm7 and xArm6 hardware planners have a separate check in section 3.9.
+
 ```bash
 uv run dimos run lite6-planner-coordinator
 # In another terminal:
@@ -27,16 +29,16 @@ Expected result: the mock arm reaches the target in both planning modes, and `mo
 
 ## 3.2 Arms on mock hardware
 
-Without an arm address these blueprints drive a mock arm.
+Without an arm address the keyboard blueprints below drive a mock arm. The Lite6 planner is already covered by section 3.1.
 
 ```bash
 uv run dimos run keyboard-teleop-xarm7
-uv run dimos run lite6-planner-coordinator
 ```
 
 * Keyboard teleop: in the "Keyboard Teleop" window hold W and the arm moves in +X in Viser. Press [ and ] to open and close the gripper.
 * Planner: drag the target gizmo in Viser, click Plan, then Execute.
-* Repeat the keyboard check with `keyboard-teleop-xarm6`, `keyboard-teleop-lite6` and `keyboard-teleop-piper`.
+* Repeat the keyboard check with `keyboard-teleop-xarm6` and `keyboard-teleop-lite6`.
+* `keyboard-teleop-piper` has no mock; run it in MuJoCo as `uv run dimos --simulation run keyboard-teleop-piper` and repeat the keyboard check.
 * The OpenYAM and OpenArm blueprints are mocks only under `--simulation`. Run them as `uv run dimos --simulation run <blueprint>`. Do the keyboard check with `keyboard-teleop-openyam` and `keyboard-teleop-openyam-planner`, and the planner check with `openyam-planner-coordinator`, `dual-openyam-planner-coordinator` and `openarm-planner-coordinator`. Add `--visualization.backend viser` to `keyboard-teleop-openyam-planner` and the three planner blueprints. The OpenArm arms start stretched straight down, so drag the target up.
 * `keyboard-teleop-a750` has no mock. It needs the real A-750 and its `a750_control` binding, see the [A-750 guide](../../docs/capabilities/manipulation/a750.md). Run it as `uv run dimos run keyboard-teleop-a750 --a750connection.device-path /dev/ttyACM0` and repeat the keyboard check.
 
@@ -159,3 +161,23 @@ uv run dimos run a1z-planner-coordinator --a1zconnection.can-port a1zcan --visua
 * Jog the arm from the Desktop Manipulation app with `a1z-teleop`, and repeat the headset check from 3.5 with `teleop-webxr-a1z` and the left controller. Both take `--a1zconnection.can-port a1zcan`.
 
 Expected result: the arm moves home, follows each command, and moves home again before its motors turn off on Ctrl+C.
+
+## 3.9 xArm7 and xArm6 planning on hardware
+
+Needs the matching real xArm7 or xArm6 with an xArm Gripper and the `manipulation` extra, which includes the xArm Python SDK. These two planner blueprints use `XArmConnection` and require `--xarmconnection.ip` or `XARMCONNECTION__IP`. They do not switch to a mock or MuJoCo under `--simulation`.
+
+Run each command separately with the matching arm connected, replacing the example IP with that arm's address. Clear its workspace and keep the emergency stop within reach.
+
+```bash
+uv run dimos run xarm7-planner-coordinator --xarmconnection.ip 192.168.1.185 --visualization.backend viser
+uv run dimos run xarm6-planner-coordinator --xarmconnection.ip 192.168.1.185 --visualization.backend viser
+```
+
+* Confirm that the joint state and end-effector pose in Viser match the connected arm.
+* Drag the target gizmo a few centimetres within the clear workspace. Wait for "Feasibility: feasible", then click Plan and Preview. Inspect the preview before clicking Execute.
+* Repeat in "Cartesian space" planning mode.
+* Stop the blueprint with Ctrl+C before testing the other arm.
+
+Expected result: each real arm follows the previewed path and reaches the target in both planning modes, with its motion reflected in Viser. The blueprint exits cleanly on Ctrl+C.
+
+Record a separate result for each blueprint. If its arm is unavailable, mark it not run with the missing hardware as the reason. Passing the Lite6 mock check does not cover either xArm hardware planner.

@@ -17,12 +17,9 @@ from dataclasses import dataclass
 
 import pytest
 
-from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import TaskConfig
-from dimos.control.hardware_interface import ConnectedWholeBody
 from dimos.control.task import CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.hand_guiding_task.hand_guiding_task import HandGuidingTask, create_task
-from dimos.hardware.whole_body.spec import WholeBodyAdapter, WholeBodyConfig
 
 
 @dataclass
@@ -66,23 +63,9 @@ def test_hand_guiding_stays_stopped_until_explicit_restart(event):
     assert task.compute(state).positions == [0.2]
 
 
-@pytest.mark.parametrize("kp", [None, (10.0,)])
-def test_hand_guiding_rejects_hardware_without_explicit_zero_stiffness(mocker, kp):
-    component = HardwareComponent(
-        hardware_id="arm",
-        hardware_type=HardwareType.WHOLE_BODY,
-        joints=["joint"],
-        wb_config=WholeBodyConfig(kp=kp),
-    )
-    hardware = ConnectedWholeBody(mocker.Mock(spec=WholeBodyAdapter), component)
-    config = TaskConfig(name="teach", type="hand_guiding", joint_names=["joint"])
-    with pytest.raises(ValueError, match="explicit zero kp"):
-        create_task(config, {"arm": hardware})
-
-
 def test_hand_guiding_rejects_unconnected_joints():
     config = TaskConfig(name="teach", type="hand_guiding", joint_names=["missing"])
-    with pytest.raises(ValueError, match="no connected hardware"):
+    with pytest.raises(ValueError, match="no connected robot"):
         create_task(config, {})
 
 
@@ -90,7 +73,7 @@ def test_hand_guiding_accepts_connection_with_declared_zero_stiffness():
     config = TaskConfig(name="teach", type="hand_guiding", joint_names=["arm/joint1"])
     source = Source(joint_names=["arm/joint1"], zero_stiffness_joints=frozenset({"arm/joint1"}))
 
-    task = create_task(config, {}, {"arm": source})
+    task = create_task(config, {"arm": source})
 
     assert task.claim().joints == frozenset({"arm/joint1"})
 
@@ -99,8 +82,8 @@ def test_hand_guiding_rejects_connection_that_declares_nothing():
     config = TaskConfig(name="teach", type="hand_guiding", joint_names=["arm/joint1"])
     source = Source(joint_names=["arm/joint1"], zero_stiffness_joints=frozenset())
 
-    with pytest.raises(ValueError, match="explicit zero kp"):
-        create_task(config, {}, {"arm": source})
+    with pytest.raises(ValueError, match="declares zero stiffness"):
+        create_task(config, {"arm": source})
 
 
 def test_hand_guiding_rejects_partially_declared_connection():
@@ -112,5 +95,5 @@ def test_hand_guiding_rejects_partially_declared_connection():
         zero_stiffness_joints=frozenset({"arm/joint1"}),
     )
 
-    with pytest.raises(ValueError, match="explicit zero kp"):
-        create_task(config, {}, {"arm": source})
+    with pytest.raises(ValueError, match="declares zero stiffness"):
+        create_task(config, {"arm": source})

@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import queue
 import threading
 import time
 from typing import Any
@@ -29,7 +28,6 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseArray import PoseArray
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Float32 import Float32
@@ -112,8 +110,6 @@ class PGOVoxelMapper(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        # fix, its fitness, and the current attachment's fitness on the same window
-        self._fixes: queue.Queue[tuple[Transform, float, float | None]] = queue.Queue()
         self._stopping = threading.Event()
         # held while a frame is processed, so stop never disposes the map under one
         self._frame_lock = threading.Lock()
@@ -129,8 +125,7 @@ class PGOVoxelMapper(Module):
             )
             if self._map_path.exists():
                 premap = Premap.load(self._map_path)
-            if premap is None or not len(premap):
-                premap = None
+            if premap is None:
                 logger.info(
                     f"PGO premap: no keyframes in {self._map_path.name} yet, starting a new map"
                 )
@@ -212,9 +207,11 @@ class PGOVoxelMapper(Module):
 
     def _relocalize_loop(self) -> None:
         assert self._matcher is not None and self._map is not None
-        while not self._stopping.wait(
-            self.config.reloc_recheck_s if self._map.pgo.settled else 2.0
-        ):
+        while True:
+            with self._frame_lock:
+                delay = self.config.reloc_recheck_s if self._map.pgo.settled else 2.0
+            if self._stopping.wait(delay):
+                break
             # the frame thread writes the newest keyframe, so read the window under its lock
             with self._frame_lock:
                 if self._stopping.is_set():
@@ -222,8 +219,12 @@ class PGOVoxelMapper(Module):
                 window = self._map.recent_window(self.config.reloc_window_s)
                 current = self._map.pgo.world_to_map()
             found = attempt_fix(self._matcher, window, current) if window is not None else None
-            if found is not None:
-                self._fixes.put(found)
+            # Apply before choosing the next delay: a moved attachment needs quick retries.
+            with self._frame_lock:
+                if self._stopping.is_set():
+                    break
+                if found is not None:
+                    self._map.pgo.relocalize(*found)
 
     def _on_odom(self, pose: PoseStamped) -> None:
         self._pose = pose
@@ -236,19 +237,11 @@ class PGOVoxelMapper(Module):
     def _process(self, cloud: PointCloud2) -> None:
         assert self._map is not None
         t0, loops = time.perf_counter(), self._map.pgo.n_loops
-        attached = self._map.pgo.attached
-        while not self._fixes.empty():
-            fix, fitness, current = self._fixes.get()
-            self._map.pgo.relocalize(fix, fitness, current)
         rebuilt = self._map.add(cloud, self._pose)
         if rebuilt and self.config.save_map and self._map_path is not None:
             self._save_map(background=True)
         self._frames += 1
-        emit = (
-            rebuilt
-            or self._map.pgo.attached != attached
-            or self._frames % self.config.emit_every == 0
-        )
+        emit = rebuilt or self._frames % self.config.emit_every == 0
         global_map = self._map.global_map() if emit else None
         frame_ms = (time.perf_counter() - t0) * 1e3
 

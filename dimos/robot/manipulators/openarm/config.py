@@ -167,6 +167,7 @@ OPENARM = DamiaoRobot(
     joint_names=[*OPENARM_ARM_JOINTS, *OPENARM_GRIPPER_JOINTS],
     gravity=True,
     home_joints=list(OPENARM_HOME_JOINTS),
+    name="openarm",
 )
 
 # Inside the OpenArm URDF limits, which the connection enforces by refusing

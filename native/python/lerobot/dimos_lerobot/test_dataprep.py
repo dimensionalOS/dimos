@@ -120,9 +120,8 @@ def test_module_entry_point_reports_recording_with_no_saved_episodes(tmp_path, m
     assert caught.value.code == 1
     captured = capsys.readouterr()
     assert ErrorResult.model_validate_json(captured.out).error == (
-        f"No successful episodes extracted from '{source}' using extractor='episode_status'. "
-        "Available streams: ['status']. For a recording with no episode_status stream, "
-        "set extractor='ranges' with explicit (start, end) tuples."
+        f"No saved episodes in '{source}'. 0 saved, 0 discarded, 0 incomplete. "
+        "Finish and save at least one episode before preparing the dataset."
     )
     assert "Traceback" not in captured.err
     assert not output.exists()

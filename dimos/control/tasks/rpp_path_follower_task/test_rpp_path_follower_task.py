@@ -80,7 +80,7 @@ def _task(artifact_path: str, **params) -> RPPPathFollowerTask:
         priority=10,
         params={"artifact_path": artifact_path, **params},
     )
-    return create_task(cfg, None)
+    return create_task(cfg)
 
 
 def _odom(x=0.0, y=0.0, yaw=0.0) -> PoseStamped:
