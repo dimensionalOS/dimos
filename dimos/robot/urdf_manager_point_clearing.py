@@ -44,6 +44,8 @@ class UrdfManagerPointClearingConfig(UrdfManagerConfig):
     tf_forward_tolerance_s: float = Field(default=0.05, ge=0.0)
     state_tolerance_s: float = Field(default=0.02, ge=0.0)
     state_history_s: float = Field(default=5.0, gt=0.0)
+    # Max joint speed (rad/s) at which a cloud is still used. None = no limit.
+    max_joint_speed: float | None = Field(default=None, gt=0.0)
     # Seconds between self-filter summary log lines (0 disables).
     filter_stats_interval_s: float = Field(default=10.0, ge=0.0)
 
@@ -64,6 +66,7 @@ class UrdfManagerPointClearing(UrdfManager):
         self._base_link = self._description.root_link
         self._states = TimestampedBufferCollection[JointState](self.config.state_history_s)
         self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
+        self._clouds_moving = 0
         self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
 
     async def handle_pointcloud(self, cloud: PointCloud2) -> None:
@@ -83,8 +86,11 @@ class UrdfManagerPointClearing(UrdfManager):
 
     def filter_cloud(self, cloud: PointCloud2) -> PointCloud2 | None:
         """The capture with the robot's points removed, frame and point fields unchanged; None when it can't be."""
-        filtered = self._filter_capture(cloud)
         self._clouds_in += 1
+        if self._captured_while_robot_moved(cloud.ts):
+            self._clouds_moving += 1
+            return None
+        filtered = self._filter_capture(cloud)
         if filtered is None:
             self._clouds_dropped += 1
         else:
@@ -94,9 +100,11 @@ class UrdfManagerPointClearing(UrdfManager):
             self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
             logger.info(
                 f"self filter: {self._clouds_in} clouds, {self._clouds_dropped} dropped for missing tf/joint state, "
+                f"{self._clouds_moving} dropped while the robot moved, "
                 f"{self._points_removed} of {self._points_in} points were the robot"
             )
             self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
+            self._clouds_moving = 0
         return filtered
 
     def _filter_capture(self, cloud: PointCloud2) -> PointCloud2 | None:
@@ -139,6 +147,26 @@ class UrdfManagerPointClearing(UrdfManager):
         if keep is None:
             logger.warning("Dropping cloud: capture-time robot state or TF unavailable")
         return keep
+
+    def _captured_while_robot_moved(self, capture_ts: float) -> bool:
+        """Returns True if the robot was moving when this cloud was captured. The caller drops
+        such a cloud, because the camera pose we have for it is out of date."""
+        limit = self.config.max_joint_speed
+        if limit is None or not np.isfinite(capture_ts):
+            return False
+        with self._lock:
+            at_capture = self._states.find_closest(capture_ts, self.config.state_tolerance_s)
+            just_before = self._states.find_closest(capture_ts - 0.1, self.config.state_tolerance_s)
+        if (
+            at_capture is None
+            or just_before is None
+            or at_capture.ts <= just_before.ts
+            or at_capture.name != just_before.name
+        ):
+            return False
+        travelled = np.abs(np.asarray(at_capture.position) - np.asarray(just_before.position))
+        joint_speed = travelled.max() / (at_capture.ts - just_before.ts)
+        return bool(joint_speed > limit)
 
     def _capture_state(self, stamp: float) -> dict[str, float] | None:
         """Joint positions at capture time (empty when none is close enough), or None when that state is malformed."""

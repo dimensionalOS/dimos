@@ -133,7 +133,10 @@ def _sensing(simulated: bool) -> tuple[Blueprint, ...]:
         # enable_pointcloud is off by default here too, and the voxel chain has
         # nothing to map without it. Points deeper than 1.2 m are mostly noisy
         # floor; everything within the arm's reach is closer.
-        RealSenseCamera.blueprint(enable_pointcloud=True, depth_trunc_m=1.2),
+        # The 40 px image border is skipped.
+        RealSenseCamera.blueprint(
+            enable_pointcloud=True, depth_trunc_m=1.2, pointcloud_border_px=40
+        ),
     )
 
 
@@ -206,8 +209,17 @@ def _grasp_modules(arm: XArmType, simulated: bool) -> tuple[Blueprint | MetaBlue
             # In sim only the arm is filtered; gripper returns may remain in the map.
             self_filter_model=self_filter_model,
             voxel_size=XARM_GRASP_VOXEL_SIZE,
-            # Tabletop scale: cells more than 5 cm in front of a surface can be cleared.
-            grace_depth=0.05,
+            # Distance (m) before a ray's end point where the ray does not clear cells.
+            # 0 = the ray clears up to its end point.
+            grace_depth=0.0,
+            # Min cosine between a ray and a cell's surface normal for the ray to clear the cell.
+            # 0 = any angle clears.
+            graze_cos=0.0,
+            # Min health for a cell to show in the map. Health is 0 at the first hit,
+            # +1 per hit, -1 per miss.
+            global_min_health=2,
+            # Max joint speed (rad/s) at which a cloud is still used.
+            max_joint_speed=0.05,
         ),
         control,
     )

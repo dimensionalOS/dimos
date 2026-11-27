@@ -104,6 +104,10 @@ struct Config {
     pointcloud_decimation: i32,
     #[validate(range(exclusive_min = 0.0))]
     depth_trunc_m: f32,
+    #[validate(range(min = 0.0))]
+    depth_min_m: f32,
+    #[validate(range(min = 0))]
+    pointcloud_border_px: i32,
     #[validate(range(exclusive_min = 0.0))]
     camera_info_fps: f64,
     serial_number: Nullable<String>,
@@ -926,7 +930,15 @@ fn pointcloud_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs
             .as_ref()
             .map(|i| (i.color.clone(), i.depth_scale));
         if let (Some(rgbd), Some((Some(info), depth_scale))) = (rgbd, infos) {
-            let cloud = rgbd_to_cloud(&rgbd, &info, depth_scale, stride, cfg.depth_trunc_m);
+            let cloud = rgbd_to_cloud(
+                &rgbd,
+                &info,
+                depth_scale,
+                stride,
+                cfg.depth_min_m,
+                cfg.depth_trunc_m,
+                cfg.pointcloud_border_px as usize,
+            );
             let _ = handle.block_on(outs.pointcloud.publish(&cloud));
         }
         std::thread::sleep(period.saturating_sub(tick.elapsed()));
@@ -966,7 +978,9 @@ fn rgbd_to_cloud(
     info: &CameraInfo,
     depth_scale: f32,
     stride: usize,
+    depth_min_m: f32,
     depth_trunc_m: f32,
+    border: usize,
 ) -> PointCloud2 {
     let (fx, fy) = (info.K[0] as f32, info.K[4] as f32);
     let (cx, cy) = (info.K[2] as f32, info.K[5] as f32);
@@ -992,12 +1006,12 @@ fn rgbd_to_cloud(
     let stride = stride.max(1);
     let mut points: Vec<[f32; 3]> = Vec::with_capacity(w * h / (stride * stride));
     let mut colors: Vec<[f32; 3]> = Vec::with_capacity(points.capacity());
-    for v in (0..h).step_by(stride) {
-        for u in (0..w).step_by(stride) {
+    for v in (border..h.saturating_sub(border)).step_by(stride) {
+        for u in (border..w.saturating_sub(border)).step_by(stride) {
             let i = v * w + u;
             let z = u16::from_le_bytes([rgbd.depth.data[2 * i], rgbd.depth.data[2 * i + 1]]) as f32
                 * depth_scale;
-            if z <= 0.0 || z > depth_trunc_m {
+            if z <= 0.0 || z < depth_min_m || z > depth_trunc_m {
                 continue;
             }
             points.push([(u as f32 - cx) * z / fx, (v as f32 - cy) * z / fy, z]);
@@ -1460,7 +1474,7 @@ mod bench {
         info.header.frame_id = "f".into();
         for stride in [1usize, 2, 3] {
             let t = std::time::Instant::now();
-            let cloud = rgbd_to_cloud(&rgbd, &info, 0.001, stride, 5.0);
+            let cloud = rgbd_to_cloud(&rgbd, &info, 0.001, stride, 0.0, 5.0, 0);
             let build = t.elapsed();
             let t = std::time::Instant::now();
             let bytes = cloud.encode();

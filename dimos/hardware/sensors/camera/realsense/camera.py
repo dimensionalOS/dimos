@@ -74,6 +74,10 @@ class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
     pointcloud_decimation: int = 2
     # Cloud points further than this are dropped; D4xx range varies by model and calibration.
     depth_trunc_m: float = 5.0
+    # Min depth (m) of a cloud point. Closer points are skipped.
+    depth_min_m: float = 0.0
+    # Width (px) of the image border that is left out of the cloud.
+    pointcloud_border_px: int = 0
     camera_info_fps: float = 1.0
     serial_number: str | None = None
 
