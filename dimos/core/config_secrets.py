@@ -23,6 +23,7 @@ SECRET_CONFIG_FIELDS = frozenset(
         "api_key",
         "aes_128_key",
         "relay_key",
+        "password",
         "dimos_api_key",
         "unitree_aes_128_key",
         "typesafe_api_key",

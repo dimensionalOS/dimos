@@ -266,7 +266,22 @@ dimos restart [--force]
 |--------|-------------|
 | `--force`, `-f` | Force kill before restarting |
 
-Reads saved CLI args from the run registry, stops the current instance, then re-runs with the same arguments.
+Restart uses the original Python command and working directory, so relative settings
+and recording paths still resolve from the launch project. For a run started by
+an older version, restart gets the missing context from the live process.
+If the directory was replaced, the source or interpreter is unavailable, a Python
+module no longer resolves to its original file, or the
+run came from Python standard input or `-c`, restart leaves the instance running.
+A launcher script that replaces `sys.argv` can start a daemon, but restart cannot
+rebuild its command and leaves that instance running.
+The replacement must reach `dimos run` in the original project before it stops
+the previous instance. A wrapper that fails or enters a different directory leaves
+the previous instance running. These checks also apply to `--force`.
+
+Credential options such as `--go2connection.aes-128-key` are not saved with the
+command. Set them in the environment (`GO2CONNECTION__AES_128_KEY`) before restarting,
+or the replacement runs without them. It validates its configuration first, so a
+missing required credential leaves the previous instance running.
 
 ### `dimos log`
 

@@ -38,7 +38,7 @@ logger = setup_logger()
 REGISTRY_DIR = STATE_DIR / "runs"
 
 
-def _without_secret_options(argv: list[str]) -> list[str]:
+def without_secret_options(argv: list[str]) -> list[str]:
     safe: list[str] = []
     skip_value = False
     for arg in argv:
@@ -66,10 +66,15 @@ class RunEntry:
     config_overrides: dict[str, object] = field(default_factory=dict)
     original_argv: list[str] = field(default_factory=list)
     mcp_url: str | None = None
+    working_directory: str | None = None
+    working_directory_id: list[int] | None = None
+    python_argv: list[str] | None = None  # Older entries only recorded application argv.
 
     def __post_init__(self) -> None:
         self.config_overrides = without_secret_values(self.config_overrides)
-        self.original_argv = _without_secret_options(self.original_argv)
+        self.original_argv = without_secret_options(self.original_argv)
+        if self.python_argv is not None:
+            self.python_argv = without_secret_options(self.python_argv)
 
     @property
     def registry_path(self) -> Path:
