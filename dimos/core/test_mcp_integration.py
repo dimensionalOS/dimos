@@ -29,6 +29,7 @@ from collections.abc import Iterator
 from datetime import datetime, timezone
 import json
 import os
+import sys
 
 import pytest
 import requests
@@ -71,6 +72,8 @@ def mcp_shared(mcp_url: str, mcp_port: int) -> Iterator[ModuleCoordinator]:
     """Build a shared StressTestModule + McpServer.  Class-scoped -- started
     once, torn down after every test in the class finishes.  Use for
     read-only tests that don't stop/restart the server."""
+    if sys.version_info < (3, 11):
+        pytest.skip("McpServer needs Python 3.11")
     global_config.update(viewer="none", n_workers=1)
     bp = autoconnect(
         StressTestModule.blueprint(),
@@ -116,8 +119,9 @@ class TestMCPLifecycle:
         self, mcp_shared: ModuleCoordinator, adapter: McpAdapter
     ) -> None:
         """After ModuleCoordinator.build(blueprint), MCP should accept requests."""
-        result = adapter.call("initialize")
-        assert result["result"]["serverInfo"]["name"] == "dimensional"
+        result = adapter.call("server/discover")
+        server_info = result["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]
+        assert server_info["name"] == "dimensional"
 
     def test_tools_list_includes_stress_skills(
         self, mcp_shared: ModuleCoordinator, adapter: McpAdapter
@@ -239,8 +243,7 @@ class TestMCPErrorHandling:
                 "arguments": {},
             },
         )
-        text = result["result"]["content"][0]["text"]
-        assert "not found" in text.lower()
+        assert result["error"]["message"] == "Unknown tool: nonexistent_tool_xyz"
 
     def test_call_tool_wrong_args(self, mcp_shared: ModuleCoordinator, adapter: McpAdapter) -> None:
         """Calling a tool with wrong argument types should still return."""
@@ -334,6 +337,8 @@ class TestDaemonMCPRecovery:
 
     def test_restart_after_clean_stop(self, adapter: McpAdapter, mcp_port: int) -> None:
         """Stop then start again -- MCP should come back."""
+        if sys.version_info < (3, 11):
+            pytest.skip("McpServer needs Python 3.11")
         global_config.update(viewer="none", n_workers=1)
 
         # First run
@@ -386,6 +391,8 @@ class TestMCPRapidRestart:
 
     def test_three_restart_cycles(self, adapter: McpAdapter, mcp_port: int) -> None:
         """Start -> stop -> start 3 times -- no port conflicts."""
+        if sys.version_info < (3, 11):
+            pytest.skip("McpServer needs Python 3.11")
         global_config.update(viewer="none", n_workers=1)
 
         for cycle in range(3):
@@ -407,6 +414,8 @@ class TestMCPNoServer:
 
     def test_mcp_dead_after_stop(self, adapter: McpAdapter, mcp_port: int) -> None:
         """After coordinator.stop(), MCP should stop responding."""
+        if sys.version_info < (3, 11):
+            pytest.skip("McpServer needs Python 3.11")
         global_config.update(viewer="none", n_workers=1)
         bp = autoconnect(
             StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port)

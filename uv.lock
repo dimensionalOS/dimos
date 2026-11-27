@@ -32,7 +32,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-11-17T05:21:28.418866Z"
+exclude-newer = "2026-11-17T16:12:17.651147Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -43,6 +43,7 @@ dimos-lcm = false
 lcm = false
 edgetam-dimos = false
 eclipse-zenoh = false
+aiohttp-mcp-server = false
 can-motor-control = false
 md-babel-py = false
 dim-odom = false
@@ -207,6 +208,33 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e6/39/da5a94dd89b1af7241fb7fc99ae4e73505b5f898b540b6aba6dc7afe600e/aiohttp-jinja2-1.6.tar.gz", hash = "sha256:a3a7ff5264e5bca52e8ae547bbfd0761b72495230d438d05b6c0915be619b0e2", size = 53057, upload-time = "2023-11-18T15:30:52.559Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/eb/90/65238d4246307195411b87a07d03539049819b022c01bcc773826f600138/aiohttp_jinja2-1.6-py3-none-any.whl", hash = "sha256:0df405ee6ad1b58e5a068a105407dc7dcc1704544c559f1938babde954f945c7", size = 11736, upload-time = "2023-11-18T15:30:50.743Z" },
+]
+
+[[package]]
+name = "aiohttp-mcp-server"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp", marker = "python_full_version >= '3.11'" },
+    { name = "aiohttp-sse", marker = "python_full_version >= '3.11'" },
+    { name = "pydantic", marker = "python_full_version >= '3.11'" },
+    { name = "typing-extensions", marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0c/28/53f2ba5002185b37881121b69069ec443aefffed92ab981f994a42463648/aiohttp_mcp_server-0.3.0.tar.gz", hash = "sha256:1bf79906a3c436226b9230f47bbc26aa4a8f2c6fadb04a2e46e7e1f1b5931cff", size = 154479, upload-time = "2026-11-24T15:35:30.977Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/26/52/b38e7e93c1e5b0ce21f4755e94a5fe980602cac3b4ce7e0d7c278eb12a5e/aiohttp_mcp_server-0.3.0-py3-none-any.whl", hash = "sha256:e2bc0d4bc4c5e25ce9b5bc5724fed5734d037059aaf9d93d71aef6e524a9a3c7", size = 84307, upload-time = "2026-11-24T15:35:29.375Z" },
+]
+
+[[package]]
+name = "aiohttp-sse"
+version = "3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp", marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/af/6d/01d7f71e38ac91a912dd8c4ed1a1481316dc83cb6c42043bbfa1b647c0e4/aiohttp_sse-3.0.tar.gz", hash = "sha256:4c2158dc7221fbcad225699c2b7c368c15ae45ef195447ddd0ba3dea5af24c70", size = 16196, upload-time = "2026-10-11T23:16:14.404Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/eb/3f/06f9f0a6c587d0a1106ea408b308ce09f2935d7365d1bada80c54b4bcc9c/aiohttp_sse-3.0-py3-none-any.whl", hash = "sha256:0bd3bdb35a4beebe25a35e8240242636d45e952c80376166f7bc062511e299e5", size = 10527, upload-time = "2026-10-11T23:16:13.537Z" },
 ]
 
 [[package]]
@@ -1964,6 +1992,8 @@ agents = [
 ]
 all = [
     { name = "aiohttp" },
+    { name = "aiohttp-mcp-server", marker = "python_full_version >= '3.11'" },
+    { name = "aiohttp-sse", marker = "python_full_version >= '3.11'" },
     { name = "aioquic" },
     { name = "aiortc" },
     { name = "av" },
@@ -2046,6 +2076,9 @@ apriltag = [
     { name = "trimesh" },
 ]
 base = [
+    { name = "aiohttp" },
+    { name = "aiohttp-mcp-server", marker = "python_full_version >= '3.11'" },
+    { name = "aiohttp-sse", marker = "python_full_version >= '3.11'" },
     { name = "aioquic" },
     { name = "av" },
     { name = "chromadb" },
@@ -2124,6 +2157,9 @@ learning = [
     { name = "pyarrow" },
 ]
 manipulation = [
+    { name = "aiohttp" },
+    { name = "aiohttp-mcp-server", marker = "python_full_version >= '3.11'" },
+    { name = "aiohttp-sse", marker = "python_full_version >= '3.11'" },
     { name = "aioquic" },
     { name = "av" },
     { name = "can-motor-control" },
@@ -2243,6 +2279,9 @@ spot = [
     { name = "bosdyn-core" },
 ]
 unitree = [
+    { name = "aiohttp" },
+    { name = "aiohttp-mcp-server", marker = "python_full_version >= '3.11'" },
+    { name = "aiohttp-sse", marker = "python_full_version >= '3.11'" },
     { name = "aioquic" },
     { name = "av" },
     { name = "chromadb" },
@@ -2289,6 +2328,9 @@ unitree = [
     { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 unitree-dds = [
+    { name = "aiohttp" },
+    { name = "aiohttp-mcp-server", marker = "python_full_version >= '3.11'" },
+    { name = "aiohttp-sse", marker = "python_full_version >= '3.11'" },
     { name = "aioquic" },
     { name = "av" },
     { name = "chromadb" },
@@ -2343,6 +2385,9 @@ visualization = [
     { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 web = [
+    { name = "aiohttp" },
+    { name = "aiohttp-mcp-server", marker = "python_full_version >= '3.11'" },
+    { name = "aiohttp-sse", marker = "python_full_version >= '3.11'" },
     { name = "aioquic" },
     { name = "av" },
     { name = "fastapi" },
@@ -2566,7 +2611,10 @@ tests-self-hosted = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", marker = "extra == 'web'", specifier = ">=3.14" },
     { name = "aiohttp", marker = "extra == 'webrtc'", specifier = ">=3.9.0" },
+    { name = "aiohttp-mcp-server", marker = "python_full_version >= '3.11' and extra == 'web'", specifier = ">=0.3" },
+    { name = "aiohttp-sse", marker = "python_full_version >= '3.11' and extra == 'web'", specifier = ">=3" },
     { name = "aioquic", marker = "extra == 'web'", specifier = "==1.3.0" },
     { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.14.0" },
     { name = "annotation-protocol", specifier = ">=1.4.0" },

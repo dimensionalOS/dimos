@@ -77,9 +77,9 @@ test(
         { caller: null, timeoutMs: 120_000 },
       );
       const modules = join(String(system.env.XDG_STATE_HOME), "dimos", "modules", "dimos_agent");
-      assert.deepEqual(
-        deployed.content,
-        [{ type: "text", text: `sentinel created: running r1 from ${join(modules, "sentinel.py")}` }],
+      assert.partialDeepStrictEqual(
+        deployed.structured,
+        { message: `sentinel created: running r1 from ${join(modules, "sentinel.py")}` },
         "the sentinel deploys",
       );
 

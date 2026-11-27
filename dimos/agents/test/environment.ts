@@ -66,12 +66,27 @@ function freeUdpPort(): Promise<number> {
   });
 }
 
-/** One JSON-RPC request to McpServer over plain HTTP; the current server needs no initialize or session. */
-async function rpc(url: string, method: string, params: unknown): Promise<unknown> {
+/** One MCP 2026-07-28 request to McpServer over plain HTTP: no handshake or session, the revision in every request. */
+async function rpc(
+  url: string,
+  method: string,
+  params: { readonly name?: string; readonly arguments?: object },
+): Promise<unknown> {
+  const revision = "2026-07-28";
+  const meta = {
+    "io.modelcontextprotocol/protocolVersion": revision,
+    "io.modelcontextprotocol/clientCapabilities": {},
+  };
   const response = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "MCP-Protocol-Version": revision,
+      "Mcp-Method": method,
+      ...(params.name === undefined ? {} : { "Mcp-Name": params.name }),
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: { ...params, _meta: meta } }),
     signal: AbortSignal.timeout(10_000),
   });
   const body = (await response.json()) as { result?: unknown; error?: unknown };

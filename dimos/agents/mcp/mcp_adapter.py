@@ -45,6 +45,36 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
+MCP_PROTOCOL_VERSION = "2026-07-28"
+
+
+def mcp_request(
+    request_id: str | int, method: str, params: dict[str, Any] | None = None
+) -> tuple[dict[str, str], dict[str, Any]]:
+    """The HTTP headers and JSON-RPC body of a request."""
+    params = dict(params or {})
+    params["_meta"] = {
+        "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION,
+        "io.modelcontextprotocol/clientCapabilities": {},
+        **params.get("_meta", {}),
+    }
+    headers = {"MCP-Protocol-Version": MCP_PROTOCOL_VERSION, "Mcp-Method": method}
+    if method == "tools/call":
+        headers["Mcp-Name"] = params["name"]
+    return headers, {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
+
+
+def mcp_response(response: requests.Response) -> dict[str, Any]:
+    """The JSON-RPC message a server answered with."""
+    try:
+        message: dict[str, Any] = response.json()
+    except requests.JSONDecodeError:
+        response.raise_for_status()
+        raise
+    if "error" not in message:
+        response.raise_for_status()
+    return message
+
 
 class McpError(Exception):
     """Raised when the MCP server returns a JSON-RPC error."""
@@ -66,24 +96,13 @@ class McpAdapter:
 
         Raises ``requests.ConnectionError`` if the server is unreachable.
         """
-        payload: dict[str, Any] = {
-            "jsonrpc": "2.0",
-            "id": str(uuid.uuid4()),
-            "method": method,
-        }
-        if params:
-            payload["params"] = params
+        headers, payload = mcp_request(str(uuid.uuid4()), method, params)
 
-        resp = requests.post(self.url, json=payload, timeout=self.timeout)
+        resp = requests.post(self.url, json=payload, headers=headers, timeout=self.timeout)
         try:
-            resp.raise_for_status()
+            return mcp_response(resp)
         except requests.HTTPError as e:
             raise McpError(f"HTTP {resp.status_code}: {e}") from e
-        return resp.json()  # type: ignore[no-any-return]
-
-    def initialize(self) -> dict[str, Any]:
-        """Send ``initialize`` and return server info."""
-        return self.call("initialize")
 
     def list_tools(self) -> list[dict[str, Any]]:
         """Return the list of available tools."""
@@ -104,14 +123,11 @@ class McpAdapter:
 
     def wait_for_ready(self, timeout: float = 10.0, interval: float = 0.5) -> bool:
         """Poll until the MCP server responds, or return False on timeout."""
+        headers, probe = mcp_request("probe", "server/discover")
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                resp = requests.post(
-                    self.url,
-                    json={"jsonrpc": "2.0", "id": "probe", "method": "initialize"},
-                    timeout=2,
-                )
+                resp = requests.post(self.url, json=probe, headers=headers, timeout=2)
                 if resp.status_code == 200:
                     return True
             except requests.ConnectionError:
@@ -121,14 +137,11 @@ class McpAdapter:
 
     def wait_for_down(self, timeout: float = 10.0, interval: float = 0.5) -> bool:
         """Poll until the MCP server stops responding."""
+        headers, probe = mcp_request("probe", "server/discover")
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                requests.post(
-                    self.url,
-                    json={"jsonrpc": "2.0", "id": "probe", "method": "initialize"},
-                    timeout=1,
-                )
+                requests.post(self.url, json=probe, headers=headers, timeout=1)
             except (requests.ConnectionError, requests.ReadTimeout):
                 return True
             time.sleep(interval)

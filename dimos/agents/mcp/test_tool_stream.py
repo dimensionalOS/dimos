@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import sys
 from threading import Event, Thread
 import time
 
@@ -82,6 +83,8 @@ class StreamingModule(Module):
 @pytest.fixture
 def mcp_server(mcp_port: int, mcp_url: str):
     """Start a blueprint with StreamingModule + McpServer, wait for readiness."""
+    if sys.version_info < (3, 11):
+        pytest.skip("McpServer needs Python 3.11")
     global_config.update(viewer="none")
     blueprint = autoconnect(
         StreamingModule.blueprint(), McpServer.blueprint(port=mcp_port)
@@ -168,7 +171,6 @@ def test_tool_stream_persistent_sse(
     including updates fired from a background thread after the POST response for
     `tools/call` has already been sent."""
     adapter = mcp_server
-    adapter.initialize()
 
     notifications_ready = Event()
     notifications = []

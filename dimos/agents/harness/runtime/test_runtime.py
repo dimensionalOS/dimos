@@ -43,6 +43,7 @@ from dimos.agents.harness.runtime.agent_module_manager import AgentModuleManager
 from dimos.agents.harness.runtime.harness_runtime import HarnessRuntime
 from dimos.agents.harness.runtime.inventory import environment, relay_endpoint
 from dimos.agents.harness.runtime.load import mcp_server_blueprint
+from dimos.agents.mcp.mcp_adapter import mcp_request
 from dimos.agents.skill_result import SkillResult
 from dimos.constants import STATE_DIR
 from dimos.core.coordination.blueprints import autoconnect
@@ -275,13 +276,11 @@ class Client:
 
     def rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         # A fresh connection per call. A pooled one idles across the subprocess
-        # steps of these tests for about uvicorn's 5 s keep-alive timeout, and a
-        # request that races the server's idle close is reset.
+        # steps of these tests, and a request that races the server closing an
+        # idle connection is reset.
+        headers, body = mcp_request(1, method, params)
         reply = self._http.post(
-            self.url,
-            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}},
-            headers={"Connection": "close"},
-            timeout=60,
+            self.url, json=body, headers={**headers, "Connection": "close"}, timeout=60
         ).json()
         result: dict[str, Any] = reply["result"]
         return result
@@ -435,6 +434,8 @@ def port() -> int:
 
 @pytest.fixture(scope="module")
 def system(state_home: Path, port: int) -> Iterator[subprocess.Popen[bytes]]:
+    if sys.version_info < (3, 11):
+        pytest.skip("McpServer needs Python 3.11")
     process = subprocess.Popen(
         [
             sys.executable,

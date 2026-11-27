@@ -15,7 +15,7 @@
 """Capability registry for skill-level mutual exclusion.
 
 A skill declares the capabilities it occupies via `@skill(uses=[...])`. The MCP
-server consults a process-wide `CapabilityRegistry` before dispatching each
+server consults its `CapabilityRegistry` before dispatching each
 `tools/call`. When a required capability is held by another skill, the server
 either waits briefly for it to clear (for short, self-completing holders) or
 refuses with a plain text "Cannot start X: capability Y is held by Z" result, in

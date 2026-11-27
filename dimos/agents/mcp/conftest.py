@@ -14,6 +14,7 @@
 
 import os
 from pathlib import Path
+import sys
 from threading import Event
 
 from langchain_core.messages.base import BaseMessage
@@ -32,6 +33,8 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 @pytest.fixture
 def agent_setup(request, mcp_port: int, lcm_url: str):
+    if sys.version_info < (3, 11):
+        pytest.skip("McpServer needs Python 3.11")
     coordinator = None
     transports: list[pLCMTransport] = []
     unsubs: list = []

@@ -18,6 +18,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -384,6 +385,8 @@ def test_connected_run_by_class_adds_module(client):
 
 
 def test_connected_run_by_blueprint_object(client, mcp_port, mcp_url):
+    if sys.version_info < (3, 11):
+        pytest.skip("McpServer needs Python 3.11")
     client.run(McpServer.blueprint(host="localhost", port=mcp_port))
     assert "McpServer" in client._source.list_module_names()
     assert client.McpServer.mcp_url() == mcp_url

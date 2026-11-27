@@ -18,6 +18,7 @@ from contextlib import contextmanager
 import importlib
 import inspect
 import socket
+import sys
 import threading
 from typing import Protocol
 import uuid
@@ -216,6 +217,8 @@ def test_connect_unload_stops_stream_subscriptions(client, stream_module, collec
 
 
 def test_connect_run_by_name_adds_module(running_app, client):
+    if sys.version_info < (3, 11):
+        pytest.skip("McpServer needs Python 3.11")
     client.run("mcp-server")
     assert "McpServer" in client._source.list_module_names()
     assert "McpServer" in running_app._source.list_module_names()

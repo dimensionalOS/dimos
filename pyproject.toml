@@ -242,11 +242,14 @@ agents = [
 ]
 
 web = [
+    "aiohttp>=3.14",
+    "aiohttp-mcp-server>=0.3; python_version >= '3.11'",
+    "aiohttp-sse>=3; python_version >= '3.11'",  # McpServer's event stream
     "fastapi>=0.115.6",
     "python-socketio>=5.16.1",  # WebsocketVisModule, also imported by Quest visualization
     "python-multipart>=0.0.27",
     "sse-starlette>=2.2.1",
-    "starlette>=0.52",  # McpServer request/response types
+    "starlette>=0.52",  # the experimental gateway's HTTPException handler
     "uvicorn>=0.34.0",
     "watchfiles>=1.0",  # the dimos gateway's file watchers
     "jinja2>=3.1.6",

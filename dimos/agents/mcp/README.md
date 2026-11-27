@@ -22,17 +22,11 @@ claude mcp list
 
 ## MCP Inspector
 
-If you want to inspect the server manually, you can use MCP Inspector.
-
-Install it:
+If you want to inspect the server manually, you can use MCP Inspector. It has to be told to use the revision the server speaks, which it calls the modern protocol era:
 
 ```bash
-npx -y @modelcontextprotocol/inspector
+npx -y @modelcontextprotocol/inspector --cli http://localhost:9990/mcp --protocol-era modern --method tools/list
 ```
-
-It will open a browser window.
-
-Change **Transport Type** to "Streamable HTTP", change **URL** to `http://localhost:9990/mcp`, and **Connection Type** to "Direct". Then click on "Connect".
 
 ## Usage
 
@@ -50,6 +44,6 @@ uv run dimos run unitree-go2-agentic
 
 ## How It Works
 
-1. `McpServer` in the blueprint starts a FastAPI server on port 9990
+1. `McpServer` in the blueprint starts an aiohttp server on port 9990
 2. Claude Code connects directly to `http://localhost:9990/mcp`
 3. Skills are exposed as MCP tools (e.g., `move_to`, `navigate_with_text`)

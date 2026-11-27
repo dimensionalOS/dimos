@@ -18,9 +18,10 @@ import os
 from types import SimpleNamespace
 
 import pytest
+import requests
 
 from dimos.agents.mcp.constants import DEFAULT_MCP_TIMEOUT, mcp_url
-from dimos.agents.mcp.mcp_adapter import McpAdapter
+from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.core.run_registry import RunEntry
 
 
@@ -33,10 +34,54 @@ def test_call_sends_config_timeout_unless_overridden(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr("dimos.agents.mcp.mcp_adapter.requests.post", test_post)
 
-    McpAdapter(url="http://127.0.0.1:9/mcp").call("initialize")
-    McpAdapter(url="http://127.0.0.1:9/mcp", timeout=7).call("initialize")
+    McpAdapter(url="http://127.0.0.1:9/mcp").call("tools/list")
+    McpAdapter(url="http://127.0.0.1:9/mcp", timeout=7).call("tools/list")
 
     assert posted == [DEFAULT_MCP_TIMEOUT, 7]
+
+
+def test_requests_are_framed_as_mcp_2026_07_28(mocker) -> None:
+    post = mocker.patch("dimos.agents.mcp.mcp_adapter.requests.post")
+    post.return_value.json.return_value = {"result": {}}
+
+    McpAdapter(url="http://127.0.0.1:9/mcp").call_tool("echo", {"message": "hi"})
+
+    assert post.call_args.kwargs["headers"] == {
+        "MCP-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "tools/call",
+        "Mcp-Name": "echo",
+    }
+    assert post.call_args.kwargs["json"]["params"] == {
+        "name": "echo",
+        "arguments": {"message": "hi"},
+        "_meta": {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+        },
+    }
+
+
+def test_a_jsonrpc_error_is_read_from_a_response_with_an_http_error_status(mocker) -> None:
+    """The server answers a failed request with an HTTP error status and a JSON-RPC error."""
+    post = mocker.patch("dimos.agents.mcp.mcp_adapter.requests.post")
+    post.return_value.raise_for_status.side_effect = requests.HTTPError("404 Client Error")
+    post.return_value.json.return_value = {"error": {"code": -32601, "message": "Unknown method"}}
+    adapter = McpAdapter(url="http://127.0.0.1:9/mcp")
+
+    assert adapter.call("no/such")["error"]["code"] == -32601
+    with pytest.raises(McpError, match="Unknown method") as raised:
+        adapter.list_tools()
+    assert raised.value.code == -32601
+
+
+def test_an_http_error_without_a_jsonrpc_error_is_reported_by_its_status(mocker) -> None:
+    post = mocker.patch("dimos.agents.mcp.mcp_adapter.requests.post")
+    post.return_value.status_code = 502
+    post.return_value.raise_for_status.side_effect = requests.HTTPError("502 Server Error")
+    post.return_value.json.side_effect = requests.JSONDecodeError("Expecting value", "<html>", 0)
+
+    with pytest.raises(McpError, match="HTTP 502: 502 Server Error"):
+        McpAdapter(url="http://127.0.0.1:9/mcp").list_tools()
 
 
 def test_adapter_uses_the_endpoint_persisted_by_the_running_server(mocker, tmp_path) -> None:
@@ -53,7 +98,7 @@ def test_adapter_uses_the_endpoint_persisted_by_the_running_server(mocker, tmp_p
     post = mocker.patch("dimos.agents.mcp.mcp_adapter.requests.post")
     post.return_value.json.return_value = {"result": {}}
 
-    McpAdapter.from_run_entry(RunEntry.load(entry.registry_path), timeout=7).initialize()
+    McpAdapter.from_run_entry(RunEntry.load(entry.registry_path), timeout=7).list_tools()
 
     assert post.call_args.args == ("http://127.0.0.1:12345/mcp",)
     assert post.call_args.kwargs["timeout"] == 7

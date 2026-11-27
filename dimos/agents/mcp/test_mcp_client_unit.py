@@ -39,12 +39,8 @@ def _mock_payload(body: dict[str, object]) -> dict[str, object]:
     req_id = body["id"]
 
     result: object
-    if method == "initialize":
-        result = {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {"tools": {}},
-            "serverInfo": {"name": "dimensional", "version": "1.0.0"},
-        }
+    if method == "server/discover":
+        result = {"supportedVersions": ["2026-07-28"], "capabilities": {"tools": {}}}
     elif method == "tools/list":
         result = {
             "tools": [
@@ -93,11 +89,18 @@ def _mock_payload(body: dict[str, object]) -> dict[str, object]:
 
 
 def _mock_session(payload_fn: Callable[[dict[str, object]], dict[str, object]]) -> MagicMock:
-    """Return an autospec'd requests.Session whose .post() replies via payload_fn."""
+    """Return an autospec'd requests.Session whose .post() replies via payload_fn.
 
-    def _post(url: str, *, json: dict[str, object], timeout: float | None = None) -> MagicMock:
+    As from the server, a JSON-RPC error comes with an HTTP error status.
+    """
+
+    def _post(
+        url: str, *, json: dict[str, object], headers: dict[str, str], timeout: float | None = None
+    ) -> MagicMock:
         resp = create_autospec(requests.Response, instance=True, spec_set=True)
         resp.json.return_value = payload_fn(json)
+        if "error" in resp.json.return_value:
+            resp.raise_for_status.side_effect = requests.HTTPError("400 Client Error")
         return resp
 
     session = create_autospec(requests.Session, instance=True, spec_set=True)
@@ -166,10 +169,25 @@ def test_tool_invocation_via_mcp(mcp_client: Agent) -> None:
     assert greet_tool.func(name="Alice") == "Hello, Alice!"
 
 
+def test_a_tool_without_arguments_gets_an_empty_properties_schema(mcp_client: Agent) -> None:
+    """MCP lets such a tool leave `properties` out, and OpenAI rejects a schema without it."""
+
+    def no_arguments(body: dict[str, object]) -> dict[str, object]:
+        if body["method"] != "tools/list":
+            return _mock_payload(body)
+        tool = {"name": "ping", "inputSchema": {"type": "object", "additionalProperties": False}}
+        return {"jsonrpc": "2.0", "id": body["id"], "result": {"tools": [tool]}}
+
+    mcp_client._http_client = _mock_session(no_arguments)
+    (ping,) = mcp_client._fetch_tools()
+
+    assert ping.args_schema == {"type": "object", "additionalProperties": False, "properties": {}}
+
+
 def test_image_result_follows_as_a_tool_tagged_user_turn(mcp_client: Agent) -> None:
     """An image cannot ride the tool response, so it follows as a HumanMessage
     naming its tool, or chat UIs would show it as typed input."""
-    image = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}}
+    image = {"type": "image", "data": "AAAA", "mimeType": "image/jpeg"}
 
     def image_payload(body: dict[str, object]) -> dict[str, object]:
         if body["method"] != "tools/call":
@@ -188,7 +206,7 @@ def test_image_result_follows_as_a_tool_tagged_user_turn(mcp_client: Agent) -> N
     assert msg.additional_kwargs[TOOL_ORIGIN_KEY] == "greet"
     assert msg.content == [
         {"type": "text", "text": f"This is the artefact for the 'greet' tool with UUID:={uuid_}."},
-        image,
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}},
     ]
 
 

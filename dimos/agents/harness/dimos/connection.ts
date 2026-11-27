@@ -125,6 +125,64 @@ function watchEventStream(ended: (error: unknown) => void): { fetch: McpFetch; o
   return { fetch: watched, opened };
 }
 
+const REVISION = "2026-07-28";
+
+/** What pi-mcp posts: a request, a notification when it has no `id`, or an answer when it has no `method`. */
+type Posted = {
+  readonly id?: string | number;
+  readonly method?: string;
+  readonly params?: { readonly [key: string]: unknown; readonly _meta?: object };
+};
+
+/**
+ * Sends what pi-mcp posts as the revision McpServer speaks, which has no handshake and takes nothing but requests from
+ * a client. `initialize` is answered from `server/discover`. A notification or an answer is acknowledged without being
+ * sent: McpServer would refuse it, and a refused `notifications/cancelled` would have the client replaced after every
+ * call that timed out. Every other request gets the revision's `_meta` and headers.
+ */
+function speakRevision(send: McpFetch): McpFetch {
+  return async (input, init) => {
+    if (init?.method !== "POST" || typeof init.body !== "string") return send(input, init);
+    const message = JSON.parse(init.body) as Posted;
+    if (message.id === undefined || message.method === undefined) return new Response(null, { status: 202 });
+    const post = (method: string, params: NonNullable<Posted["params"]>): Promise<Response> => {
+      const headers = new Headers(init.headers);
+      headers.set("MCP-Protocol-Version", REVISION);
+      headers.set("Mcp-Method", method);
+      if (method === "tools/call") headers.set("Mcp-Name", String(params["name"]));
+      const meta = {
+        "io.modelcontextprotocol/protocolVersion": REVISION,
+        "io.modelcontextprotocol/clientCapabilities": {},
+        ...params._meta,
+      };
+      const body = JSON.stringify({ jsonrpc: "2.0", id: message.id, method, params: { ...params, _meta: meta } });
+      return send(input, { ...init, headers, body });
+    };
+    if (message.method !== "initialize") {
+      const response = await post(message.method, message.params ?? {});
+      // McpServer answers a request it refuses with an HTTP error status and a JSON-RPC error, and pi-mcp reads a
+      // JSON-RPC error only from a 200.
+      if (response.ok || !response.headers.get("content-type")?.startsWith("application/json")) return response;
+      return new Response(response.body, { status: 200, headers: response.headers });
+    }
+    const response = await post("server/discover", {});
+    if (!response.ok) return response;
+    const discovered = (await response.json()) as {
+      readonly result?: { readonly capabilities?: unknown; readonly _meta?: { readonly [key: string]: unknown } };
+    };
+    // pi-mcp checks the result, and accepts no revision but one of its own: the one it asked for.
+    return Response.json({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: {
+        protocolVersion: message.params?.["protocolVersion"],
+        capabilities: discovered.result?.capabilities,
+        serverInfo: discovered.result?._meta?.["io.modelcontextprotocol/serverInfo"],
+      },
+    });
+  };
+}
+
 /**
  * Owns one pi-mcp client at a time and replaces it when it stops working. A client is replaced whole, never
  * reconnected, and a failure reported for a client that is no longer current changes nothing: its replacement is
@@ -303,7 +361,7 @@ export class DimosConnection {
     const watcher = watchEventStream((error) => this.rebuild(client, error));
     const transport = new StreamableHttpTransport({
       url: this.options.url,
-      fetch: watcher.fetch,
+      fetch: speakRevision(watcher.fetch),
       reconnect: { maxRetries: Number.POSITIVE_INFINITY },
     });
     client.onNotification("dimos/harness_status", () => {

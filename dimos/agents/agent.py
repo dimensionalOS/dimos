@@ -39,6 +39,7 @@ from dimos.agents.base_agent import BaseAgent
 from dimos.agents.llm_trace import tracing_http_client
 from dimos.agents.mcp import tool_stream
 from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY, TURN_FAILED_KEY
+from dimos.agents.mcp.mcp_adapter import mcp_request, mcp_response
 from dimos.agents.mcp.spec import McpServerSpec
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
@@ -146,26 +147,18 @@ class Agent(BaseAgent):
         return self._mcp_url
 
     def _mcp_request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        body: dict[str, Any] = {
-            "jsonrpc": "2.0",
-            "id": self._seq_ids.next(),
-            "method": method,
-        }
-        if params is not None:
-            body["params"] = params
+        headers, body = mcp_request(self._seq_ids.next(), method, params)
 
         url = self._server_url()
         if url is None:
             raise RuntimeError("Agent has no MCP server")
-        resp = self._http_client.post(url, json=body, timeout=120.0)
-        resp.raise_for_status()
-        data = resp.json()
+        resp = self._http_client.post(url, json=body, headers=headers, timeout=120.0)
+        data = mcp_response(resp)
 
         if "error" in data:
             raise RuntimeError(f"MCP error {data['error']['code']}: {data['error']['message']}")
 
-        result: dict[str, Any] = data.get("result")
-        return result
+        return data["result"]
 
     def _mcp_tool_call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         progress_token = str(uuid.uuid4())
@@ -215,7 +208,7 @@ class Agent(BaseAgent):
 
         while True:
             try:
-                self._mcp_request("initialize")
+                self._mcp_request("server/discover")
                 break
             except requests.ConnectionError:
                 if time.monotonic() >= deadline:
@@ -227,7 +220,8 @@ class Agent(BaseAgent):
     def _mcp_tool_to_langchain(self, mcp_tool: dict[str, Any]) -> StructuredTool:
         name = mcp_tool["name"]
         description = mcp_tool.get("description", "")
-        input_schema = mcp_tool.get("inputSchema", {"type": "object", "properties": {}})
+        # OpenAI rejects an object schema without properties.
+        input_schema = {"properties": {}, **mcp_tool.get("inputSchema", {"type": "object"})}
 
         def call_tool(**kwargs: Any) -> str:
             result = self._mcp_tool_call(name, kwargs)
@@ -239,7 +233,7 @@ class Agent(BaseAgent):
             # cannot be included in the tool response for OpenAI models and
             # probably others.
             for item in content:
-                if item.get("type") != "text":
+                if item.get("type") == "image":
                     uuid_ = str(uuid.uuid4())
                     text += f"Tool call started with UUID: {uuid_}. You will be updated with the result soon."
                     _append_image_to_history(self, name, uuid_, item)
@@ -265,7 +259,7 @@ class Agent(BaseAgent):
         # Subscribe directly over LCM rather than through the server's GET
         # /mcp SSE channel.  HTTP would add a startup race: the first few
         # updates of a short-lived stream can fire before the SSE connection
-        # is established.  External clients like Claude Code still use GET
+        # is established. External clients like the gateway still use GET
         # /mcp, which the server fans out to from the same LCM topic.
         self._tool_stream_cleanup = tool_stream.subscribe(self._on_tool_stream_message)
 
@@ -475,7 +469,10 @@ def _append_image_to_history(agent: Agent, func_name: str, uuid_: str, result: A
                     "type": "text",
                     "text": f"This is the artefact for the '{func_name}' tool with UUID:={uuid_}.",
                 },
-                result,
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{result['mimeType']};base64,{result['data']}"},
+                },
             ],
             additional_kwargs={TOOL_ORIGIN_KEY: func_name},
         )

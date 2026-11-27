@@ -16,21 +16,19 @@
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.agents.capabilities import CapabilityRegistry
-from dimos.agents.mcp.mcp_server import app, handle_request
+from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.agents.skill_result import SkillResult
 from dimos.agents.skills.teleop_skills import TeleopSkills
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.operator_hold_task.operator_hold_spec import OperatorHoldSpec
 from dimos.control.tasks.operator_hold_task.operator_hold_task import OperatorHoldStatus
-from dimos.core.module import Module
+from dimos.core.module import Module, SkillInfo
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.manipulation_spec import (
     ExecutionResult,
@@ -40,6 +38,8 @@ from dimos.manipulation.manipulation_spec import (
     PlanStatus,
 )
 from dimos.spec.utils import spec_annotation_compliance
+
+ServeSkills = Callable[[list[SkillInfo], dict[str, Callable[..., Any]]], McpAdapter]
 
 
 class FakeCoordinator:
@@ -120,7 +120,7 @@ def _failing_manipulation(failure: str) -> MagicMock:
 
 
 def _call_tool(
-    modules: list[Module], name: str, arguments: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    modules: list[Module], name: str, arguments: dict[str, Any], serve_skills: ServeSkills
 ) -> dict[str, Any]:
     """Call one skill through the MCP server, as an agent would."""
     skills = [info for module in modules for info in module.get_skills()]
@@ -129,26 +129,23 @@ def _call_tool(
         for module in modules
         for info in module.get_skills()
     }
-    monkeypatch.setattr(app.state, "skills_by_name", {s.func_name: s for s in skills})
-    monkeypatch.setattr(app.state, "cap_registry", CapabilityRegistry())
-    request = {"method": "tools/call", "id": 1, "params": {"name": name, "arguments": arguments}}
-    response = asyncio.run(handle_request(request, skills, rpc_calls))
-    assert response is not None
-    return response
+    return serve_skills(skills, rpc_calls).call(
+        "tools/call", {"name": name, "arguments": arguments}
+    )
 
 
 @pytest.mark.parametrize("failure", ["planner raises", "no plan", "execution fault"])
 def test_a_failing_manipulation_skill_does_not_request_the_hold(
     teleop: TeleopSkills,
     coordinator: FakeCoordinator,
-    monkeypatch: pytest.MonkeyPatch,
+    serve_skills: ServeSkills,
     failure: str,
 ) -> None:
     manipulation = ManipulationSkills()
     manipulation.manipulation = _failing_manipulation(failure)
     try:
         response = _call_tool(
-            [manipulation, teleop], "move_to_joints", {"joints": "0.5"}, monkeypatch
+            [manipulation, teleop], "move_to_joints", {"joints": "0.5"}, serve_skills
         )
     finally:
         manipulation.stop()

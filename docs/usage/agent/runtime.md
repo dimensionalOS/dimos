@@ -159,7 +159,7 @@ a NaN or infinite coordinate are dropped. The export directory retains at most 5
 
 ### Notifications and trajectory entries
 
-MCP's GET event stream carries two notifications:
+`McpServer`'s GET event stream carries two notifications:
 
 - `dimos/harness_event` contains the module name, owning conversation, text, timestamp, JSON data, exported files, and
   suppressed-notice count. Notices are live and are not replayed after a disconnect.
