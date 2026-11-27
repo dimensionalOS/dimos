@@ -22,6 +22,8 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.unitree.g1.g1_replay import G1Replay
 
+_TIMEOUT = 5.0  # seconds a test waits on the replay before failing
+
 
 @pytest.mark.parametrize("suffix", [".db", ".mcap"])
 def test_replays_odometry_from_sqlite_and_mcap(tmp_path: Path, suffix: str) -> None:
@@ -90,5 +92,5 @@ def test_replay_logs_source_duration_and_completion(tmp_path, mocker):
             loop=False,
         )
         replay.on_system_modules_ready([])
-        assert finished.wait(5)
+        assert finished.wait(_TIMEOUT)
         assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=str(path))]

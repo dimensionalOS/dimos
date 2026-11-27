@@ -67,6 +67,8 @@ from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
 from dimos.teleop.webxr.module import WebXRTeleopModule
 
+_TIMEOUT = 5.0  # seconds a test waits on the replay before failing
+
 pytestmark = pytest.mark.self_hosted
 
 _RUST_PACKAGE = DIMOS_PROJECT_ROOT / "dimos" / "experimental" / "memory" / "rust"
@@ -635,7 +637,7 @@ def test_native_json_events_replay_to_the_live_quest_hud(
         cleanup.callback(subscription)
         replay.start()
         replay.on_system_modules_ready([])
-        assert both.wait(5)
+        assert both.wait(_TIMEOUT)
         assert [(p["ts"], p["last_event"]) for p in received] == [(12.0, "start"), (13.0, "save")]
         assert received[-1]["type"] == "episode_status"
         assert received[-1]["episodes_saved"] == 1

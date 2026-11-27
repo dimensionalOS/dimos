@@ -22,6 +22,8 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.perception.localize.demo_blueprints.xarm_feed import DepthCameraFeed
 
+_TIMEOUT = 5.0  # seconds a test waits on the replay before failing
+
 
 def test_feed_logs_source_duration_and_completion(tmp_path, mocker):
     path = tmp_path / "xarm.db"
@@ -48,5 +50,5 @@ def test_feed_logs_source_duration_and_completion(tmp_path, mocker):
             loop=False,
         )
         feed.on_system_modules_ready([])
-        assert finished.wait(5)
+        assert finished.wait(_TIMEOUT)
         assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=str(path))]

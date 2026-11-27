@@ -32,6 +32,8 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
+_TIMEOUT = 5.0  # seconds a test waits on the replay before failing
+
 pytestmark = [
     pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning"),
     pytest.mark.filterwarnings("error::pytest.PytestUnraisableExceptionWarning"),
@@ -89,7 +91,7 @@ def _play_until_terminal(
 
     playback.add(stream).subscribe(received.append, on_error, completed)
     playback.play()
-    assert finished.wait(5), "replay did not deliver a terminal event"
+    assert finished.wait(_TIMEOUT), "replay did not deliver a terminal event"
     playback.stop()
     return received, errors, completed
 
@@ -195,7 +197,7 @@ def test_failed_stream_leaves_the_others_playing(mocker: MockerFixture) -> None:
         playback.add(broken).subscribe(on_error=errors.append)
         playback.add(replay.stream("odom")).subscribe(odom.append, on_completed=done.set)
         playback.play()
-        assert done.wait(5)
+        assert done.wait(_TIMEOUT)
         playback.stop()
 
     assert [str(error) for error in errors] == ["recording read failed"]

@@ -21,6 +21,8 @@ from reactivex import Subject, empty
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.memory import MemoryStore
 
+_TIMEOUT = 5.0  # seconds a test waits on the replay before failing
+
 
 @pytest.mark.parametrize("seek,duration,expected", [(None, None, 20.0), (5.0, 5.0, 0.0)])
 def test_start_logs_selected_window_and_playback_settings(mocker, seek, duration, expected):
@@ -106,7 +108,7 @@ def test_empty_recording_logs_zero_duration_and_completion(mocker):
         with progress.track(playback.add(stream)).subscribe(on_completed=finished.set):
             progress.seal()
             playback.play()
-            assert finished.wait(5)
+            assert finished.wait(_TIMEOUT)
         playback.stop()
     assert log.info.call_args_list == [
         mocker.call(
