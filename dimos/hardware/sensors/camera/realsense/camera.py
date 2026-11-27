@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING, Any
 from pydantic import Field
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.core.stream import Out
+from dimos.core.stream import IO, Out
+from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -33,21 +34,19 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import perception
 
 
-class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
+class RealSenseCameraConfig(NativeModuleConfig, TfModuleConfig, DepthCameraConfig):
     source_dir: str | None = "dimos/hardware/sensors/camera/realsense/rust"
     executable: str = "result/bin/realsense_native"
     # Own flake: librealsense2 isn't in the root shell.
     build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
-    # The frame stem and its namespace cross to rust like any other field.
-    base_fields: frozenset[str] = frozenset({"frame_id", "frame_id_prefix"})
 
     width: int = 848
     height: int = 480
     fps: int = 15
-    # The camera's tf link, what a mount edge points at. Imager frames hang off
+    # "link" is the camera's tf link, what a mount edge points at. Imager frames hang off
     # it with `_link` dropped: d435_link -> d435_color_optical_frame.
-    frame_id: str | None = "camera_link"
+    tf_frames_local: dict[str, str] = {"link": "camera_link"}
     align_depth_to_color: bool = True
     enable_depth: bool = True
     enable_color: bool = True
@@ -79,8 +78,6 @@ class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
 
     def to_config_dict(self) -> dict[str, Any]:
         config = super().to_config_dict()
-        # Module.frame_id falls back to the class name; rust gets the same stem.
-        config["frame_id"] = self.frame_id or "RealSenseCamera"
         # The rust struct has every key; None crosses as an explicit null.
         config["serial_number"] = self.serial_number
         config["imu_info"] = (
@@ -96,8 +93,9 @@ class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
         return config
 
 
-class RealSenseCamera(NativeModule, perception.DepthCamera):
+class RealSenseCamera(NativeModule, TfModule, perception.DepthCamera):
     config: RealSenseCameraConfig
+
     color_image: Out[Image]
     depth_image: Out[Image]
     infrared_left: Out[Image]
@@ -109,7 +107,7 @@ class RealSenseCamera(NativeModule, perception.DepthCamera):
     depth_camera_info: Out[CameraInfo]
     infrared_left_camera_info: Out[CameraInfo]
     infrared_right_camera_info: Out[CameraInfo]
-    tf: Out[TFMessage]
+    tf: IO[TFMessage]
 
 
 if TYPE_CHECKING:

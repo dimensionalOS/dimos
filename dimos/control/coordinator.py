@@ -135,7 +135,7 @@ class ControlCoordinator(Module):
     not grant capabilities. Velocity-only joints no task drives get zero. A robot is
     commanded every tick once it has reported, and not while its newest
     reading is older than ``config.reading_timeout_s``. In a fleet, each
-    connection module sets ``frame_id_prefix`` to its robot's name so
+    connection module is namespaced (or sets its ``tf_frames_local``) so
     readings are told apart.
 
     Key design decisions:

@@ -145,7 +145,8 @@ class MockJointConnection(ConnectionModule):
             )
         self._positions = {self._full_name(name): positions[name] for name in driven}
         self._speeds = {self._full_name(name): 0.0 for name in names if name not in positions}
-        self._frame = self.frame(self.config.model.load().root_link)
+        # A declared "root" frame wins over the model's root link (declare it to namespace it).
+        self._frame = self.tf_frames.get("root") or self.config.model.load().root_link
 
     @rpc
     def start(self) -> None:

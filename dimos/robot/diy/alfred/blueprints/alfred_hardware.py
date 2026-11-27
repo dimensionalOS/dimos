@@ -38,7 +38,7 @@ def _alfred_base(odometry_topic: str) -> Blueprint:
         # would halt the base between two of them.
         deadman_timeout_s=0.2,
         # dimSLAM fuses a source stamped in "odom" as absolute; the wheels drift.
-        odom_frame="wheel_odom",
+        tf_frames_local={"odom": "wheel_odom", "base_link": "base_link"},
     ).remappings([(FlowBaseConnection, "odometry", odometry_topic)])
 
 

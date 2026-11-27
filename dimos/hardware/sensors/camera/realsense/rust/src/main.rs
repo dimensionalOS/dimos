@@ -78,6 +78,7 @@ struct Nullable<T>(Option<T>);
 
 #[native_config]
 #[derive(Clone)]
+#[validate(schema(function = link_declared))]
 struct Config {
     #[validate(range(min = 1))]
     width: i32,
@@ -85,8 +86,14 @@ struct Config {
     height: i32,
     #[validate(range(min = 1))]
     fps: i32,
-    frame_id: String,
-    frame_id_prefix: Nullable<String>,
+    /// TfModule role -> frame id; reads "link". Namespacing already prefixed it on the Python side.
+    tf_frames_local: HashMap<String, String>,
+    tf_frames_global: HashMap<String, String>,
+    /// Declared for the blueprint's tf checks, which run in Python.
+    #[allow(dead_code)]
+    tf_edges: Vec<(String, String)>,
+    #[allow(dead_code)]
+    skip_tf_checks: bool,
     align_depth_to_color: bool,
     enable_depth: bool,
     enable_color: bool,
@@ -109,6 +116,15 @@ struct Config {
     serial_number: Nullable<String>,
 }
 
+fn link_declared(cfg: &Config) -> Result<(), validator::ValidationError> {
+    if cfg.tf_frames_local.contains_key("link") || cfg.tf_frames_global.contains_key("link") {
+        return Ok(());
+    }
+    let mut err = validator::ValidationError::new("tf_frames");
+    err.message = Some("no tf frame declared for role \"link\"".into());
+    Err(err)
+}
+
 impl Config {
     fn stream_color(&self) -> bool {
         self.enable_color || self.enable_pointcloud
@@ -116,24 +132,20 @@ impl Config {
     fn stream_depth(&self) -> bool {
         self.enable_depth || self.enable_pointcloud
     }
-    /// `<frame_id_prefix>/<name>`, as Module.frame_id composes it.
-    fn namespaced(&self, name: &str) -> String {
-        match self.frame_id_prefix.0.as_deref() {
-            Some(prefix) if !prefix.is_empty() => format!("{prefix}/{name}"),
-            _ => name.to_string(),
-        }
+    /// The "link" tf frame: what a mount edge points at.
+    fn camera_link(&self) -> String {
+        self.tf_frames_local
+            .get("link")
+            .or_else(|| self.tf_frames_global.get("link"))
+            .cloned()
+            .expect("validated at launch")
     }
-    /// The imager frames hang off frame_id with its `_link` dropped:
+    /// The imager frames hang off the link with its `_link` dropped:
     /// `d435_link` -> `d435_color_optical_frame`.
     fn frame(&self, suffix: &str) -> String {
-        let stem = self
-            .frame_id
-            .strip_suffix("_link")
-            .unwrap_or(&self.frame_id);
-        self.namespaced(&format!("{stem}_{suffix}"))
-    }
-    fn camera_link(&self) -> String {
-        self.namespaced(&self.frame_id)
+        let link = self.camera_link();
+        let stem = link.strip_suffix("_link").unwrap_or(&link);
+        format!("{stem}_{suffix}")
     }
     fn color_frame(&self) -> String {
         self.frame("color_frame")

@@ -24,7 +24,7 @@ mid360_link so it never writes the frame PointLio owns.
 
 import pytest
 
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, config_defaults
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.mapping.relocalization.module import PremapModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -51,11 +51,14 @@ def _tf_children_by_publisher(blueprint: Blueprint) -> dict[str, set[str]]:
     children: dict[str, set[str]] = {}
     for atom in blueprint.active_blueprints:
         if atom.module is GO2Connection and atom.kwargs.get("publish_tf", True):
-            children["GO2Connection"] = {t.child_frame_id for t in GO2Connection._odom_to_tf(odom)}
+            frames = {**config_defaults(GO2Connection), **atom.kwargs}["tf_frames_local"]
+            children["GO2Connection"] = {
+                t.child_frame_id for t in GO2Connection._odom_to_tf(odom, frames)
+            }
         if atom.module is Go2Mid360StaticTf:
             children["Go2Mid360StaticTf"] = {t.child_frame_id for t in mount_transforms()}
         if atom.module is PointLio:
-            sensor_frame = atom.kwargs.get("sensor_frame_id", "mid360_link")
+            sensor_frame = {**config_defaults(PointLio), **atom.kwargs}["tf_frames_local"]["sensor"]
             children["PointLio"] = {sensor_frame}
         if atom.module is SimGo2World:
             children["SimGo2World"] = {SENSOR_FRAME_ID}

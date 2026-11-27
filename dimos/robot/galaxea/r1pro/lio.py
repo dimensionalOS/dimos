@@ -38,7 +38,7 @@ from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 
 class R1ProLioConfig(StaticTfPublisherConfig):
     base_frame: str = "base_link"
-    # Point-LIO's moving sensor frame (its sensor_frame_id).
+    # Point-LIO's moving sensor frame (its "sensor" tf frame).
     lidar_frame: str = "lidar_pointlio_link"
     # The URDF's name for the same lidar.
     chassis_lidar_frame: str = "lidar_chassis_left_link"

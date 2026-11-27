@@ -67,7 +67,9 @@ class Rig:
     def __init__(self, fake: FakeRos, module: R1ProConnection) -> None:
         self.fake = fake
         self.module = module
-        self.ports = {name: LocalTransport() for name in {**module.inputs, **module.outputs}}
+        self.ports = {
+            name: LocalTransport() for name in {**module.inputs, **module.outputs, **module.ios}
+        }
         for name, transport in self.ports.items():
             module.set_transport(name, transport)  # type: ignore[arg-type]
 

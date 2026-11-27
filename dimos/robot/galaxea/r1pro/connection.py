@@ -244,7 +244,6 @@ class R1ProConnection(ConnectionModule):
     # as a PoseStamped, gated with the tf by config.publish_odom_tf.
     odom: Out[PoseStamped]
     odometry: Out[Odometry]
-    tf: Out[TFMessage]
 
     # Perception.
     head_depth: Out[Image]

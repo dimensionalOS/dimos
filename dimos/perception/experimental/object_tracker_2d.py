@@ -184,7 +184,7 @@ class ObjectTracker2D(Module):
 
         # Publish empty detection
         empty_2d = Detection2DArray(
-            detections_length=0, header=Header(time.time(), self.frame_id), detections=[]
+            detections_length=0, header=Header(time.time(), self.config.frame_id), detections=[]
         )
         self._latest_detection2d = empty_2d
         self.detection2darray.publish(empty_2d)
@@ -276,7 +276,7 @@ class ObjectTracker2D(Module):
         height = float(y2 - y1)
 
         # Create 2D detection header
-        header = Header(time.time(), self.frame_id)
+        header = Header(time.time(), self.config.frame_id)
 
         # Create Detection2D with all fields in constructors
         detection_2d = Detection2D(

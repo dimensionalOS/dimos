@@ -120,7 +120,6 @@ class ModuleConfig(BaseConfig):
     rpc_transport: type[RPCSpec] = Field(default_factory=rpc_backend)
     default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
     rpc_timeouts: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_RPC_TIMEOUTS))
-    frame_id_prefix: str | None = None
     frame_id: str | None = None
     # Blueprint identity for a named instance (see BlueprintAtom.instance_name).
     # Also supplies the default RPC alias when set.
@@ -199,16 +198,6 @@ class ModuleBase(Configurable, CompositeResource):
     def namespace(self) -> str:
         """The ``Blueprint.namespace`` levels in the instance name: ``fleet/robot0`` for ``fleet/robot0/odom``."""
         return (self.config.instance_name or "").rpartition("/")[0]
-
-    @property
-    def frame_id_prefix(self) -> str:
-        """The namespace, then the config's own frame_id_prefix: ``robot0/custom``."""
-        return "/".join(part for part in (self.namespace, self.config.frame_id_prefix) if part)
-
-    @property
-    def frame_id(self) -> str:
-        base = self.config.frame_id or self.__class__.__name__
-        return f"{self.frame_id_prefix}/{base}" if self.frame_id_prefix else base
 
     @rpc
     def build(self) -> None:

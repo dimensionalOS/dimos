@@ -40,7 +40,8 @@ from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.core.stream import In, Out
+from dimos.core.stream import IO, In, Out
+from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -52,19 +53,16 @@ from dimos.spec import perception
 IvoxNearbyType = Literal["center", "nearby6", "nearby18", "nearby26"]
 
 
-class PointLioConfig(NativeModuleConfig):
+class PointLioConfig(NativeModuleConfig, TfModuleConfig):
     stdin_config: bool = True
-    frame_id: str = "odom"
-    # frame_id_prefix too: the module composes the namespaced frame itself,
-    # since it publishes odometry and tf without going back through Python.
-    base_fields: frozenset[str] = frozenset({"frame_id", "frame_id_prefix"})
     source_dir: str | None = "dimos/hardware/sensors/lidar/pointlio/rust"
     executable: str = "result/bin/pointlio_native"
     build_command: str | None = "nix build -L path:."
 
-    # Odometry is published as frame_id (fixed) -> sensor_frame_id (moving sensor),
-    # and also broadcast on TF. The point cloud is stamped with sensor_frame_id
-    sensor_frame_id: str = "mid360_link"
+    # Odometry is published as odom (fixed) -> sensor (moving sensor), and also broadcast on
+    # TF. The point cloud is stamped with the sensor frame. The rust side reads these roles.
+    tf_frames_local: dict[str, str] = {"odom": "odom", "sensor": "mid360_link"}
+    tf_edges: list[tuple[str, str]] = [("odom", "sensor")]
 
     # Point-LIO internal processing rates (Hz)
     msr_freq: float = 50.0
@@ -139,7 +137,7 @@ class PointLioConfig(NativeModuleConfig):
     odom_only: bool = False
 
 
-class PointLio(NativeModule, perception.Lidar, perception.Odometry):
+class PointLio(NativeModule, TfModule, perception.Lidar, perception.Odometry):
     """Point-LIO fed by the Mid360 driver's messages. Publishes tf itself."""
 
     config: PointLioConfig
@@ -149,7 +147,7 @@ class PointLio(NativeModule, perception.Lidar, perception.Odometry):
 
     lidar: Out[PointCloud2]
     odometry: Out[Odometry]
-    tf: Out[TFMessage]
+    tf: IO[TFMessage]
 
     @rpc
     def start(self) -> None:

@@ -282,7 +282,7 @@ class GstreamerCameraModule(Module):
             image_msg = Image(
                 data=image_array.copy(),  # Make a copy to ensure data persistence
                 format=ImageFormat.BGR,
-                frame_id=self.frame_id,
+                frame_id=self.config.frame_id,
                 ts=timestamp,
             )
 

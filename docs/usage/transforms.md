@@ -163,35 +163,26 @@ print(matrix)
 
 ## Frame IDs in Modules
 
-Modules in dimOS automatically get a `frame_id` property. This is controlled by two config options in [`core/module.py`](/dimos/core/module.py#L78):
-
-- `frame_id` - The base frame name (defaults to the class name)
-- `frame_id_prefix` - Optional prefix for namespacing
+A [`TfModule`](/dimos/core/tf_module.py) declares its frames in config, by role: `tf_frames_local` for frames that belong to one robot (they go under the module's namespace), `tf_frames_global` for shared ones like `world`. Code reads them as `self.frame.<role>`:
 
 ```python
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.tf_module import TfModule, TfModuleConfig
 
-class MyModuleConfig(ModuleConfig):
-    frame_id: str = "sensor_link"
-    frame_id_prefix: str | None = None
+class MySensorConfig(TfModuleConfig):
+    tf_frames_local: dict[str, str] = {"link": "sensor_link"}
 
-class MySensorModule(Module):
-    config: MyModuleConfig
+class MySensorModule(TfModule):
+    config: MySensorConfig
 
-# With default config:
 sensor = MySensorModule()
-print(f"Default frame_id: {sensor.frame_id}")
-
-# With prefix (useful for multi-robot scenarios):
-sensor2 = MySensorModule(frame_id_prefix="robot1")
-print(f"With prefix: {sensor2.frame_id}")
+print(f"Sensor frame: {sensor.frame.link}")
 ```
 
 ```results
-00:33:00.665 [inf][otocol/service/zenohservice.py] Zenoh session opened connect=[] gossip=True listen=['tcp/127.0.0.1:0'] mode=peer multicast_interface=lo
-Default frame_id: sensor_link
-With prefix: robot1/sensor_link
+Sensor frame: sensor_link
 ```
+
+Under `.namespace("robot0")` the same module's `frame.link` is `robot0/sensor_link`.
 
 ## The tf Topic
 

@@ -344,7 +344,7 @@ def r1pro_lidar_odometry() -> MetaBlueprint:
             host_ip=R1PRO_CHASSIS_LIDAR_HOST_IP,
         ),
         R1ProPointLio.blueprint(
-            sensor_frame_id=lidar_frame,
+            tf_frames_local={"odom": "odom", "sensor": lidar_frame},
             # Standing still at 0.01 the pose stepped ~7 mm a scan (the robot jittered in the viewer); 1.0 took it to 2.5 mm.
             lidar_meas_cov=1.0,
         ).remappings([(R1ProPointLio, "odometry", "pointlio_odometry")]),

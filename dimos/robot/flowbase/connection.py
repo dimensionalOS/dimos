@@ -91,13 +91,13 @@ class FlowBaseConfig(ConnectionConfig):
     Attributes:
         address: The controller's Portal RPC address, "host:port".
         source: The robot's name, in front of each joint's name ("base/base_forward").
-        odom_frame: The frame odometry is stamped in, e.g. "wheel_odom" when
-            something else already publishes "odom".
+        tf_frames_local: Odometry is stamped ``odom`` -> ``base_link``; rename
+            ``odom`` (e.g. "wheel_odom") when something else already publishes "odom".
     """
 
     address: str = DEFAULT_ADDRESS
     source: str = "base"
-    odom_frame: str = "odom"
+    tf_frames_local: dict[str, str] = {"odom": "odom", "base_link": "base_link"}
     model: RobotModel | None = FLOWBASE_MODEL
     joint_commands: dict[str, tuple[Interface, ...]] = FLOWBASE_JOINT_COMMANDS
 
@@ -232,8 +232,8 @@ class FlowBaseConnection(ConnectionModule):
         self.odometry.publish(
             Odometry(
                 ts=ts,
-                frame_id=self.frame(self.config.odom_frame),
-                child_frame_id=self.frame("base_link"),
+                frame_id=self.frame.odom,
+                child_frame_id=self.frame.base_link,
                 pose=Pose(
                     position=Vector3(x, y, 0.0),
                     orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
