@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from functools import partial
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
@@ -31,7 +30,6 @@ from dimos.navigation.local_planner.native import LocalPlannerNative
 from dimos.navigation.local_planner.viz import motion_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.trajectory_follower.native import TrajectoryFollowerNative
-from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT
 from dimos.robot.diy.alfred.config import alfred_model
 from dimos.visualization.rerun.urdf_robot import UrdfRobotStaticRerunFactory
 
@@ -40,7 +38,6 @@ if TYPE_CHECKING:
     import rerun.blueprint as rrb
 
 ALFRED_RERUN_ROOT = "world/alfred"
-_RESOLVED_URDF_DIR = DEFAULT_ROBOT_ASSET_CACHE_ROOT / "derived" / "rerun_urdf"
 
 VOXEL_SIZE_METERS = 0.08
 WALL_CLEARANCE_M = 0.20
@@ -52,18 +49,10 @@ def _path_colored(msg: NavPath, color: tuple[int, int, int]) -> Archetype:
     return msg.to_rerun(color=color)
 
 
-def _resolved_urdf() -> Path:
-    """The model written out with package:// resolved, which the rerun urdf loader cannot do."""
-    loaded = alfred_model().load()
-    assert loaded.source_path is not None, "Alfred's model must have a URDF source"
-    path = _RESOLVED_URDF_DIR / loaded.source_path.name
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(loaded.xml)
-    return path
-
-
 def _alfred_urdf_static(rr: Any) -> list[tuple[str, Any]]:
-    factory = UrdfRobotStaticRerunFactory(urdf_path=_resolved_urdf(), root_path=ALFRED_RERUN_ROOT)
+    factory = UrdfRobotStaticRerunFactory(
+        urdf_path=alfred_model().load().xml.encode(), root_path=ALFRED_RERUN_ROOT
+    )
     return [
         *factory(rr),
         (ALFRED_RERUN_ROOT, rr.Transform3D(parent_frame="tf#/base_link")),

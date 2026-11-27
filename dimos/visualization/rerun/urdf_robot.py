@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from importlib import import_module
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -124,7 +125,7 @@ def _build_link_paths(
 class UrdfRobotStaticRerunFactory:
     """Log a URDF robot's static visual meshes under a Rerun root path."""
 
-    urdf_path: str | Path
+    urdf_path: str | Path | bytes  # bytes hold resolved URDF XML
     root_path: str
     _robot: Any = field(default=None, init=False, repr=False)
 
@@ -160,7 +161,10 @@ class UrdfRobotStaticRerunFactory:
     def _load_robot(self) -> Any:
         if self._robot is None:
             URDF = _yourdfpy_urdf()
-            self._robot = URDF.load(str(_resolve_urdf_path(self.urdf_path)))
+            if isinstance(self.urdf_path, bytes):
+                self._robot = URDF.load(BytesIO(self.urdf_path))
+            else:
+                self._robot = URDF.load(str(_resolve_urdf_path(self.urdf_path)))
         return self._robot
 
 

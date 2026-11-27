@@ -14,10 +14,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import xml.etree.ElementTree as ElementTree
 
 import pytest
+import rerun as rr
 
 from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.robot.diy.alfred.blueprints import _nav
@@ -78,16 +78,7 @@ def test_mount_tree_rooted_at_mid360_link_composes_back_to_the_urdf():
         assert abs(abs(leg.rotation.dot(expected.rotation)) - 1.0) < 1e-9
 
 
-def test_resolved_urdf_is_written_outside_the_data_directory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The description can be read-only data, so the copy for rerun goes to the cache."""
-    monkeypatch.setattr(_nav, "_RESOLVED_URDF_DIR", tmp_path)
-    before = sorted(ALFRED_URDF.parent.iterdir())
+def test_rerun_loads_alfred_meshes_from_memory() -> None:
+    entities = _nav._alfred_urdf_static(rr)
 
-    path = _nav._resolved_urdf()
-
-    assert path.parent == tmp_path
-    meshes = [m.attrib["filename"] for m in ElementTree.parse(path).getroot().iter("mesh")]
-    assert meshes and all(Path(mesh).is_file() for mesh in meshes)
-    assert sorted(ALFRED_URDF.parent.iterdir()) == before
+    assert any(isinstance(entity, rr.Mesh3D) for _, entity in entities)
