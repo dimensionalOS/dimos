@@ -29,6 +29,7 @@ from dimos.core.coordination.blueprints import Blueprint, StreamRef
 from dimos.core.core import rpc
 from dimos.core.stream import In
 from dimos.experimental.memory.rust_recorder import (
+    RustContinuousMode,
     RustMcapAttachment,
     RustMcapStoreConfig,
     RustRecorder,
@@ -112,6 +113,7 @@ class CollectionModuleConfig(RustRecorderConfig):
             "store": self.store.model_dump(),
             "encoding_threads": self.encoding_threads,
             "streams": [stream.model_dump() for stream in self.streams],
+            "mode": RustContinuousMode().model_dump(),
         }
 
 

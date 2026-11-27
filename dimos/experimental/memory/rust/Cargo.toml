@@ -7,6 +7,7 @@ license = "Apache-2.0"
 
 [dependencies]
 anyhow = "1"
+crc32fast = "1"
 crossbeam-channel = "0.5"
 crossbeam-utils = "0.8"
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "5eb9e7ae757a82f3481d537a86f3a96884c77fb1" }
@@ -21,6 +22,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 tracing = "0.1"
 turbojpeg = { version = "1.5.1", default-features = false, features = ["cmake"] }
 validator = { version = "0.21", features = ["derive"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1", features = ["fs"] }
 
 [dev-dependencies]
 tempfile = "3"
