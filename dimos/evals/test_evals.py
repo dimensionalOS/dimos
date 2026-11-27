@@ -588,7 +588,7 @@ def test_runner_end_to_end_offline(dataset: str, tmp_path: Path) -> None:
 
     s = summarize(results)
     assert s.n == 3 and s.errors == 2
-    assert s.pass_rate == pytest.approx(1 / 3)
+    assert s.mean_score == s.pass_rate == 1.0
     assert s.cost_usd is None
 
     run_dir = runner.run_dir
@@ -1089,6 +1089,18 @@ def test_summary_and_trajectory_preserve_unknown_cost(
     assert trajectory.build("answer").final_metrics.total_cost_usd == expected
     assert summary.n == len(costs)
     assert summary.mean_score == summary.pass_rate == 0.0
+
+
+def test_summarize_excludes_errors_from_judgment_scores() -> None:
+    results = [
+        EvalResult(case_id="pass", score=1.0, passed=True),
+        EvalResult(case_id="fail", score=0.0, passed=False),
+        EvalResult(case_id="preflight", error="preflight: dimos agent version failed"),
+    ]
+    summary = summarize(results)
+    assert summary.n == 3 and summary.errors == 1
+    assert summary.mean_score == pytest.approx(0.5)
+    assert summary.pass_rate == pytest.approx(0.5)
 
 
 def _trajectory_with(command: str, result: str) -> Trajectory:

@@ -13,18 +13,61 @@
 # limitations under the License.
 
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 
 import numpy as np
+from pytest_mock import MockerFixture
+import rerun as rr
 
-from dimos.memory.cli.render import _frame_first_seen, _pair_camera_infos, render_store
+from dimos.memory.cli.render import (
+    _frame_first_seen,
+    _open_viewer,
+    _pair_camera_infos,
+    render_store,
+)
 from dimos.memory.store.memory import MemoryStore
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.navigation.spec import NO_HEADING
+
+
+def test_open_viewer_detaches_from_terminal(mocker: MockerFixture) -> None:
+    mocker.patch("dimos.memory.cli.render.find_executable", return_value="/venv/bin/rerun")
+    launch = mocker.patch.object(subprocess, "Popen")
+
+    _open_viewer("recording with spaces.rrd")
+
+    launch.assert_called_once_with(
+        ["/venv/bin/rerun", "recording with spaces.rrd"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def test_render_store_logs_no_heading_goal_with_valid_rotation(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    log = mocker.spy(rr, "log")
+    goal = PoseStamped(position=(1.0, 2.0, 0.0), orientation=NO_HEADING)
+    with MemoryStore() as store:
+        store.stream("goal", PoseStamped).append(goal, ts=1.0)
+        render_store(store, out=str(tmp_path / "goal.rrd"), no_gui=True)
+
+    transforms = [call.args[1] for call in log.call_args_list if call.args[0] == "goal"]
+    assert len(transforms) == 1
+    transform = transforms[0]
+    assert isinstance(transform, rr.Transform3D)
+    assert transform.translation.as_arrow_array().to_pylist() == [[1.0, 2.0, 0.0]]
+    assert transform.quaternion.as_arrow_array().to_pylist() == [[0.0, 0.0, 0.0, 1.0]]
+    assert goal.orientation.to_tuple() == NO_HEADING
 
 
 def _entry(name: str, data: object) -> tuple:  # type: ignore[type-arg]
