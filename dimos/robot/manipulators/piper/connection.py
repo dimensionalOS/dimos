@@ -119,7 +119,7 @@ class PiperConfig(ConnectionConfig):
             target further away is refused.
     """
 
-    can_port: str
+    can_port: str = Field(pattern=r"\S")
     setup_can: bool = True
     gripper: bool = False
     source: str = "arm"
