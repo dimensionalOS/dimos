@@ -49,6 +49,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.motion_timer import MotionTimer
 from dimos.robot.unitree.type.odometry import Odometry
+from dimos.simulation.mujoco.assets import unitree_meshes
 from dimos.simulation.mujoco.config import MujocoConfig, inherited_wayland_socket
 from dimos.simulation.mujoco.constants import (
     LAUNCHER_PATH,
@@ -94,7 +95,7 @@ class MujocoConnection:
 
         # Fetch the robot data before starting the simulator subprocess.
         get_data("mujoco_sim")
-        get_data("mujoco_menagerie")
+        unitree_meshes()
 
         self.config = config
         self.robot_model = robot_model
