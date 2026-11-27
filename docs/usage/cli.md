@@ -432,7 +432,7 @@ dimos mcp call <tool_name> [--arg key=value ...] [--json-args '{}'] [--timeout S
 | Option | Description |
 |--------|-------------|
 | `--arg`, `-a` | Arguments as `key=value` pairs (repeatable) |
-| `--json-args`, `-j` | Arguments as a JSON string |
+| `--json-args`, `-j` | Arguments as a JSON object, such as `{"message": "hello"}` |
 | `--timeout`, `-t` | Seconds to wait for the tool. Default is 30 seconds. The client cuts off a skill that runs longer. |
 
 ```bash
