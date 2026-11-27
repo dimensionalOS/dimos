@@ -123,8 +123,8 @@ class PerceptionLocalize(Module):
     detections: Out[Detection3DArray]
 
     _thread: threading.Thread | None = None
-    # the one recording open: its path, store, rig and the Memento of its answers
-    _recording: tuple[str, SqliteStore, Rig, Memento] | None = None
+    # the one recording open: its path, store and rig
+    _recording: tuple[str, SqliteStore, Rig] | None = None
 
     @rpc
     def start(self) -> None:
@@ -210,9 +210,8 @@ class PerceptionLocalize(Module):
 
     def _close_recording(self) -> None:
         if self._recording is not None:
-            _, store, _, memento = self._recording
+            _, store, _ = self._recording
             self._recording = None
-            memento.close()
             store.stop()
 
     def _pair_geometry(self, upstream: Iterator[Any]) -> Iterator[Any]:
@@ -389,8 +388,8 @@ class PerceptionLocalize(Module):
                 except Exception:
                     store.stop()
                     raise
-                self._recording = (path, store, rig, Memento())
-            _, store, rig, memento = self._recording
+                self._recording = (path, store, rig)
+            _, store, rig = self._recording
             first, head = rig.time_range()
             lo, hi = resolve_window(first, head, start, duration)
             # as live: the default rate becomes the walking rate on a mobile rig
@@ -403,6 +402,8 @@ class PerceptionLocalize(Module):
                 hi,
                 embed_hz=rig.embed_hz if hz == EMBED_HZ else hz,
             )
+            # a fresh Memento per call: the index is rebuilt for each window, so its
+            # frames differ from those an earlier call marked read
             results = self.detector.localize(
                 queries,
                 index=index,
@@ -411,7 +412,6 @@ class PerceptionLocalize(Module):
                 rig=rig,
                 params=self.config.params,
                 fields=overrides,
-                memento=memento,
             )
             return results, (lo, hi, first, head, index.count())
 
