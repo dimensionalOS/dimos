@@ -18,8 +18,9 @@ The module consumes ``color_image``, ``camera_info``, ``tf`` and the geometry
 its ``geometry`` config names: ``depth_image`` aligned to the colour camera,
 or ``lidar``, a point cloud in the world frame or a frame tf reaches. It keeps
 bounded memory, embeds the colour feed, and answers ``localize`` from what it
-has embedded. It opens no file and does not know whether the ports carry a
-robot or a replay.
+has embedded. It does not know whether the ports carry a robot or a replay.
+Given a saved recording, ``localize`` instead embeds the asked window of that
+file and answers from it with the same models.
 
 Memory layout: the raw colour and geometry feeds are kept for ``feed_frames``
 frames, only as long as the embed tail and the pairing need them. What
@@ -52,6 +53,7 @@ from dimos.core.stream import In, Out
 from dimos.memory.blobstore.memory import MemoryBlobStore
 from dimos.memory.observationstore.memory import ListObservationStore
 from dimos.memory.store.memory import MemoryStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -62,7 +64,8 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.localize.dandetect import DanDetector
-from dimos.perception.localize.memento import Memento
+from dimos.perception.localize.localize import index_recording
+from dimos.perception.localize.memento import Memento, Span
 from dimos.perception.localize.rig import (
     DEPTH_TOLERANCE,
     EMBED_HZ,
@@ -120,12 +123,16 @@ class PerceptionLocalize(Module):
     detections: Out[Detection3DArray]
 
     _thread: threading.Thread | None = None
+    # the one recording open: its path, store, rig and the Memento of its answers
+    _recording: tuple[str, SqliteStore, Rig, Memento] | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
         self._stop = threading.Event()
         self._ready = threading.Event()
+        self._loaded = threading.Event()
+        self._recording_lock = threading.Lock()
         self._camera_seen = threading.Event()
         self._camera: CameraInfo | None = None
         self._stage = "waiting for camera_info"
@@ -195,9 +202,18 @@ class PerceptionLocalize(Module):
         if self._thread is not None:
             self._stop.set()
             self._ready.clear()
+            self._loaded.clear()
             if self._thread.is_alive():
                 self._thread.join(timeout=5.0)
+        self._close_recording()
         super().stop()
+
+    def _close_recording(self) -> None:
+        if self._recording is not None:
+            _, store, _, memento = self._recording
+            self._recording = None
+            memento.close()
+            store.stop()
 
     def _pair_geometry(self, upstream: Iterator[Any]) -> Iterator[Any]:
         """Move the depth frame or lidar scan of each embedded frame from the feed into memory."""
@@ -217,6 +233,7 @@ class PerceptionLocalize(Module):
         logger.info(f"localize: {self._stage}")
         self.detector = self.register_disposable(DanDetector(*stages))
         self.detector.start()
+        self._loaded.set()
 
         self._stage = "waiting for camera_info"
         logger.info(f"localize: {self._stage}")
@@ -264,9 +281,14 @@ class PerceptionLocalize(Module):
 
     @skill
     def localize(
-        self, objects: str, start: float = -10.0, duration: float = 10.0, params: str = ""
+        self,
+        objects: str,
+        start: float = -10.0,
+        duration: float = 10.0,
+        params: str = "",
+        recording: str = "",
     ) -> str:
-        """Locate objects in a window of the robot's memory.
+        """Locate objects in a window of the robot's memory or of a saved recording.
 
         ``objects`` is one label, or several separated by commas.
 
@@ -281,14 +303,23 @@ class PerceptionLocalize(Module):
         call only, e.g. '{"accept_score": 0.45, "verify_radius_m": 2.0}'.
         The next call without ``params`` is back on the module's params.
 
+        ``recording`` is the path of a saved recording, a dimos memory ``.db``.
+        When set, the window is read from that file instead: ``start`` counts
+        from its first or last frame, and only the window is embedded.
+
         Usage guide: dimos/perception/localize/SKILL.md.
         """
-        if not self._ready.is_set():
+        # a recording needs only the models, not the live feed
+        if not (self._loaded if recording else self._ready).is_set():
             return f"localize cannot answer yet: {self._stage}. Poll state() until it reads ready."
 
         queries = [q.strip() for q in objects.split(",") if q.strip()]
         overrides = json.loads(params) if params.strip() else None
-        results, (lo, hi, first, head, frames) = self._localize(queries, start, duration, overrides)
+        if recording:
+            answer = self._localize_recording(recording, queries, start, duration, overrides)
+        else:
+            answer = self._localize(queries, start, duration, overrides)
+        results, (lo, hi, first, head, frames) = answer
 
         lines: list[str] = [
             f"window {lo - first:.1f}s to {hi - first:.1f}s of "
@@ -316,8 +347,7 @@ class PerceptionLocalize(Module):
     ) -> tuple[list[list[Localization]], tuple[float, float, float, float, int]]:
         """One localize call: the instances per query, and the window it read."""
         first, head = self.index.get_time_range()
-        lo = max(first, head + start if start < 0 else first + start)
-        hi = lo + duration
+        lo, hi = resolve_window(first, head, start, duration)
         # frames older than the feed's memory can no longer be asked for
         self._memento.forget(first)
         index = self.index.time_range(lo, hi)
@@ -339,6 +369,60 @@ class PerceptionLocalize(Module):
         )
         self.detections.publish(as_detection_array(queries, results, rig.world_frame))
         return results, (lo, hi, first, head, index.count())
+
+    def _localize_recording(
+        self,
+        path: str,
+        queries: list[str],
+        start: float,
+        duration: float,
+        overrides: dict[str, Any] | None,
+    ) -> tuple[list[list[Localization]], tuple[float, float, float, float, int]]:
+        """``_localize`` over the saved recording at ``path``, kept open read-only until
+        another recording is asked for or the module stops."""
+        with self._recording_lock:
+            if self._recording is None or self._recording[0] != path:
+                self._close_recording()
+                store = SqliteStore(path=path, read_only=True)
+                try:
+                    rig = Rig.from_store(store)
+                except Exception:
+                    store.stop()
+                    raise
+                self._recording = (path, store, rig, Memento())
+            _, store, rig, memento = self._recording
+            first, head = rig.time_range()
+            lo, hi = resolve_window(first, head, start, duration)
+            # as live: the default rate becomes the walking rate on a mobile rig
+            hz = (overrides or {}).get("embed_hz", self.config.params.embed_hz)
+            rig, index = index_recording(
+                store,
+                rig,
+                self.detector.embedder,
+                lo,
+                hi,
+                embed_hz=rig.embed_hz if hz == EMBED_HZ else hz,
+            )
+            results = self.detector.localize(
+                queries,
+                index=index,
+                window=(lo, hi),
+                head=head,
+                rig=rig,
+                params=self.config.params,
+                fields=overrides,
+                memento=memento,
+            )
+            return results, (lo, hi, first, head, index.count())
+
+
+def resolve_window(first: float, head: float, start: float, duration: float) -> Span:
+    """The window ``start`` and ``duration`` (s) name over frames from ``first`` to ``head``.
+
+    A negative ``start`` counts back from ``head``, a positive one forward from ``first``.
+    """
+    lo = max(first, head + start if start < 0 else first + start)
+    return lo, lo + duration
 
 
 def as_detection_array(
