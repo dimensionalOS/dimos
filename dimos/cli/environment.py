@@ -16,7 +16,6 @@
 
 import json
 import os
-from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -33,11 +32,10 @@ def dotenv_keys() -> set[str]:
 def load_cli_dotenv() -> None:
     inherited = set(os.environ)
     loaded = dotenv_keys()
-    work_file = Path.cwd() / ".env"
-    checkout_file = DIMOS_PROJECT_ROOT / ".env"
-    if IS_CHECKOUT and checkout_file != work_file:
-        load_dotenv(checkout_file)
-    load_dotenv(work_file)
+    if IS_CHECKOUT:
+        load_dotenv(DIMOS_PROJECT_ROOT / ".env")
+    # A relative path: Path.cwd() raises when the working directory has been deleted.
+    load_dotenv(".env")
     loaded.update(os.environ.keys() - inherited)
     if loaded:
         os.environ[DOTENV_KEYS_ENV] = json.dumps(sorted(loaded))
