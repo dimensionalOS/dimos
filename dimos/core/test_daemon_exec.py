@@ -12,18 +12,77 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Check the macOS exec handoff without forking the pytest worker."""
+"""Check daemon startup and the fork/exec handoff."""
 
 from contextlib import suppress
+import errno
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
+from tempfile import TemporaryDirectory
 from unittest import mock
 
 import pytest
 
-from dimos.core.daemon import fork_daemon, write_daemon_status
+from dimos.core.daemon import DAEMON_STATUS_FD_ENV, fork_daemon, write_daemon_status
+
+
+def test_failed_daemon_releases_startup_resources(tmp_path: Path) -> None:
+    # Wait for the re-executed child itself: the launcher returns on the status reply.
+    command = [sys.executable, "-m", "dimos.cli.dimos", "--viewer", "none", "--n-workers", "1"]
+    with TemporaryDirectory() as scratch, (tmp_path / "status").open("w+") as status:
+        result = subprocess.run(
+            [*command, "run", "replay-module", "--replaymodule.dataset=", "--daemon"],
+            env=os.environ
+            | {
+                DAEMON_STATUS_FD_ENV: str(status.fileno()),
+                "TMPDIR": scratch,
+                "XDG_STATE_HOME": str(tmp_path),
+                "XDG_CONFIG_HOME": str(tmp_path),
+            },
+            pass_fds=(status.fileno(),),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        status.seek(0)
+        assert result.returncode == 1, result.stderr
+        assert json.load(status)["ok"] is False
+        assert not list((tmp_path / "dimos/cache-users").glob("*.lock"))
+        assert not list(Path(scratch).glob("pymp-*"))
+
+
+@pytest.mark.parametrize("operation", ["set_inheritable", "fork", "waitpid"])
+def test_launcher_closes_status_pipe_on_error(tmp_path: Path, operation: str) -> None:
+    pipe = os.pipe()
+    try:
+        with (
+            mock.patch("os.pipe", return_value=pipe),
+            mock.patch("os.fork", return_value=123),
+            mock.patch(f"os.{operation}", side_effect=OSError(errno.EAGAIN, "unavailable")),
+            pytest.raises(OSError),
+        ):
+            fork_daemon(tmp_path)
+        for fd in pipe:
+            with pytest.raises(OSError) as closed:
+                os.fstat(fd)
+            assert closed.value.errno == errno.EBADF
+    finally:
+        for fd in pipe:
+            with suppress(OSError):
+                os.close(fd)
+
+
+def test_launcher_returns_status_pipe_for_auto_reaped_child(tmp_path: Path) -> None:
+    with (
+        mock.patch("os.fork", return_value=123),
+        mock.patch("os.waitpid", side_effect=ChildProcessError(errno.ECHILD, "auto-reaped")),
+    ):
+        _, fd = fork_daemon(tmp_path)
+    with os.fdopen(fd) as reader:
+        assert reader.read() == ""
 
 
 def test_reexecuted_daemon_consumes_status_pipe_once(
@@ -81,9 +140,15 @@ def test_grandchild_reexec_preserves_interpreter_and_arguments(
             mock.patch("os.fork", side_effect=[0, 0]) as fork,
             mock.patch("os.setsid") as setsid,
             mock.patch("os.execve", side_effect=OSError("exec unavailable")) as execve,
-            pytest.raises(OSError, match="exec unavailable"),
+            mock.patch("dimos.core.daemon.write_daemon_status") as report,
+            mock.patch("os._exit", side_effect=SystemExit(1)) as hard_exit,
+            pytest.raises(SystemExit),
         ):
             fork_daemon(tmp_path)
+        hard_exit.assert_called_once_with(1)
+        report.assert_called_once_with(
+            write_fd, {"ok": False, "error": "OSError: exec unavailable"}
+        )
         assert fork.call_count == 2
         setsid.assert_called_once_with()
         executable, argv, env = execve.call_args.args

@@ -40,7 +40,7 @@ from dimos.core.daemon import (
 )
 from dimos.core.global_config import global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
-from dimos.utils.cache import cache_usage_guard, cache_usage_locked
+from dimos.utils.cache import cache_usage_locked
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge.topic_descriptors import with_topic_metadata
 
@@ -182,7 +182,9 @@ def _mcp_url(blueprint: Blueprint, coordinator: ModuleCoordinator) -> str | None
 def run(
     ctx: typer.Context,
     robot_types: list[str] | None = typer.Argument(None, help="Blueprints or modules to run"),
-    daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
+    daemon: bool = typer.Option(
+        False, "--daemon", "-d", help="Run in background and report startup errors"
+    ),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
     choice: list[str] = typer.Option(
         [], "--choice", help="Select a blueprint alternative as NAME=OPTION; may be repeated"
@@ -412,7 +414,7 @@ def run(
             typer.echo("  Status:    dimos status")
             return
 
-        # Daemon grandchild: stdio still attached so build output streams.
+        # The re-executed daemon holds its own cache guard through @cache_usage_locked.
         started = False
 
         def ready(coordinator: ModuleCoordinator) -> None:
@@ -426,10 +428,7 @@ def run(
 
         entry.pid = os.getpid()
         try:
-            # The launcher's exit released the pre-fork cache-usage marker (shared
-            # flock); hold a fresh one for the daemon's lifetime.
-            with cache_usage_guard():
-                _run_registered(blueprint, parsed_config, entry, on_ready=ready)
+            _run_registered(blueprint, parsed_config, entry, on_ready=ready)
         except Exception as exc:
             if started:
                 raise
@@ -439,10 +438,8 @@ def run(
                 traceback.print_exc()
                 startup_error = f"{type(exc).__name__}: {exc}"
             write_daemon_status(status_fd, {"ok": False, "error": startup_error})
-            sys.stderr.flush()
-            # os._exit: never unwind the launcher's typer/atexit state in a
-            # forked image.
-            os._exit(1)
+            os.close(status_fd)
+            raise typer.Exit(1) from exc
     else:
         try:
             _run_registered(blueprint, parsed_config, entry)
