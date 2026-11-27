@@ -23,6 +23,7 @@ from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 
 if TYPE_CHECKING:
     import torch
+    from ultralytics.engine.results import Results
 
     from dimos.msgs.sensor_msgs.Image import Image
 
@@ -32,6 +33,13 @@ class Detection2DSeg(Detection2DBBox):
     """Represents a detection with a segmentation mask."""
 
     mask: np.ndarray[Any, np.dtype[np.uint8]]  # Binary mask [H, W], uint8 0 or 255
+
+    @classmethod
+    def from_ultralytics_result(cls, result: Results, idx: int, image: Image) -> Detection2DSeg:
+        # The adapter imports the detection types, so import it here to avoid a cycle.
+        from dimos.perception.detection.detectors.ultralytics_utils import seg_from_result
+
+        return seg_from_result(result, idx, image, detection_type=cls)
 
     @classmethod
     def from_sam2_result(

@@ -20,9 +20,13 @@ the `yolo` extra, and Ultralytics downloads the weights from its own servers.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
+from zipfile import is_zipfile
 
+from filelock import FileLock
 import numpy as np
 
 from dimos.constants import CACHE_DIR
@@ -30,6 +34,7 @@ from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBB
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
+from dimos.utils.data import get_data
 
 if TYPE_CHECKING:
     from ultralytics.engine.results import Results
@@ -54,11 +59,41 @@ def import_ultralytics() -> Any:
 
 
 def cache_path(name: str) -> Path:
-    """Where a file for Ultralytics is kept. It downloads missing weights there.
+    """Where a file for Ultralytics is kept.
 
     An absolute path stays as it is.
     """
     return CACHE_DIR / "ultralytics" / name
+
+
+def checkpoint_path(name: str, model_path: str | Path | None = None) -> Path:
+    """Resolve a custom model directory or atomically cache a downloaded checkpoint."""
+    path = get_data(model_path) / name if model_path is not None else cache_path(name)
+    complete: Callable[[Path], bool] = Path.exists
+    if model_path is None and name == path.name and path.suffix == ".pt":
+        # Only official cached checkpoints have a known format. A download from
+        # an older version can have the ZIP header but no central directory.
+        from ultralytics.utils.downloads import GITHUB_ASSETS_NAMES
+
+        if name in GITHUB_ASSETS_NAMES:
+            complete = is_zipfile
+    if complete(path):
+        return path
+
+    # Ultralytics writes directly to the path it receives. A worker starting
+    # during a download must only see the checkpoint after the download finishes.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with FileLock(path.with_name(f".{path.name}.lock")):
+        if not complete(path):
+            # This backend is optional and should only be imported on a YOLO cache miss.
+            from ultralytics.utils.downloads import attempt_download_asset
+
+            with TemporaryDirectory(dir=path.parent) as staging:
+                downloaded = Path(attempt_download_asset(Path(staging) / path.name))
+                if not complete(downloaded):
+                    raise OSError(f"Could not download a complete checkpoint for {name}")
+                downloaded.replace(path)
+    return path
 
 
 def detections_from_results(
@@ -101,7 +136,13 @@ def detections_from_results(
     return ImageDetections2D(image=image, detections=detections)
 
 
-def bbox_from_result(result: Results, idx: int, image: Image) -> Detection2DBBox:
+def bbox_from_result(
+    result: Results,
+    idx: int,
+    image: Image,
+    *,
+    detection_type: type[Detection2DBBox] = Detection2DBBox,
+) -> Detection2DBBox:
     """Create Detection2DBBox from ultralytics Results object.
 
     Args:
@@ -140,7 +181,7 @@ def bbox_from_result(result: Results, idx: int, image: Image) -> Detection2DBBox
     if hasattr(result.boxes, "id") and result.boxes.id is not None:
         track_id = int(result.boxes.id[idx].cpu())
 
-    return Detection2DBBox(
+    return detection_type(
         bbox=bbox,
         track_id=track_id,
         class_id=class_id,
@@ -151,7 +192,13 @@ def bbox_from_result(result: Results, idx: int, image: Image) -> Detection2DBBox
     )
 
 
-def person_from_result(result: Results, idx: int, image: Image) -> Detection2DPerson:
+def person_from_result(
+    result: Results,
+    idx: int,
+    image: Image,
+    *,
+    detection_type: type[Detection2DPerson] = Detection2DPerson,
+) -> Detection2DPerson:
     """Create Detection2DPerson from ultralytics Results object with pose keypoints.
 
     Args:
@@ -227,7 +274,7 @@ def person_from_result(result: Results, idx: int, image: Image) -> Detection2DPe
     # Get class name
     name = result.names.get(class_id, "person") if hasattr(result, "names") else "person"
 
-    return Detection2DPerson(
+    return detection_type(
         # Detection2DBBox fields
         bbox=bbox,
         track_id=track_id,
@@ -246,7 +293,13 @@ def person_from_result(result: Results, idx: int, image: Image) -> Detection2DPe
     )
 
 
-def seg_from_result(result: Results, idx: int, image: Image) -> Detection2DSeg:
+def seg_from_result(
+    result: Results,
+    idx: int,
+    image: Image,
+    *,
+    detection_type: type[Detection2DSeg] = Detection2DSeg,
+) -> Detection2DSeg:
     """Create Detection2DSeg from ultralytics Results object with segmentation mask.
 
     Args:
@@ -309,7 +362,7 @@ def seg_from_result(result: Results, idx: int, image: Image) -> Detection2DSeg:
         # Binarize mask
         mask = (mask_np > 0.5).astype(np.uint8) * 255
 
-    return Detection2DSeg(
+    return detection_type(
         bbox=bbox,
         track_id=track_id,
         class_id=class_id,

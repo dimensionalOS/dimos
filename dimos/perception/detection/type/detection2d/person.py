@@ -12,12 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.utils.decorators.decorators import simple_mcache
+
+if TYPE_CHECKING:
+    from ultralytics.engine.results import Results
+
+    from dimos.msgs.sensor_msgs.Image import Image
 
 
 @dataclass
@@ -58,7 +66,18 @@ class Detection2DPerson(Detection2DBBox):
     ]
 
     @classmethod
-    def from_ros_detection2d(cls, *args, **kwargs) -> "Detection2DPerson":  # type: ignore[no-untyped-def]
+    def from_ultralytics_result(cls, result: Results, idx: int, image: Image) -> Detection2DPerson:
+        # The adapter imports the detection types, so import it here to avoid a cycle.
+        from dimos.perception.detection.detectors.ultralytics_utils import person_from_result
+
+        return person_from_result(result, idx, image, detection_type=cls)
+
+    @classmethod
+    def from_yolo(cls, result: Results, idx: int, image: Image) -> Detection2DPerson:
+        return cls.from_ultralytics_result(result, idx, image)
+
+    @classmethod
+    def from_ros_detection2d(cls, *args, **kwargs) -> Detection2DPerson:  # type: ignore[no-untyped-def]
         """Conversion from ROS Detection2D is not supported for Detection2DPerson.
 
         The ROS Detection2D message format does not include keypoint data,

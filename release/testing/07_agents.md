@@ -166,6 +166,7 @@ Expected result: `generate` prints "Generated N VQA case(s)" with the dataset di
 The `xarm6-worldbelief` hardware blueprint has a broken TF tree, so this check runs its `scan` and `recall` skills on a recorded xArm6 session. The first run downloads the detector and embedding models.
 
 ```bash
+uv sync --extra yolo --inexact
 uv run python -c "from dimos.utils.data import get_data; print(get_data('xarm6_worldbelief_realsense_d435i_stationery_calibrated/xarm6_worldbelief_20260729_203624_161992.db'))"
 uv run dimos --replay run world-belief-module mcp-server --daemon --worldbeliefmodule.db-path <printed-path>
 # The start prints "WorldBelief scan models warmed up" before it returns; no separate wait is needed.

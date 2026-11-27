@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import MagicMock
+from typing import Any
 
 import numpy as np
 import pytest
@@ -20,15 +20,34 @@ import torch
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.detection.detectors.dfine import DFineDetector
+from dimos.perception.detection.module2D import _default_detector
 
 
-def test_process_image_converts_the_model_output() -> None:
+def test_default_detector_reports_missing_processor_at_startup(mocker: Any) -> None:
+    mocker.patch("transformers.DFineForObjectDetection.from_pretrained")
+    mocker.patch("transformers.AutoImageProcessor.from_pretrained", side_effect=OSError("offline"))
+
+    with pytest.raises(OSError, match="offline"):
+        _default_detector()
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_rejects_low_precision_on_cpu(dtype: torch.dtype) -> None:
+    with pytest.raises(ValueError, match="Use float32"):
+        DFineDetector(device="cpu", dtype=dtype, autostart=True)
+
+
+def test_process_image_converts_the_model_output(mocker: Any) -> None:
     """COCO names, boxes clipped to the image, and no box without an area."""
     image = Image(data=np.zeros((48, 64, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=12.5)
-    detector = DFineDetector(device="cpu", threshold=0.4)
-    model = MagicMock()
+    model_loader = mocker.patch("transformers.DFineForObjectDetection.from_pretrained")
+    model = model_loader.return_value.eval.return_value.to.return_value
     model.config.id2label = {0: "person", 62: "tvmonitor"}
-    processor = MagicMock()
+    processor = mocker.patch("transformers.AutoImageProcessor.from_pretrained").return_value
+    processor.return_value = {
+        "pixel_values": torch.ones(1),
+        "pixel_mask": torch.ones(1, dtype=torch.long),
+    }
     processor.post_process_object_detection.return_value = [
         {
             "boxes": torch.tensor(
@@ -38,12 +57,13 @@ def test_process_image_converts_the_model_output() -> None:
             "labels": torch.tensor([0, 62, 0]),
         }
     ]
-    # Both are cached properties. Setting them skips the download.
-    detector.__dict__["_model"] = model
-    detector.__dict__["_processor"] = processor
+    detector = DFineDetector(device="cpu", dtype=torch.float64, threshold=0.4)
 
     detections = detector.process_image(image)
 
+    model_loader.assert_called_once_with(detector.model_name, torch_dtype=torch.float64)
+    assert model.call_args.kwargs["pixel_values"].dtype == torch.float64
+    assert model.call_args.kwargs["pixel_mask"].dtype == torch.long
     assert processor.post_process_object_detection.call_args.kwargs["threshold"] == 0.4
     assert processor.post_process_object_detection.call_args.kwargs["target_sizes"] == [(48, 64)]
     person, tv = detections.detections

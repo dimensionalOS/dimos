@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.detectors.ultralytics_utils import (
-    cache_path,
+    checkpoint_path,
     detections_from_results,
     import_ultralytics,
 )
@@ -29,10 +31,13 @@ logger = setup_logger()
 class Yolo2DDetector(Detector):
     def __init__(
         self,
+        model_path: str | Path | None = None,
         model_name: str = "yolo11n.pt",
         device: str | None = None,
     ) -> None:
-        self.model = import_ultralytics().YOLO(cache_path(model_name), task="detect")
+        self.model = import_ultralytics().YOLO(
+            checkpoint_path(model_name, model_path), task="detect"
+        )
 
         if device:
             self.device = device

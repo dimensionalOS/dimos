@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from dimos_lcm.vision_msgs import Detection2D
 import numpy as np
 import pytest
 
@@ -18,6 +19,15 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+
+
+@pytest.mark.parametrize(("wire_id", "expected"), [("--17", 0), ("camera-A", 0), ("42", 42)])
+def test_decodes_external_track_ids(wire_id: str, expected: int) -> None:
+    image = Image(data=np.zeros((2, 2, 3), dtype=np.uint8), format=ImageFormat.RGB)
+
+    detection = Detection2DBBox.from_ros_detection2d(Detection2D(id=wire_id), image=image)
+
+    assert detection.track_id == expected
 
 
 def test_name_score_and_track_survive_the_wire() -> None:

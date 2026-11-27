@@ -39,7 +39,7 @@ def _default_detector() -> Detector:
     # Not at the top of the file: it imports torch, which takes seconds.
     from dimos.perception.detection.detectors.dfine import DFineDetector
 
-    return DFineDetector()
+    return DFineDetector(autostart=True)
 
 
 class Config(ModuleConfig):

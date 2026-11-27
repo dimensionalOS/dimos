@@ -919,6 +919,24 @@ wheels = [
 ]
 
 [[package]]
+name = "clip-anytorch"
+version = "2.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "ftfy" },
+    { name = "regex" },
+    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/98/26/85f9a52aedf8129b42a7416a3ec082c05822d9acd4f98bd7caaa811f657c/clip-anytorch-2.6.0.tar.gz", hash = "sha256:a827e4a64edbf72db01641b85ba88d37c4aff64ba3ffd4e3f7091a68e7e2badf", size = 1377219, upload-time = "2024-01-13T15:21:35.712Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/88/14/19d5ff584cb58f654d22d8d6552d7c2fff7b85e4a9d525357f62a4d1e7e0/clip_anytorch-2.6.0-py3-none-any.whl", hash = "sha256:ebc0afed243851b9dc7e16ab8afb665237e8a5838986e97cd99f123ae4ce94ce", size = 1372891, upload-time = "2024-01-13T15:21:33.903Z" },
+]
+
+[[package]]
 name = "cloudpickle"
 version = "3.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2204,6 +2222,7 @@ webrtc = [
     { name = "av" },
 ]
 yolo = [
+    { name = "clip-anytorch" },
     { name = "lap" },
     { name = "ultralytics" },
 ]
@@ -2419,6 +2438,7 @@ requires-dist = [
     { name = "cbor2", specifier = ">=6.1.5,<7" },
     { name = "cel-expr-python", specifier = "==0.1.4" },
     { name = "chromadb", marker = "extra == 'perception'", specifier = ">=1.0.0" },
+    { name = "clip-anytorch", marker = "extra == 'yolo'", specifier = ">=2.6" },
     { name = "cmeel-tinyxml2", specifier = ">=11,<12" },
     { name = "coacd", marker = "extra == 'scene'", specifier = ">=1.0.0" },
     { name = "cryptography", specifier = ">=46.0.5" },
@@ -3327,6 +3347,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/51/7c/f60c259dcbf4f0c47cc4ddb8f7720d2dcdc8888c8e5ad84c73ea4531cc5b/fsspec-2026.2.0.tar.gz", hash = "sha256:6544e34b16869f5aacd5b90bdf1a71acb37792ea3ddf6125ee69a22a53fb8bff", size = 313441, upload-time = "2026-02-05T21:50:53.743Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e6/ab/fb21f4c939bb440104cc2b396d3be1d9b7a9fd3c6c2a53d98c45b3d7c954/fsspec-2026.2.0-py3-none-any.whl", hash = "sha256:98de475b5cb3bd66bedd5c4679e87b4fdfe1a3bf4d707b151b3c07e58c9a2437", size = 202505, upload-time = "2026-02-05T21:50:51.819Z" },
+]
+
+[[package]]
+name = "ftfy"
+version = "6.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "wcwidth" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a5/d3/8650919bc3c7c6e90ee3fa7fd618bf373cbbe55dff043bd67353dbb20cd8/ftfy-6.3.1.tar.gz", hash = "sha256:9b3c3d90f84fb267fe64d375a07b7f8912d817cf86009ae134aa03e1819506ec", size = 308927, upload-time = "2024-10-26T00:50:35.149Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/6e/81d47999aebc1b155f81eca4477a616a70f238a2549848c38983f3c22a82/ftfy-6.3.1-py3-none-any.whl", hash = "sha256:7c70eb532015cd2f9adb53f101fb6c7945988d023a085d127d1573dc49dd0083", size = 44821, upload-time = "2024-10-26T00:50:33.425Z" },
 ]
 
 [[package]]

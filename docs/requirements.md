@@ -57,7 +57,7 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 | `misc` | Extra models, embeddings, hardware SDKs | edgetam, timm, xarm-sdk | Varies |
 | `base` | Standard stack (agents + web + viz) | langchain, fastapi, rerun-sdk | No |
 | `dds` | DDS transport (CycloneDDS) | cyclonedds | No |
-| `yolo` | YOLO detectors. Opt-in, see below | ultralytics, lap | Optional |
+| `yolo` | YOLO detectors. Opt-in, see below | ultralytics, lap, clip-anytorch | Optional |
 
 ### YOLO is opt-in
 
@@ -69,7 +69,7 @@ The YOLO detectors (`Yolo2DDetector`, `YoloPersonDetector`, `Yoloe2DDetector`) n
 uv sync --extra yolo --inexact
 ```
 
-Ultralytics downloads its weights from its own servers on first use, into `~/.cache/dimos/ultralytics`.
+On first use, dimOS downloads YOLO detector checkpoints into `~/.cache/dimos/ultralytics`. YOLO-E text prompts use the CLIP tokenizer included in the `yolo` extra. For the YOLO-E 11 models, Ultralytics also looks for `mobileclip_blt.ts` in the working directory or its configured `weights_dir`. If missing, it downloads this text encoder into the working directory. For offline runs, place the encoder in either location before starting the detector.
 
 ## Headless / Server Environments
 

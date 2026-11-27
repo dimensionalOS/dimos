@@ -23,6 +23,8 @@ from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.imageDetections import ImageDetections
 
 if TYPE_CHECKING:
+    from ultralytics.engine.results import Results
+
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 
@@ -45,3 +47,12 @@ class ImageDetections2D(ImageDetections[T2D], Generic[T2D]):
                 detections.append(detection)
 
         return ImageDetections2D(image=image, detections=detections)
+
+    @classmethod
+    def from_ultralytics_result(
+        cls, image: Image, results: list[Results]
+    ) -> ImageDetections2D[Detection2DBBox]:
+        # The adapter imports ImageDetections2D, so import it here to avoid a cycle.
+        from dimos.perception.detection.detectors.ultralytics_utils import detections_from_results
+
+        return detections_from_results(image, results)

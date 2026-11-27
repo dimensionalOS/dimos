@@ -59,12 +59,21 @@ class DFineDetector(HuggingFaceModel, Detector):
 
     @cached_property
     def _model(self):  # type: ignore[no-untyped-def]
+        # Reduced precision in the CPU kernels can produce invalid detection scores.
+        if torch.device(self.device).type == "cpu" and self.dtype in (
+            torch.float16,
+            torch.bfloat16,
+        ):
+            raise ValueError(
+                "Use float32 for D-FINE on CPU. FP16 and BF16 can produce invalid scores."
+            )
+
         # Not at the top of the file: importing transformers takes seconds.
         from transformers import DFineForObjectDetection
 
         self._ensure_cuda_initialized()
         return (
-            DFineForObjectDetection.from_pretrained(self.config.model_name)
+            DFineForObjectDetection.from_pretrained(self.config.model_name, torch_dtype=self.dtype)
             .eval()
             .to(self.config.device)
         )
@@ -77,13 +86,17 @@ class DFineDetector(HuggingFaceModel, Detector):
         # The torch processor resizes on the model's device. The PIL one costs 5 ms more.
         return AutoImageProcessor.from_pretrained(self.config.model_name, use_fast=True)
 
+    def start(self) -> None:
+        super().start()
+        self._processor  # noqa: B018 -- load preprocessing alongside the weights at startup
+
     def process_image(self, image: Image) -> ImageDetections2D:
         """Detect the COCO classes in the image. Boxes below the threshold are dropped."""
         with torch.inference_mode():
             inputs = self._processor(
                 images=image.to_rgb().data, return_tensors="pt", device=self.config.device
             )
-            outputs = self._model(**inputs)
+            outputs = self._model(**self._move_inputs_to_device(inputs))
             results = self._processor.post_process_object_detection(
                 outputs,
                 threshold=self.config.threshold,

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from enum import Enum
+from pathlib import Path
 import threading
 from typing import Any
 
@@ -23,7 +24,7 @@ import torch
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.detectors.ultralytics_utils import (
-    cache_path,
+    checkpoint_path,
     detections_from_results,
     import_ultralytics,
 )
@@ -43,6 +44,7 @@ class YoloePromptMode(Enum):
 class Yoloe2DDetector(Detector):
     def __init__(
         self,
+        model_path: str | Path | None = None,
         model_name: str | None = None,
         device: str | None = None,
         prompt_mode: YoloePromptMode = YoloePromptMode.LRPC,
@@ -54,6 +56,7 @@ class Yoloe2DDetector(Detector):
         Initialize YOLO-E 2D detector.
 
         Args:
+            model_path: Custom model directory, resolved with get_data.
             model_name: Model filename. Defaults based on prompt_mode. Ultralytics
                 downloads it when it is missing.
             device: Device to run inference on ('cuda', 'cpu', or None for auto).
@@ -68,7 +71,7 @@ class Yoloe2DDetector(Detector):
             else:
                 model_name = "yoloe-11s-seg.pt"
 
-        self.model = import_ultralytics().YOLOE(cache_path(model_name))
+        self.model = import_ultralytics().YOLOE(checkpoint_path(model_name, model_path))
         self.prompt_mode = prompt_mode
         self._text_prompts: tuple[str, ...] | None = None
         self._visual_prompts: dict[str, NDArray[Any]] | None = None

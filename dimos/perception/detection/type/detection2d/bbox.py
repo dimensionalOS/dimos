@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from typing_extensions import Self
+    from ultralytics.engine.results import Results
 
     from dimos.msgs.sensor_msgs.Image import Image
 
@@ -208,6 +209,13 @@ class Detection2DBBox(Detection2D):
 
         return True
 
+    @classmethod
+    def from_ultralytics_result(cls, result: Results, idx: int, image: Image) -> Detection2DBBox:
+        # The adapter imports the detection types, so import it here to avoid a cycle.
+        from dimos.perception.detection.detectors.ultralytics_utils import bbox_from_result
+
+        return bbox_from_result(result, idx, image, detection_type=cls)
+
     def get_bbox_center(self) -> CenteredBbox:
         x1, y1, x2, y2 = self.bbox
         center_x = (x1 + x2) / 2.0
@@ -253,7 +261,10 @@ class Detection2DBBox(Detection2D):
             confidence = hypothesis.score
 
         # Extract track_id. -1 is a detection without a track.
-        track_id = int(ros_det.id) if ros_det.id.lstrip("-").isdigit() else 0
+        try:
+            track_id = int(ros_det.id)
+        except ValueError:
+            track_id = 0
 
         # Extract timestamp
         ts = to_timestamp(ros_det.header.stamp)

@@ -281,6 +281,7 @@ perception = [
 yolo = [
     "ultralytics>=8.3.70",
     "lap>=0.5.12",  # the Ultralytics trackers
+    "clip-anytorch>=2.6",  # clip.tokenize for YOLO-E text prompts
 ]
 
 unitree = [
