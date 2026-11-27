@@ -378,3 +378,30 @@ def test_stop_during_route_search_discards_its_result(
     assert start.call_count == len(paths) == int(resubmit)
     assert planner.get_goal_cancel_reason() == (None if resubmit else "Operator stop")
     assert outcomes == [False]
+
+
+def test_superseded_goal_is_marked_replaced_and_stale_cancel_is_ignored(
+    mapped_planner: GlobalPlanner,
+) -> None:
+    planner = mapped_planner
+    planner.handle_odom(PoseStamped(position=[1.0, 1.0, 0.3]))
+    first = PoseStamped(ts=100.0, position=[3.0, 1.0, 0.3], frame_id="world")
+    second = PoseStamped(ts=101.0, position=[1.0, 4.0, 0.3], frame_id="world")
+
+    planner.handle_goal_request(first)
+    planner._local_planner._change_state("path_following")
+    planner.handle_goal_request(second)
+    planner._local_planner._change_state("path_following")
+
+    assert not planner.is_goal_reached(first)
+    assert planner.is_goal_cancelled(first)
+    assert planner.get_goal_cancel_reason(first) == "replaced by a newer goal"
+    assert not planner.cancel_goal(reason="Stale timeout", goal=first)
+    assert planner.get_state() == NavigationState.FOLLOWING_PATH
+    assert planner.get_goal_cancel_reason(second) is None
+
+    planner._handle_stop_message("arrived")
+
+    assert planner.is_goal_reached(second)
+    assert not planner.is_goal_reached(first)
+    assert planner.get_goal_cancel_reason(first) == "replaced by a newer goal"

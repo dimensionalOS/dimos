@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import OrderedDict
+from dataclasses import dataclass
 import math
 from threading import Event, RLock, Thread, current_thread
 import time
+from typing import TypeAlias
 
 from dimos_lcm.std_msgs import Bool
 import numpy as np
@@ -41,6 +44,30 @@ from dimos.utils.trigonometry import angle_diff
 
 logger = setup_logger()
 
+_MAX_GOAL_OUTCOMES = 32
+_GoalKey: TypeAlias = tuple[int, str, float, float, float, float, float, float, float]
+
+
+@dataclass
+class _GoalOutcome:
+    reached: bool = False
+    cancelled: bool = False
+    reason: str | None = None
+
+
+def _goal_key(goal: PoseStamped) -> _GoalKey:
+    return (
+        round(goal.ts * 1_000_000),
+        goal.frame_id,
+        round(goal.position.x, 6),
+        round(goal.position.y, 6),
+        round(goal.position.z, 6),
+        round(goal.orientation.x, 6),
+        round(goal.orientation.y, 6),
+        round(goal.orientation.z, 6),
+        round(goal.orientation.w, 6),
+    )
+
 
 class GlobalPlanner(Resource):
     path: Subject[Path]
@@ -52,6 +79,7 @@ class GlobalPlanner(Resource):
     _goal_reached: bool = False
     _goal_cancel_reason: str | None = None
     _goal_cancelled: bool = False
+    _goal_outcomes: OrderedDict[_GoalKey, _GoalOutcome]
     _thread: Thread | None = None
 
     _navigation_map: NavigationMap
@@ -109,6 +137,7 @@ class GlobalPlanner(Resource):
         self._stop_planner = Event()
         self._replan_event = Event()
         self._replan_reason = None
+        self._goal_outcomes = OrderedDict()
         self._lock = RLock()
         self._reset_safe_goal_clearance()
 
@@ -145,10 +174,23 @@ class GlobalPlanner(Resource):
         self._navigation_map.update(msg)
         self._navigation_map_near.update(msg)
 
+    def _record_goal_outcome(self, goal: PoseStamped, outcome: _GoalOutcome) -> None:
+        key = _goal_key(goal)
+        self._goal_outcomes[key] = outcome
+        self._goal_outcomes.move_to_end(key)
+        while len(self._goal_outcomes) > _MAX_GOAL_OUTCOMES:
+            self._goal_outcomes.popitem(last=False)
+
     def handle_goal_request(self, goal: PoseStamped) -> None:
         logger.info("Got new goal", goal=str(goal))
         with self._lock:
+            if self._current_goal is not None and _goal_key(self._current_goal) != _goal_key(goal):
+                self._record_goal_outcome(
+                    self._current_goal,
+                    _GoalOutcome(cancelled=True, reason="replaced by a newer goal"),
+                )
             self._current_goal = goal
+            self._record_goal_outcome(goal, _GoalOutcome())
             self._goal_reached = False
             self._goal_cancel_reason = None
             self._goal_cancelled = False
@@ -171,15 +213,21 @@ class GlobalPlanner(Resource):
         arrived: bool = False,
         reason: str = "GlobalPlanner.cancel_goal: cancellation requested",
         failed: bool = False,
-    ) -> None:
+        goal: PoseStamped | None = None,
+    ) -> bool:
         """Stop motion, retaining whether the goal failed or was externally cancelled."""
         with self._lock:
+            if goal is not None and (
+                self._current_goal is None or _goal_key(self._current_goal) != _goal_key(goal)
+            ):
+                return False
+
             # Claim the terminal outcome once, even while the local controller
             # is still stopping. Later stop requests must preserve its reason.
             if self._current_goal is None:
                 if self._local_planner.get_state() != NavigationState.IDLE:
                     self._local_planner.stop_planning()
-                return
+                return False
 
             if not but_will_try_again or self._local_planner.get_state() != NavigationState.IDLE:
                 logger.info(
@@ -193,10 +241,19 @@ class GlobalPlanner(Resource):
             self._position_tracker.reset_data()
 
             if not but_will_try_again:
+                active_goal = self._current_goal
                 self._current_goal = None
                 self._goal_reached = arrived
                 self._goal_cancel_reason = None if arrived else reason
                 self._goal_cancelled = not arrived and not failed
+                self._record_goal_outcome(
+                    active_goal,
+                    _GoalOutcome(
+                        reached=arrived,
+                        cancelled=self._goal_cancelled,
+                        reason=self._goal_cancel_reason,
+                    ),
+                )
                 self._replan_limiter.reset()
 
             self._local_planner.stop_planning()
@@ -204,6 +261,7 @@ class GlobalPlanner(Resource):
 
             if not but_will_try_again:
                 self.goal_reached.on_next(Bool(arrived))
+            return True
 
     def set_replanning_enabled(self, enabled: bool) -> None:
         with self._lock:
@@ -212,17 +270,34 @@ class GlobalPlanner(Resource):
     def get_state(self) -> NavigationState:
         return self._local_planner.get_state()
 
-    def is_goal_reached(self) -> bool:
+    def is_goal_reached(self, goal: PoseStamped | None = None) -> bool:
         with self._lock:
-            return self._goal_reached
+            if goal is None:
+                return self._goal_reached
+            outcome = self._goal_outcomes.get(_goal_key(goal))
+            return False if outcome is None else outcome.reached
 
-    def is_goal_cancelled(self) -> bool:
+    def is_goal_cancelled(self, goal: PoseStamped | None = None) -> bool:
         with self._lock:
-            return self._goal_cancelled
+            if goal is None:
+                return self._goal_cancelled
+            outcome = self._goal_outcomes.get(_goal_key(goal))
+            if outcome is None:
+                return len(self._goal_outcomes) >= _MAX_GOAL_OUTCOMES
+            return outcome.cancelled
 
-    def get_goal_cancel_reason(self) -> str | None:
+    def get_goal_cancel_reason(self, goal: PoseStamped | None = None) -> str | None:
         with self._lock:
-            return self._goal_cancel_reason
+            if goal is None:
+                return self._goal_cancel_reason
+            outcome = self._goal_outcomes.get(_goal_key(goal))
+            if outcome is None:
+                return (
+                    "replaced by a newer goal"
+                    if len(self._goal_outcomes) >= _MAX_GOAL_OUTCOMES
+                    else None
+                )
+            return outcome.reason
 
     @property
     def cmd_vel(self) -> Subject[Twist]:

@@ -42,19 +42,23 @@ class StubNavigation(Module):
         return NavigationState.IDLE
 
     @rpc
-    def is_goal_reached(self) -> bool:
+    def is_goal_reached(self, goal: PoseStamped | None = None) -> bool:
         return False
 
     @rpc
-    def get_goal_cancel_reason(self) -> str | None:
+    def get_goal_cancel_reason(self, goal: PoseStamped | None = None) -> str | None:
         return None
 
     @rpc
-    def is_goal_cancelled(self) -> bool:
+    def is_goal_cancelled(self, goal: PoseStamped | None = None) -> bool:
         return False
 
     @rpc
-    def cancel_goal(self, reason: str = "cancel_goal RPC: cancellation requested") -> bool:
+    def cancel_goal(
+        self,
+        reason: str = "cancel_goal RPC: cancellation requested",
+        goal: PoseStamped | None = None,
+    ) -> bool:
         return True
 
 
