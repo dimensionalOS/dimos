@@ -20,7 +20,6 @@ import torch
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.detection.detectors.dfine import DFineDetector
-from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 
 
 def test_process_image_converts_the_model_output() -> None:
@@ -54,5 +53,3 @@ def test_process_image_converts_the_model_output() -> None:
     assert (person.ts, person.image) == (12.5, image)
     assert (tv.name, tv.class_id) == ("tv", 62)
     assert tv.bbox == (40.0, 10.0, 60.0, 20.0)
-    # A box without a track keeps -1 through the ROS message.
-    assert Detection2DBBox.from_ros_detection2d(tv.to_ros_detection2d(), image=image).track_id == -1

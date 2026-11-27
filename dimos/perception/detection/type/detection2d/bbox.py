@@ -243,12 +243,13 @@ class Detection2DBBox(Detection2D):
         y2 = center_y + height / 2.0
         bbox = (x1, y1, x2, y2)
 
-        # Extract hypothesis info
-        class_id = 0
+        # Extract hypothesis info. The class is one string on the wire. It carries
+        # the name, so the numeric class id is not known here.
+        name = ""
         confidence = 0.0
         if ros_det.results:
             hypothesis = ros_det.results[0].hypothesis
-            class_id = hypothesis.class_id
+            name = hypothesis.class_id
             confidence = hypothesis.score
 
         # Extract track_id. -1 is a detection without a track.
@@ -257,12 +258,12 @@ class Detection2DBBox(Detection2D):
         # Extract timestamp
         ts = to_timestamp(ros_det.header.stamp)
 
-        name = kwargs.pop("name", f"class_{class_id}")
+        name = kwargs.pop("name", name)
 
         return cls(
             bbox=bbox,
             track_id=track_id,
-            class_id=class_id,
+            class_id=-1,
             confidence=confidence,
             name=name,
             ts=ts,
@@ -271,12 +272,15 @@ class Detection2DBBox(Detection2D):
 
     def to_ros_detection2d(self) -> ROSDetection2D:
         return ROSDetection2D(
+            # Without the length the encoder writes no results.
+            results_length=1,
             header=Header(self.ts, "camera_link"),
             bbox=self.to_ros_bbox(),
             results=[
                 ObjectHypothesisWithPose(
                     ObjectHypothesis(
-                        class_id=self.class_id,
+                        # A string on the wire. Readers show it as the label.
+                        class_id=self.name,
                         score=self.confidence,
                     )
                 )

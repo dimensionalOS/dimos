@@ -11,7 +11,37 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import numpy as np
 import pytest
+
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
+from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+
+
+def test_name_score_and_track_survive_the_wire() -> None:
+    image = Image(data=np.zeros((48, 64, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=12.5)
+    detection = Detection2DBBox(
+        bbox=(1.0, 2.0, 30.0, 40.0),
+        track_id=-1,
+        class_id=56,
+        confidence=0.9,
+        name="chair",
+        ts=12.5,
+        image=image,
+    )
+    message = ImageDetections2D(image=image, detections=[detection]).to_ros_detection2d_array()
+
+    decoded = Detection2DArray.lcm_decode(message.lcm_encode())
+
+    assert decoded.to_json() == [
+        {"label": "chair", "score": 0.9, "bbox": {"cx": 15.5, "cy": 21.0, "w": 29.0, "h": 38.0}}
+    ]
+    (recovered,) = ImageDetections2D.from_ros_detection2d_array(image, decoded).detections
+    assert (recovered.name, recovered.confidence, recovered.bbox) == ("chair", 0.9, detection.bbox)
+    # -1 is a detection without a track. The wire has no numeric class id.
+    assert (recovered.track_id, recovered.class_id) == (-1, -1)
 
 
 @pytest.mark.self_hosted

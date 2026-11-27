@@ -75,6 +75,8 @@ class Detection2DPoint(Detection2D):
     def to_ros_detection2d(self) -> ROSDetection2D:
         """Convert point to ROS Detection2D message (as zero-size bbox at point)."""
         return ROSDetection2D(
+            # Without the length the encoder writes no results.
+            results_length=1,
             header=Header(self.ts, "camera_link"),
             bbox=BoundingBox2D(
                 center=Pose2D(
@@ -87,7 +89,8 @@ class Detection2DPoint(Detection2D):
             results=[
                 ObjectHypothesisWithPose(
                     ObjectHypothesis(
-                        class_id=self.class_id,
+                        # A string on the wire. Readers show it as the label.
+                        class_id=self.name,
                         score=self.confidence,
                     )
                 )
