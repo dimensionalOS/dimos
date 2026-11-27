@@ -90,8 +90,9 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
         ctx = kwargs.pop("ctx")
         overrides = {k: v for k, v in kwargs.items() if v is not None}
         ctx.obj = overrides
-        # Apply overrides (e.g. --transport, --viewer) to the process-global config
-        # up front so every subcommand honors flags given before the subcommand name.
+        # These commands resolve root options together with their own config sources.
+        if ctx.invoked_subcommand in {"run", "rerun-bridge"}:
+            return
         try:
             global_config.update(**overrides)
         except ValidationError as error:
