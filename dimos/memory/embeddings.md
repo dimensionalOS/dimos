@@ -19,7 +19,7 @@ class Observation(Generic[T]):
 
 @dataclass
 class EmbeddedObservation(Observation[T]):
-    embedding: Embedding | None = None       # populated by Embed transformer
+    embedding: Embedding | None = None       # populated by EmbedImages / EmbedText
     similarity: float | None = None          # populated by .search()
 ```
 
@@ -29,23 +29,26 @@ Users who don't care about types just use `Observation`. Users who want precisio
 `derive()` on `Observation` promotes to `EmbeddedObservation` if `embedding=` is passed.
 `derive()` on `EmbeddedObservation` returns `EmbeddedObservation`, preserving the embedding unless explicitly replaced.
 
-## Embed Transformer
+## EmbedImages and EmbedText Transformers
 
-`Embed` is `Transformer[T, T]` — same data type in and out. It populates `.embedding` on each observation:
+`EmbedImages` and `EmbedText` (`dimos.memory.embed`) are `Transformer[Any, Any]` — same payload type in and out, enriching each observation with `.embedding`:
 
 ```python
-class Embed(Transformer[T, T]):
-    def __init__(self, model: EmbeddingModel):
+class EmbedImages(Transformer[Any, Any]):
+    def __init__(self, model: EmbeddingModel, batch_size: int = 32) -> None:
         self.model = model
+        self.batch_size = batch_size
 
     def __call__(self, upstream):
-        for batch in batched(upstream, 32):
-            vecs = self.model.embed_batch([obs.data for obs in batch])
-            for obs, vec in zip(batch, vecs):
-                yield obs.derive(data=obs.data, embedding=vec)
+        for batch in _batched(upstream, self.batch_size):
+            embeddings = self.model.embed(*[obs.data for obs in batch])
+            if not isinstance(embeddings, list):
+                embeddings = [embeddings]
+            for obs, emb in zip(batch, embeddings, strict=False):
+                yield obs.derive(data=obs.data, embedding=emb)
 ```
 
-`Stream[Image]` stays `Stream[Image]` after embedding — `T` is about `.data`, not the observation subclass.
+`EmbedText(model, batch_size=32)` does the same for text payloads via `model.embed_text(*texts)`. `Stream[Image]` stays `Stream[Image]` after embedding — `T` is about `.data`, not the observation subclass.
 
 ## Search
 
@@ -54,13 +57,13 @@ class Embed(Transformer[T, T]):
 ```python
 query_vec = clip.embed_text("a cat in the kitchen")
 
-results = images.transform(Embed(clip)).search(query_vec, k=20).to_list()
+results = images.transform(EmbedImages(clip)).search(query_vec, k=20).to_list()
 # results[0].data       → Image
-# results[0].embedding  → np.ndarray
+# results[0].embedding  → Embedding
 # results[0].similarity → 0.93
 
 # Chainable with other filters
-results = images.transform(Embed(clip)) \
+results = images.transform(EmbedImages(clip)) \
     .search(query_vec, k=50) \
     .after(one_hour_ago) \
     .near(kitchen_pose, 5.0) \
@@ -73,8 +76,10 @@ The Backend composite decides how to route storage based on what it sees:
 
 - `append(image, ts=now, embedding=vec)` → backend routes: blob via BlobStore, vector via VectorStore, metadata via ObservationStore
 - `append(image, ts=now)` → blob + metadata only (no embedding)
-- `ListObservationStore`: stores metadata in-memory, brute-force cosine via MemoryVectorStore
-- `SqliteObservationStore`: metadata in SQLite, vec0 side table for fast ANN search via SqliteVectorStore
+- `MemoryStore` (`ListObservationStore`): keeps `EmbeddedObservation` in memory and scores `.search()` with brute-force cosine (or delegates to `MemoryVectorStore` when configured)
+- `SqliteStore` (`SqliteObservationStore` + `SqliteVectorStore`): stores metadata in SQLite and vectors in a `vec0` virtual table for `.search()` (plain iteration without `.search()` loads metadata and blobs only, without `.embedding`)
+- `McapStore` (`McapObservationStore`): read-only with no vector store (`vector_store=None`); compute embeddings in an upstream `EmbedImages` / `EmbedText` transform to `.search()` in memory
+- `NullStore`: `MemoryStore(max_size=0)`, live-only with no retained history
 - Future backends (Postgres/pgvector, Qdrant, etc.) do their thing
 
 Search is pushed down to the VectorStore. Stream just passes `.search()` calls through.
@@ -99,13 +104,13 @@ source_image = images.at(detection.ts).first()
 **Same embedding space = same stream.** CLIP maps images and text to the same 512-d space:
 
 ```python
-unified = store.stream("clip_unified")
+unified = store.stream("clip_unified", object)
 
-for obs in images.transform(Embed(clip.vision)):
+for obs in images.transform(EmbedImages(clip)):
     unified.append(obs.data, ts=obs.ts,
                    tags={"modality": "image"}, embedding=obs.embedding)
 
-for obs in logs.transform(Embed(clip.text)):
+for obs in logs.transform(EmbedText(clip)):
     unified.append(obs.data, ts=obs.ts,
                    tags={"modality": "text"}, embedding=obs.embedding)
 
@@ -120,29 +125,30 @@ results = unified.search(query_vec, k=20).to_list()
 ```python
 smoke_query = clip.embed_text("smoke or fire")
 
-detections = images.transform(Embed(clip)) \
+detections = images.transform(EmbedImages(clip)) \
     .search(smoke_query, k=100) \
     .transform(ExpensiveVLMDetector())
 # VLM only runs on 100 most promising frames
 
 # Smart transformer can use embedding directly
 class SmartDetector(Transformer[Image, Detection]):
-    def __call__(self, upstream: Iterator[EmbeddedObservation[Image]]) -> ...:
+    def __call__(self, upstream: Iterator[EmbeddedObservation[Image]]) -> Iterator[Observation[Detection]]:
         for obs in upstream:
             if obs.embedding @ self.query > 0.3:
                 yield obs.derive(data=self.detect(obs.data))
 ```
 
-## Text Search (FTS) — Separate Concern
+## Text Search — Separate Concern
 
-FTS is keyword-based, not embedding-based. Complementary, not competing:
+`.search_text()` is case-insensitive substring matching (`MemoryStore`, `McapStore`, and transform streams; `SqliteStore` raises `NotImplementedError` on stored streams — there is no FTS5 index). Semantic search uses embeddings (`MemoryStore` and `SqliteStore`):
 
 ```python
-# Keyword search via FTS5
-logs = store.stream("logs")
+# Substring search (MemoryStore, McapStore, or after a transform; not SqliteStore)
+logs = memory_store.stream("logs", str)
 logs.search_text("motor fault").to_list()
 
-# Semantic search via embeddings
-log_idx = logs.transform(Embed(sentence_model)).store("log_emb")
-log_idx.search(model.embed("motor problems"), k=10).to_list()
+# Semantic search via embeddings (MemoryStore or SqliteStore)
+log_idx = store.stream("log_emb", str)
+logs.transform(EmbedText(clip)).save(log_idx).drain()
+log_idx.search(clip.embed_text("motor problems"), k=10).to_list()
 ```

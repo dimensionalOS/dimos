@@ -67,7 +67,7 @@ This is the **default fallback**. ObservationStore implementations are free to p
 | Ordering       | `sorted()` materialization            | SQL ORDER BY                     |
 | Offset / limit | `islice()`                            | SQL OFFSET / LIMIT               |
 
-`ListObservationStore` delegates entirely to `StreamQuery.apply()`. `SqliteObservationStore` translates the query into SQL and only falls back to Python for operations it can't express natively.
+`ListObservationStore` delegates entirely to `StreamQuery.apply()`. `SqliteObservationStore` translates filters, ordering, and limit/offset into SQL, applies `.filter(pred)` in Python, and raises `NotImplementedError` on `.search_text()`.
 
 Transform-sourced streams (post `.transform()`) always use `StreamQuery.apply()` since there's no index to push down to.
 
@@ -112,4 +112,4 @@ results = store.stream("embedded").search(query_vec, k=5).to_list()
 | ObservationStore           | Status   | Storage                                |
 |-----------------|----------|----------------------------------------|
 | `ListObservationStore`     | Complete | In-memory (lists + brute-force search) |
-| `SqliteObservationStore`   | Complete | SQLite (WAL, FTS5, vec0)               |
+| `SqliteObservationStore`   | Complete | SQLite (WAL, R*Tree, vec0; no `search_text`) |
