@@ -19,7 +19,7 @@ from typing import Any
 from unittest import mock
 
 import pytest
-from reactivex import interval
+from reactivex import interval, merge
 from reactivex.disposable import Disposable
 from reactivex.testing import TestScheduler
 
@@ -28,7 +28,6 @@ from dimos.core.stream import Out
 from dimos.memory.replay import Playback, ReplayStream
 from dimos.memory.replay_module import replay_module
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.testing import playback_finished
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
@@ -294,7 +293,8 @@ def test_replay_logs_source_and_finishes_after_all_timed_streams(recording, mock
             speed=1.0,
             loop=False,
         )
-        finished = playback_finished(add)
+        finished = threading.Event()
+        merge(*add.spy_return_list).subscribe(on_completed=finished.set)
         module.on_system_modules_ready([])
         assert finished.wait(HUNG_TEST_TIMEOUT)
         assert len(odom) == 3  # goal ended first, with odom frames still to come

@@ -31,7 +31,7 @@ from unittest.mock import MagicMock
 from mcap.writer import Writer
 import pytest
 from pytest_mock import MockerFixture
-from reactivex import Subject, empty, timer
+from reactivex import Subject, empty, merge, timer
 from reactivex.disposable import Disposable
 from reactivex.testing import TestScheduler
 
@@ -43,7 +43,6 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.memory.replay import Playback
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.testing import playback_finished
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -789,7 +788,8 @@ def test_replay_loop_cli_controls_repeated_playback(tmp_path, mocker, loop):
     try:
         with Disposable(module.odom.subscribe(on_odom)):
             module.start()
-            finished = playback_finished(add)
+            finished = threading.Event()
+            merge(*add.spy_return_list).subscribe(on_completed=finished.set)
             module.on_system_modules_ready([])
             # A loop starts over right after its last frame; a single pass finishes.
             assert (third if loop else finished).wait(HUNG_TEST_TIMEOUT)

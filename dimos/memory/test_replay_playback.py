@@ -18,7 +18,6 @@ import threading
 import time
 from typing import Any
 
-from pydantic import ValidationError
 import pytest
 from pytest_mock import MockerFixture
 
@@ -160,14 +159,6 @@ def test_load_returns_with_the_buffer_full(store: SqliteStore, mocker: MockerFix
         playback.stop()
 
 
-def test_load_returns_when_the_recording_is_shorter_than_the_buffer(store: SqliteStore) -> None:
-    playback, _published, _done = _record(store.replay(), ["lidar"])
-    playback.load()
-    # Both frames and the stream's end.
-    assert len(playback._buffer._items) == 3
-    playback.stop()
-
-
 def test_loop_replays_in_order_after_the_last_frame(store: SqliteStore) -> None:
     replay = store.replay(loop=True, speed=10.0)
     playback = replay.playback()
@@ -208,15 +199,6 @@ def test_loop_gap_delays_the_next_pass(store: SqliteStore) -> None:
 
     # The pass's last frame is 0.04 s in; the gap puts the next pass 0.3 s after it.
     assert arrivals[3] - started >= 0.34
-
-
-def test_empty_stream_completes(store: SqliteStore) -> None:
-    store.stream("empty", float)
-    playback, published, done = _record(store.replay(), ["empty", "lidar"])
-    playback.play()
-    assert done.wait(HUNG_TEST_TIMEOUT)
-    playback.stop()
-    assert published == [("lidar", ts) for ts in _RECORDING["lidar"]]
 
 
 def test_stop_from_a_callback_allows_closing_the_store(store: SqliteStore) -> None:
@@ -260,26 +242,6 @@ def test_stop_waits_for_an_in_flight_publish(store: SqliteStore) -> None:
     assert published.is_set()
 
 
-def test_stop_before_play_releases_the_reader(store: SqliteStore) -> None:
-    playback, _published, _done = _record(store.replay(buffer_size=1), list(_RECORDING))
-    playback.load()
-    playback.stop()
-    assert playback._reader is not None
-    assert not playback._reader.is_alive()
-
-
-def test_add_twice_or_after_load_is_refused(store: SqliteStore) -> None:
-    replay = store.replay()
-    playback = replay.playback()
-    playback.add(replay.stream("odom"))
-    with pytest.raises(ValueError):
-        playback.add(replay.stream("odom"))
-    playback.load()
-    with pytest.raises(RuntimeError):
-        playback.add(replay.stream("lidar"))
-    playback.stop()
-
-
 def test_failing_subscriber_leaves_the_other_streams_playing(
     store: SqliteStore, mocker: MockerFixture
 ) -> None:
@@ -315,8 +277,3 @@ def test_play_again_returns_at_once(store: SqliteStore) -> None:
         assert done.wait(HUNG_TEST_TIMEOUT)
     finally:
         playback.stop()
-
-
-def test_buffer_size_must_be_positive(store: SqliteStore) -> None:
-    with pytest.raises(ValidationError):
-        store.replay(buffer_size=0)

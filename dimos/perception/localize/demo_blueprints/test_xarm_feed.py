@@ -13,12 +13,14 @@
 # limitations under the License.
 
 
+import threading
+
 import numpy as np
+from reactivex import merge
 
 from dimos.constants import HUNG_TEST_TIMEOUT
 from dimos.memory.replay import Playback
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.testing import playback_finished
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -46,7 +48,8 @@ def test_feed_logs_source_duration_and_completion(tmp_path, mocker):
             speed=10.0,
             loop=False,
         )
-        finished = playback_finished(add)
+        finished = threading.Event()
+        merge(*add.spy_return_list).subscribe(on_completed=finished.set)
         feed.on_system_modules_ready([])
         assert finished.wait(HUNG_TEST_TIMEOUT)
         assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=str(path))]

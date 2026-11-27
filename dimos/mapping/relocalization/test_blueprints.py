@@ -22,7 +22,7 @@ from typing import Any
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
-from reactivex import Observable
+from reactivex import Observable, merge
 from reactivex.disposable import Disposable
 
 from dimos.constants import HUNG_TEST_TIMEOUT
@@ -30,7 +30,6 @@ from dimos.experimental.robot.bosdyn.spot.replay import SpotReplay
 from dimos.mapping.relocalization.blueprints import RecordingPlayer
 from dimos.memory.replay import Playback, ReplayStream
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.testing import playback_finished
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -179,7 +178,8 @@ def test_player_logs_source_duration_and_completion(player, mocker):
         speed=20.0,
         loop=False,
     )
-    finished = playback_finished(add)
+    finished = threading.Event()
+    merge(*add.spy_return_list).subscribe(on_completed=finished.set)
     player.on_system_modules_ready([])
     assert finished.wait(HUNG_TEST_TIMEOUT)
     assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=path)]
