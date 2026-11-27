@@ -45,6 +45,7 @@ fn basic_config() -> Config {
         emit_every: 1,
         global_emit_every: 1,
         region_percentile: 95.0,
+        region_radius_window: 1,
         world_frame: "world".to_string(),
         tf_match_tolerance_s: 0.1,
         max_cloud_age_s: 0.0,
@@ -54,6 +55,8 @@ fn basic_config() -> Config {
         viz_cell_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_cells: 0,
+        separate_premaps: false,
+        premap_regions_shift_m: 0.0,
     }
 }
 
@@ -367,6 +370,7 @@ fn ground_clipping_single_ray() {
         emit_every: 1,
         global_emit_every: 1,
         region_percentile: 95.0,
+        region_radius_window: 1,
         world_frame: "world".to_string(),
         tf_match_tolerance_s: 0.1,
         max_cloud_age_s: 0.0,
@@ -376,6 +380,8 @@ fn ground_clipping_single_ray() {
         viz_cell_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_cells: 0,
+        separate_premaps: false,
+        premap_regions_shift_m: 0.0,
     };
     // Build the floor over a y band so it is a 2d plane, not a wire.
     let max_x = 25.0_f32;
@@ -528,6 +534,7 @@ fn stair_clipping_ray_fan() {
         emit_every: 1,
         global_emit_every: 1,
         region_percentile: 95.0,
+        region_radius_window: 1,
         world_frame: "world".to_string(),
         tf_match_tolerance_s: 0.1,
         max_cloud_age_s: 0.0,
@@ -537,6 +544,8 @@ fn stair_clipping_ray_fan() {
         viz_cell_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_cells: 0,
+        separate_premaps: false,
+        premap_regions_shift_m: 0.0,
     };
 
     // Staircase
@@ -615,6 +624,7 @@ fn landing_floor_ray_fan() {
         emit_every: 1,
         global_emit_every: 1,
         region_percentile: 95.0,
+        region_radius_window: 1,
         world_frame: "world".to_string(),
         tf_match_tolerance_s: 0.1,
         max_cloud_age_s: 0.0,
@@ -624,6 +634,8 @@ fn landing_floor_ray_fan() {
         viz_cell_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_cells: 0,
+        separate_premaps: false,
+        premap_regions_shift_m: 0.0,
     };
 
     // Flat floor from the sensor out to a vertical wall.
@@ -690,6 +702,7 @@ fn landing_grazed_from_below() {
         emit_every: 1,
         global_emit_every: 1,
         region_percentile: 95.0,
+        region_radius_window: 1,
         world_frame: "world".to_string(),
         tf_match_tolerance_s: 0.1,
         max_cloud_age_s: 0.0,
@@ -699,6 +712,8 @@ fn landing_grazed_from_below() {
         viz_cell_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_cells: 0,
+        separate_premaps: false,
+        premap_regions_shift_m: 0.0,
     };
 
     // Staircase topped by a flat landing and a back wall.
@@ -834,6 +849,7 @@ fn grazing_ray_spares_planar_floor() {
         emit_every: 1,
         global_emit_every: 1,
         region_percentile: 95.0,
+        region_radius_window: 1,
         world_frame: "world".to_string(),
         tf_match_tolerance_s: 0.1,
         max_cloud_age_s: 0.0,
@@ -843,6 +859,8 @@ fn grazing_ray_spares_planar_floor() {
         viz_cell_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_cells: 0,
+        separate_premaps: false,
+        premap_regions_shift_m: 0.0,
     };
     let (mut map, _) = build_surface(&floor, voxel_size, cfg.max_health);
     let row: Vec<VoxelKey> = map.voxels.keys().filter(|k| k.1 == 0 && k.2 == 0).collect();

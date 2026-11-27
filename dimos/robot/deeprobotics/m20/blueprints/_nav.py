@@ -44,6 +44,8 @@ def m20_nav_stack(embodiment: Embodiment = M20) -> MetaBlueprint:
             global_emit_every=50,
             world_frame=WORLD_FRAME,
             worker_threads=3,
+            # the premap stays apart from the live map, placed by the latest world -> premap tf
+            separate_premaps=True,
         ).remappings([(RayTracingVoxelMap, "lidar", "slam_body_points")]),
         MLSPlannerNative.blueprint(
             world_frame=WORLD_FRAME,

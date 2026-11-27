@@ -110,6 +110,9 @@ pub struct Config {
     /// stray far hit cannot inflate it.
     #[validate(range(min = 0.0, max = 100.0))]
     pub region_percentile: f32,
+    /// Publish the median radius of the last this many local regions; 1 publishes each as it is.
+    #[validate(range(min = 1))]
+    pub region_radius_window: u32,
     /// Fixed frame clouds are registered and published in.
     #[validate(length(min = 1))]
     pub world_frame: String,
@@ -136,6 +139,13 @@ pub struct Config {
     pub viz_emit_every: u32,
     /// Unchanged cells republished per viz tick, round robin. Zero turns the sweep off.
     pub viz_sweep_cells: u32,
+    /// Keep each loaded map as its own premap in its own frame, cleared by live rays through the
+    /// latest world -> premap transform, instead of seeding it into the live map.
+    pub separate_premaps: bool,
+    /// With separate premaps: republish a premap's regions on seed_map once its placement has moved
+    /// this far (m) since they were last published; zero publishes them only at its first placement.
+    #[validate(range(min = 0.0))]
+    pub premap_regions_shift_m: f32,
 }
 
 fn validate_config(cfg: &Config) -> Result<(), ValidationError> {
@@ -384,6 +394,18 @@ impl VoxelMap {
             self.health_crossed(key, now_healthy);
         }
         removed
+    }
+
+    /// Drop a voxel to zero health but keep it, so a premap remembers what live rays cleared.
+    /// Returns whether it was healthy.
+    fn mark_cleared(&mut self, key: VoxelKey) -> bool {
+        let Some((was, _)) = self.voxels.update_health(key, |h| h.min(0)) else {
+            return false;
+        };
+        if was > 0 {
+            self.health_crossed(key, false);
+        }
+        was > 0
     }
 
     /// Set a voxel's health directly, creating it if absent. Bypasses hit and
@@ -1036,12 +1058,24 @@ pub struct FrameHits {
     pub fine: AHashSet<VoxelKey>,
 }
 
-pub fn update_map(
+/// One frame's rays against a map.
+struct TracedFrame {
+    /// The in-range points.
+    points: Vec<(f32, f32, f32)>,
+    /// The voxels they hit.
+    hits: AHashSet<VoxelKey>,
+    /// The voxels the rays clear.
+    misses: AHashSet<VoxelKey>,
+}
+
+/// Trace one frame's rays against `map`. Advances the map's frame and refits the normals the walk
+/// deferred on.
+fn trace_frame(
     map: &mut VoxelMap,
     origin: (f32, f32, f32),
     points: &[(f32, f32, f32)],
     cfg: &Config,
-) -> FrameHits {
+) -> TracedFrame {
     map.frame = map.frame.wrapping_add(1);
     let inv = 1.0_f32 / cfg.voxel_size;
     let max_range_sq = if cfg.max_range > 0.0 {
@@ -1063,11 +1097,8 @@ pub fn update_map(
         let d2 = dx * dx + dy * dy + dz * dz;
         d2 > 0.0 && d2 <= max_range_sq
     }));
-    let points = &filtered[..];
 
-    let hits = live_voxels(points, cfg.voxel_size);
-    let fine = cfg.fine_layer().map(|(d, _)| d as i32);
-
+    let hits = live_voxels(&filtered, cfg.voxel_size);
     let frame = RayFrame {
         voxels: &map.voxels,
         hits: &hits,
@@ -1079,10 +1110,10 @@ pub fn update_map(
         graze_cos: cfg.graze_cos,
         map_frame: map.frame,
         graze_recent_frames: cfg.graze_recent_frames,
-        fine_divisor: fine,
+        fine_divisor: cfg.fine_layer().map(|(d, _)| d as i32),
     };
     let step = cfg.ray_subsample as usize;
-    let walk = points
+    let walk = filtered
         .par_iter()
         .enumerate()
         .fold(RayWalk::default, |mut walk, (i, &p)| {
@@ -1099,6 +1130,38 @@ pub fn update_map(
         deferred,
     } = walk;
     resolve_deferred(map, &mut misses, &deferred, cfg.voxel_size, cfg.graze_cos);
+    TracedFrame {
+        points: filtered,
+        hits,
+        misses,
+    }
+}
+
+/// Clear a premap along one frame's rays, all in the premap's own frame: each voxel a ray clears
+/// drops to zero health and stays there, marked cleared. Returns how many it cleared.
+pub fn clear_premap(
+    map: &mut VoxelMap,
+    origin: (f32, f32, f32),
+    points: &[(f32, f32, f32)],
+    cfg: &Config,
+) -> usize {
+    let misses = trace_frame(map, origin, points, cfg).misses;
+    misses.into_iter().filter(|&k| map.mark_cleared(k)).count()
+}
+
+pub fn update_map(
+    map: &mut VoxelMap,
+    origin: (f32, f32, f32),
+    points: &[(f32, f32, f32)],
+    cfg: &Config,
+) -> FrameHits {
+    let TracedFrame {
+        points: filtered,
+        hits,
+        misses,
+    } = trace_frame(map, origin, points, cfg);
+    let points = &filtered[..];
+    let fine = cfg.fine_layer().map(|(d, _)| d as i32);
 
     // New voxels join the stale set so a sparse voxel among converged
     // neighbors is pooled from them by the first ray that needs it, not only

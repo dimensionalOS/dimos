@@ -12,12 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use ahash::AHashSet;
 use dimos_module::worker_pool;
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
+use crate::premap::{live_holds, Premap};
 use crate::voxel_ray_tracer::{
     batch_local_bounds, chunk_points, emit_points, emit_points_fine, emit_points_flags,
     emit_points_ungated, emit_points_ungated_flags, global_normal_fits, global_normals,
@@ -45,9 +47,13 @@ pub struct Mapper {
     live: FrameHits,
     batch_points: Vec<Point>,
     batch_origins: Vec<Point>,
+    /// The latest local regions' raw radii, which the published one is the median of.
+    recent_radii: VecDeque<f32>,
     last_registered: Vec<Point>,
     last_origin: Point,
     frame_count: u32,
+    /// Loaded maps kept apart from `map` (`separate_premaps`), each in its own frame.
+    premaps: Vec<Premap>,
 }
 
 impl Mapper {
@@ -60,9 +66,11 @@ impl Mapper {
             live: FrameHits::default(),
             batch_points: Vec::new(),
             batch_origins: Vec::new(),
+            recent_radii: VecDeque::new(),
             last_registered: Vec::new(),
             last_origin: (0.0, 0.0, 0.0),
             frame_count: 0,
+            premaps: Vec::new(),
         }
     }
 
@@ -116,6 +124,24 @@ impl Mapper {
             .len()
     }
 
+    /// Keep a premap apart from the live map. False, and dropped, when one of its frame is already
+    /// held: reloading it would bring back what live rays cleared.
+    pub fn add_premap(&mut self, premap: Premap) -> bool {
+        if self.has_premap(&premap.frame_id) {
+            return false;
+        }
+        self.premaps.push(premap);
+        true
+    }
+
+    pub fn has_premap(&self, frame_id: &str) -> bool {
+        self.premaps.iter().any(|p| p.frame_id == frame_id)
+    }
+
+    pub fn premaps_mut(&mut self) -> &mut [Premap] {
+        &mut self.premaps
+    }
+
     /// The last frame's sensor origin in the world frame.
     pub fn last_origin(&self) -> Point {
         self.last_origin
@@ -124,6 +150,10 @@ impl Mapper {
     fn ingest(&mut self, points: Vec<Point>, origin: Point) {
         let pool = Arc::clone(&self.pool);
         self.live = pool.install(|| update_map(&mut self.map, origin, &points, &self.config));
+        let config = &self.config;
+        for premap in &mut self.premaps {
+            pool.install(|| premap.clear(&points, origin, config));
+        }
 
         // The batch only feeds the local region bounds, so skip it when the
         // local cadence is disabled.
@@ -185,16 +215,31 @@ impl Mapper {
             }
         } else {
             let margin = self.config.shadow_depth + self.config.voxel_size;
-            batch_local_bounds(
+            let mut bounds = batch_local_bounds(
                 &self.batch_points,
                 &self.batch_origins,
                 self.config.region_percentile,
                 margin,
-            )
+            );
+            bounds.radius = self.smoothed_radius(bounds.radius);
+            bounds
         };
         self.batch_points.clear();
         self.batch_origins.clear();
         bounds
+    }
+
+    /// The median of the last `region_radius_window` radii, `radius` among them, so one frame that
+    /// sees far (or near) does not swing the region.
+    fn smoothed_radius(&mut self, radius: f32) -> f32 {
+        let window = self.config.region_radius_window.max(1) as usize;
+        self.recent_radii.push_back(radius);
+        while self.recent_radii.len() > window {
+            self.recent_radii.pop_front();
+        }
+        let mut sorted: Vec<f32> = self.recent_radii.iter().copied().collect();
+        sorted.sort_by(f32::total_cmp);
+        sorted[sorted.len() / 2]
     }
 
     /// All healthy voxel centers plus this frame's live voxels, flat triples.
@@ -203,10 +248,15 @@ impl Mapper {
             .install(|| emit_points_ungated(&self.map, self.config.voxel_size, &self.live.coarse))
     }
 
-    /// `global_points` as flat (x, y, z, flags) quads.
+    /// `global_points` as flat (x, y, z, flags) quads, plus every placed premap's uncleared voxels.
     pub fn global_points_flags(&self) -> Vec<f32> {
+        let voxel_size = self.config.voxel_size;
         self.pool.install(|| {
-            emit_points_ungated_flags(&self.map, self.config.voxel_size, &self.live.coarse)
+            let mut out = emit_points_ungated_flags(&self.map, voxel_size, &self.live.coarse);
+            for premap in &self.premaps {
+                out.extend(premap.global_points(voxel_size));
+            }
+            out
         })
     }
 
@@ -223,15 +273,22 @@ impl Mapper {
         })
     }
 
-    /// `local_points` as flat (x, y, z, flags) quads.
-    pub fn local_points_flags(&self, bounds: &LocalBounds) -> Vec<f32> {
+    /// `local_points` as flat (x, y, z, flags) quads, plus the placed premaps' uncleared voxels in
+    /// `cylinder` that the live map does not already hold, flagged premap.
+    pub fn local_points_flags(&self, cylinder: &Cylinder) -> Vec<f32> {
+        let voxel_size = self.config.voxel_size;
         self.pool.install(|| {
-            emit_points_flags(
+            let mut out = emit_points_flags(
                 &self.map,
-                self.config.voxel_size,
-                Some(bounds),
+                voxel_size,
+                Some(&cylinder.bounds()),
                 &self.live.coarse,
-            )
+            );
+            let skip = live_holds(&self.map, &self.live.coarse, voxel_size);
+            for premap in &self.premaps {
+                out.extend(premap.local_points(cylinder, voxel_size, &skip));
+            }
+            out
         })
     }
 
@@ -270,6 +327,7 @@ impl Mapper {
         self.live = FrameHits::default();
         self.batch_points.clear();
         self.batch_origins.clear();
+        self.recent_radii.clear();
         self.last_registered.clear();
         self.last_origin = (0.0, 0.0, 0.0);
         self.frame_count = 0;
@@ -317,6 +375,7 @@ mod tests {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            region_radius_window: 1,
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
             max_cloud_age_s: 0.0,
@@ -326,6 +385,8 @@ mod tests {
             viz_cell_m: 4.0,
             viz_emit_every: 0,
             viz_sweep_cells: 0,
+            separate_premaps: false,
+            premap_regions_shift_m: 0.0,
         }
     }
 
@@ -382,6 +443,25 @@ mod tests {
         let c = mapper.take_local_bounds();
         assert_eq!((c.cx, c.cy, c.radius), (1.0, 2.0, 0.0));
         assert_eq!((c.z_min, c.z_max), (3.0, 3.0));
+    }
+
+    #[test]
+    fn the_region_radius_is_the_median_of_the_window() {
+        let mut mapper = Mapper::new(Config {
+            region_radius_window: 3,
+            ..config()
+        });
+        let pose = Pose {
+            position: (0.0, 0.0, 0.0),
+            orientation: IDENTITY,
+        };
+        let mut radii = Vec::new();
+        for reach in [5.5, 5.5, 20.5, 5.5, 20.5, 20.5] {
+            mapper.add_frame(vec![(reach, 0.5, 0.5)], pose);
+            radii.push(mapper.take_local_bounds().radius.round());
+        }
+        // One far frame does not swing it; a run of them does.
+        assert_eq!(radii, vec![9.0, 9.0, 9.0, 9.0, 24.0, 24.0]);
     }
 
     #[test]
