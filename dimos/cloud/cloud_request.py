@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Iterator
 import json
 from pathlib import Path
+import re
 import shutil
 import threading
 from typing import Any, Protocol, cast
@@ -100,7 +101,11 @@ class HttpCloudRequest:
                 cause = cause.__context__
             raise OSError(f"PUT failed: {cause}") from e
         if not r.ok:
-            raise OSError(f"HTTP Error {r.status_code}: {r.reason}")
+            # S3 names the reason in an XML body; the rest of it can hold signing details
+            code = re.search(r"<Code>(.*?)</Code>", r.text)
+            message = re.search(r"<Message>(.*?)</Message>", r.text)
+            detail = f" ({code[1]}: {message[1] if message else ''})"[:300] if code else ""
+            raise OSError(f"HTTP Error {r.status_code}: {r.reason}{detail}")
 
     def download(
         self, url: str, dst: Path, progress: Callable[[int, int], None] | None = None

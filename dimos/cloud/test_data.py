@@ -660,9 +660,13 @@ class PartStore(BaseHTTPRequestHandler):
         self.server.puts.append(  # type: ignore[attr-defined]
             (self.client_address, self.headers["Transfer-Encoding"], body)
         )
-        self.send_response(403 if "expired" in self.path else 200)
-        self.send_header("Content-Length", "0")
+        reply = b""
+        if "stalled" in self.path:
+            reply = b"<Error><Code>RequestTimeout</Code><Message>Idle connections will be closed.</Message></Error>"
+        self.send_response(403 if "expired" in self.path else 400 if reply else 200)
+        self.send_header("Content-Length", str(len(reply)))
         self.end_headers()
+        self.wfile.write(reply)
 
     def log_message(self, format: str, *args: Any) -> None:
         pass
@@ -730,6 +734,16 @@ def test_put_errors_leave_out_the_signed_url(part_store: PartStoreServer) -> Non
     with pytest.raises(OSError, match="Connection refused") as refused:
         t.put(f"http://127.0.0.1:{closed_port}/part?{signed}", b"x")
     assert "403" not in str(refused.value)
+
+
+def test_put_errors_keep_the_s3_error_code(part_store: PartStoreServer) -> None:
+    """S3 gives the reason a part failed only in its XML error body."""
+    t = HttpCloudRequest("https://api.test", "dimos_sk_x", timeout=5)
+    with pytest.raises(
+        OSError,
+        match=r"^HTTP Error 400: Bad Request \(RequestTimeout: Idle connections will be closed\.\)$",
+    ):
+        t.put(f"http://127.0.0.1:{part_store.server_address[1]}/stalled", b"x")
 
 
 @pytest.mark.parametrize(

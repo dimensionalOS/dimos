@@ -56,6 +56,8 @@ BYTES_PER_CONNECTION = 32 << 20
 SINGLE_PART_MAX = 64 << 20
 # large files reuse many connections and use smaller parts
 DEFAULT_PART_SIZE = 8 << 20
+# long enough to outlast a brief stall on the network or at S3
+RETRY_WAIT_S = 10
 
 
 class _AlreadyCompleteError(Exception):
@@ -139,7 +141,7 @@ class MultipartBackend:
             except (OSError, RuntimeError) as e:
                 if attempt > self.retries:
                     raise RuntimeError(f"{what} failed after {attempt} attempts: {e}") from e
-                time.sleep(attempt)
+                time.sleep(RETRY_WAIT_S)
 
     def _staging(
         self, beside: Path, *, outside: Path | None = None
