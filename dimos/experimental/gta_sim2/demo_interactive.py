@@ -14,8 +14,8 @@
 
 """Run an isolated browser-controlled G1 and a separate latest-state observer.
 
-The browser never supplies joint targets or teleports. Its bounded Twist goes
-through the selected robot policy. Reset rebuilds the deployment and policy history.
+The browser never supplies joint targets or arbitrary poses. Its bounded Twist
+goes through the robot policy. Named spawns rebuild the deployment and policy history.
 Observer images have no sensor publication role; Sim2 sensors keep their clocks.
 """
 
@@ -43,6 +43,7 @@ from dimos.experimental.gta_sim2.m20 import M20PolicyModule, m20_blueprint
 from dimos.experimental.gta_sim2.prepare import ground_height
 from dimos.experimental.gta_sim2.prepare_m20 import BASE as M20_BASE
 from dimos.experimental.gta_sim2.renderer import ObserverOutput, SixNGRenderer
+from dimos.experimental.gta_sim2.spawns import load_spawns
 from dimos.experimental.gta_sim2.world_objects import object_state_path
 from dimos.experimental.gta_sim2.world_streaming import streaming_backend
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -125,6 +126,7 @@ def main() -> None:
     parser.add_argument("--policy-profile", choices=("sdk57", "dreamwaq342"), default="sdk57")
     parser.add_argument("--stream-catalog", type=Path)
     parser.add_argument("--max-forward-speed", type=float, default=1.5)
+    parser.add_argument("--spawns", type=Path, help="Validated named M20 scene deployments")
     args = parser.parse_args()
     if args.robot == "m20" and args.policy is None:
         parser.error("--robot m20 requires the explicit --policy checkpoint")
@@ -137,6 +139,18 @@ def main() -> None:
     camera_frame = (M20_BASE if is_m20 else TORSO) + "/camera_mount/camera/camera"
     speed = (args.max_forward_speed, 0.3, 0.7) if is_m20 else (0.2, 0.15, 0.4)
     args.runtime.mkdir(parents=True, exist_ok=True)
+    if args.spawns and (not is_m20 or not args.stream_catalog):
+        parser.error("Named spawns require M20 and a world collision catalog")
+    locations = load_spawns(args.spawns, args.stream_catalog) if args.spawns else {}
+    location = read_json(args.runtime / "selection.json").get("location")
+    if location not in locations:
+        location = next(iter(locations), "street")
+    selected_scene = locations[location]["scene"] if locations else args.scene
+    public_locations = [
+        {key: entry[key] for key in ("id", "label", "speed_mps", "camera")}
+        for entry in locations.values()
+    ]
+    write_json(args.runtime / "spawns.json", {"locations": public_locations})
     manifest = read_json(args.scene.with_name("manifest.json"))
     origin = np.asarray(manifest["origin_rage_m"], dtype=np.float64)
     bounds = np.asarray(manifest["bounds_rage_m"], dtype=np.float64) - origin
@@ -169,12 +183,14 @@ def main() -> None:
     last_action = read_json(args.runtime / "action.json").get("id")
     last_seen = time.monotonic()
     next_status = 0.0
-    generation = 0
+    # Keep browser acknowledgements distinct across service restarts, too.
+    generation = int(read_json(args.runtime / "simulation.json").get("generation", 0))
     observer_loaded = False
     state: dict[str, Any] = {
         "state": "idle",
         "message": "Open the viewer to start",
         "generation": generation,
+        "location": location,
     }
     write_json(args.runtime / "simulation.json", state)
     with ExitStack() as cleanup:
@@ -189,7 +205,18 @@ def main() -> None:
                 if visible:
                     last_seen = tick
                 action = read_json(args.runtime / "action.json")
-                reset = action.get("id") != last_action and action.get("action") == "reset"
+                new_action = action.get("id") != last_action
+                spawn = (
+                    new_action
+                    and action.get("action") == "spawn"
+                    and action.get("location") in locations
+                )
+                reset = new_action and action.get("action") == "reset"
+                if spawn:
+                    location = action["location"]
+                    selected_scene = locations[location]["scene"]
+                    write_json(args.runtime / "selection.json", {"location": location})
+                reset |= spawn
                 last_action = action.get("id")
                 if deployment is not None and (reset or tick - last_seen > 60):
                     write_json(
@@ -198,11 +225,12 @@ def main() -> None:
                             "state": "resetting" if reset else "idle",
                             "message": "Resetting robot…" if reset else "Waiting for a viewer",
                             "generation": generation,
+                            "location": location,
                         },
                     )
                     deployment.stop()
                     deployment = None
-                    if not reset:
+                    if not reset or spawn:
                         observer.close()
                         observer_loaded = False
                 if deployment is None:
@@ -215,12 +243,13 @@ def main() -> None:
                             "state": "starting",
                             "message": "Loading physics and walking policy…",
                             "generation": generation,
+                            "location": location,
                         },
                     )
                     blueprint = (
                         (
                             m20_blueprint(
-                                args.scene,
+                                selected_scene,
                                 args.policy,
                                 args.policy_profile,
                                 backend=(
@@ -288,6 +317,15 @@ def main() -> None:
                         "generation": generation,
                         "robot": args.robot,
                         "speed_limits": speed,
+                        "location": location,
+                        "location_label": locations[location]["label"] if locations else "Street",
+                        "spawn_position": locations[location]["floor_rage_m"]
+                        if locations
+                        else origin.tolist(),
+                        "spawn_speed_mps": locations[location]["speed_mps"]
+                        if locations
+                        else speed[0],
+                        "spawn_camera": locations[location]["camera"] if locations else "follow",
                     }
                     # Never replay input received during a long reset/load.
                     accept_after = time.monotonic()
@@ -347,6 +385,7 @@ def main() -> None:
                         state="fallen" if fallen else "running",
                         message="Robot fell — use Reset" if fallen else "Ready",
                         position=xyz.tolist(),
+                        position_from_spawn=(xyz + origin - state["spawn_position"]).tolist(),
                         yaw=yaw,
                         command=[vx, vy, wz],
                         control_speed_limits=list(speed),
@@ -370,7 +409,12 @@ def main() -> None:
         except Exception as error:
             write_json(
                 args.runtime / "simulation.json",
-                {"state": "error", "message": str(error), "generation": generation},
+                {
+                    "state": "error",
+                    "message": str(error),
+                    "generation": generation,
+                    "location": location,
+                },
             )
             raise
         finally:

@@ -222,7 +222,7 @@ def main() -> None:
             "command_mps": args.speed,
             "command_yaw_rate": args.yaw_rate,
             "steady_speed_mps": float(np.median(measured_speed[steady])) if steady.any() else None,
-            "peak_speed_mps": float(measured_speed.max()),
+            "peak_speed_mps": float(measured_speed.max()) if len(measured_speed) else 0.0,
             "turn_yaw_rate_rad_s": float(np.median(yaw_rate[turning])) if turning.any() else None,
             "stop_path_m": float(travel[stop_index:].sum()) if stop_index is not None else None,
             "final_2s_drift_m": float(travel[a[1:, 0] >= a[-1, 0] - 2].sum()),
@@ -230,7 +230,7 @@ def main() -> None:
             "distance_xy_m": float(np.linalg.norm(a[-1, 1:3] - a[0, 1:3])),
             "forward_axis_xy": forward_axis.tolist(),
             "forward_mps": float(
-                np.dot(a[-1, 1:3] - a[0, 1:3], forward_axis) / (a[-1, 0] - a[0, 0])
+                np.dot(a[-1, 1:3] - a[0, 1:3], forward_axis) / max(a[-1, 0] - a[0, 0], 1e-9)
             ),
             "min_upright": float(a[:, 4].min()),
             "z_range_m": [float(a[:, 3].min()), float(a[:, 3].max())],

@@ -31,9 +31,11 @@ from dimos_lcm.sim_msgs import WorldState
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
+from pxr import Sdf, Usd
 from scipy.spatial.transform import Rotation
 import trimesh
 
+from dimos.experimental.gta_sim2.world_index import file_digest
 from dimos.experimental.gta_sim2.world_objects import ObjectStateStore
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
@@ -148,6 +150,13 @@ class SixNGRenderer:
             or len({c.frame_id for c in cameras}) != len(cameras)
         ):
             raise ValueError("Renderer already loaded or invalid camera set")
+        layer = Sdf.Layer.CreateAnonymous()
+        layer.ImportFromString(scene.usd)
+        stage = Usd.Stage.Open(layer)
+        patch = stage.GetPrimAtPath("/world/gta_patch")
+        expected_state = patch.GetAttribute("gta:scene_state_sha256").Get() if patch else None
+        if expected_state and file_digest(self.work / "map/scene_state.json") != expected_state:
+            raise ValueError("Renderer and physics use different scene-state profiles")
         self.runtime.mkdir(parents=True, exist_ok=True)
         self._temporary = tempfile.TemporaryDirectory(prefix="sensor-", dir=self.runtime)
         self.directory = Path(self._temporary.name)

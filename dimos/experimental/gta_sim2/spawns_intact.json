@@ -1,0 +1,52 @@
+{
+  "locations": [
+    {
+      "id": "street",
+      "label": "Downtown street",
+      "floor_rage_m": [
+        -458,
+        -66,
+        1.3192443216876168
+      ],
+      "yaw_degrees": 90,
+      "speed_mps": 2,
+      "camera": "follow"
+    },
+    {
+      "id": "house-yard",
+      "label": "Jason\u2019s house \u00b7 yard",
+      "floor_rage_m": [
+        -2341,
+        -5534,
+        1.95
+      ],
+      "yaw_degrees": 90,
+      "speed_mps": 1,
+      "camera": "follow"
+    },
+    {
+      "id": "house",
+      "label": "Jason\u2019s house \u00b7 inside",
+      "floor_rage_m": [
+        -2349.925781,
+        -5532.538574,
+        5.98393440246582
+      ],
+      "yaw_degrees": 90,
+      "speed_mps": 0.4,
+      "camera": "head"
+    },
+    {
+      "id": "penthouse",
+      "label": "BK04 penthouse \u00b7 lounge",
+      "floor_rage_m": [
+        -14.527503,
+        -919.628235,
+        183.33331298783423
+      ],
+      "yaw_degrees": 90,
+      "speed_mps": 0.4,
+      "camera": "head"
+    }
+  ]
+}

@@ -30,6 +30,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.experimental.gta_sim2.prepare import glb_triangles
+from dimos.experimental.gta_sim2.scene_state import disabled_maps
 from dimos.experimental.gta_sim2.world_index import file_digest, placed_bounds
 
 
@@ -74,8 +75,20 @@ class WorldCatalog:
             raise ValueError("Source decoder changed; rebuild the catalog identity")
         self.origin = np.asarray(self.manifest["origin_rage_m"], dtype=np.float64)
         self.coverage = np.asarray(self.manifest["coverage_bounds"], dtype=np.float64)
+        profile = self.manifest.get("scene_state")
+        inactive_maps = disabled_maps(Path(profile["path"]), profile["sha256"]) if profile else {}
         self._db = sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)
         self._db.row_factory = sqlite3.Row
+        # Filter before spatial admission and decoding, including interior rows
+        # whose identity retains the owning map. The source database stays immutable.
+        self._db.execute("CREATE TEMP TABLE inactive_instances(id INTEGER PRIMARY KEY)")
+        if inactive_maps:
+            for resource in inactive_maps:
+                self._db.execute(
+                    "INSERT OR IGNORE INTO inactive_instances SELECT id FROM instances WHERE identity=? OR identity GLOB ?",
+                    (resource, resource + "/*"),
+                )
+        inactive_count = self._db.execute("SELECT count(*) FROM inactive_instances").fetchone()[0]
         self._cache: OrderedDict[str, SourceGeometry] = OrderedDict()
         self._bytes = 0
         self._limit = int(self.manifest["geometry_cache_bytes"])
@@ -92,6 +105,7 @@ class WorldCatalog:
             "unresolved": 0,
             "unsupported": {},
             "query_ms": 0.0,
+            "inactive_instances": inactive_count,
         }
         with (self._directory / ".lock").open("a") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
@@ -114,6 +128,7 @@ class WorldCatalog:
             """SELECT i.*,o.definition AS object FROM spatial s JOIN instances i ON i.id=s.id
             LEFT JOIN objects o ON o.identity=i.identity
             WHERE s.minx<=? AND s.maxx>=? AND s.miny<=? AND s.maxy>=? AND s.minz<=? AND s.maxz>=?
+            AND i.id NOT IN (SELECT id FROM inactive_instances)
             ORDER BY i.id LIMIT 10001""",
             tuple(float(v) for v in (hi[0], lo[0], hi[1], lo[1], hi[2], lo[2])),
         ).fetchall()
@@ -124,7 +139,7 @@ class WorldCatalog:
 
     def instance(self, identity: str) -> dict[str, Any]:
         row = self._db.execute(
-            "SELECT i.*,o.definition AS object FROM instances i LEFT JOIN objects o ON o.identity=i.identity WHERE i.identity=?",
+            "SELECT i.*,o.definition AS object FROM instances i LEFT JOIN objects o ON o.identity=i.identity WHERE i.identity=? AND i.id NOT IN (SELECT id FROM inactive_instances)",
             (identity,),
         ).fetchone()
         if row is None:

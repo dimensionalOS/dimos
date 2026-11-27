@@ -41,6 +41,9 @@ def prepare(scene: Path, catalog: Path, output: Path) -> dict[str, Any]:
         "gta:collision_catalog_sha256", Sdf.ValueTypeNames.String, custom=True
     ).Set(digest)
     patch.CreateAttribute("gta:world_streaming", Sdf.ValueTypeNames.Bool, custom=True).Set(True)
+    patch.CreateAttribute("gta:scene_state_sha256", Sdf.ValueTypeNames.String, custom=True).Set(
+        world.get("scene_state", {}).get("sha256", "")
+    )
     stage.GetRootLayer().Export(str(output / "world.usda"))
     shutil.copyfile(scene.with_name("surfaces.npz"), output / "surfaces.npz")
     source.setdefault("optical_proxy_bounds_rage_m", source["bounds_rage_m"])
