@@ -184,7 +184,8 @@ def backup_file(path: str | Path, keep_last: int = 3) -> Path | None:
 
 @cache
 def _get_lfs_dir() -> Path:
-    return get_data_dir() / ".lfs"
+    # The archives belong to the repository, also when DIMOS_DATA_DIR names the data directory.
+    return get_project_root() / "data" / ".lfs"
 
 
 def _initialize_git_lfs(repo_root: Path) -> None:
