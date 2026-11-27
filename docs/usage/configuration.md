@@ -46,6 +46,10 @@ https://errors.pydantic.dev/2.12/v/extra_forbidden
 
 [Modules](/docs/usage/modules.md) inherit from `Configurable`. Their configuration classes inherit from `ModuleConfig`, which provides `g` for shared runtime settings. Put a setting on the module that consumes it; helper classes receive the relevant config or scalar arguments explicitly.
 
+The CLI reads the working directory’s `.env` first. It fills missing values from the `.env` found by searching upward from the installed dimOS package. Exported environment values take precedence over both files. Machine Host settings (`HOST__*`) come from the checkout’s `.env` or the shell.
+
+On `dimos restart`, the replacement CLI reads its working directory’s `.env` and installation defaults again. An existing shell export keeps precedence even if it matched the old file. A value explicitly changed after the file was loaded also keeps precedence. A subprocess started directly inherits the current process environment, including values loaded from `.env`.
+
 For `dimos run`, values resolve in this order: schema defaults → blueprint values → JSON config → `.env` → environment → CLI flags. Python callers can also pass `overrides` to `BlueprintConfigParser.parse()`; these apply after environment values and before CLI flags. Explicit `global_overrides` apply last.
 
 Module flags go **after the blueprint names**. Use the module's instance name, lowercase, with hyphens in field names. Environment variables use double underscores between path components. A unique short flag is also accepted; qualified names avoid ambiguity.

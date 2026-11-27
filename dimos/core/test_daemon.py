@@ -422,6 +422,56 @@ coordinators[0].stop()
         kill_run_processes(run_id)
 
 
+def test_restart_reloads_edited_dotenv_and_preserves_exports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "dimos").symlink_to(Path(__file__).resolve().parents[1], target_is_directory=True)
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("N_WORKERS=5\nREPLAY_DB=shared.db\nROBOT_MODEL=file-model\n")
+    state = tmp_path / "state"
+    monkeypatch.setattr(run_registry, "REGISTRY_DIR", state / "dimos/runs")
+    env = {
+        "HOME": str(tmp_path),
+        "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+        "XDG_STATE_HOME": str(state),
+        "REPLAY_DB": "shared.db",
+    }
+
+    # The original process waits on its stdin pipe. Its replacement gets EOF and shows its config.
+    launcher = tmp_path / "launcher.py"
+    launcher.write_text("import sys\nsys.stdin.read()\nfrom dimos.cli.entry import main\nmain()\n")
+    argv = [sys.executable, str(launcher), "show-config"]
+    with subprocess.Popen(argv, cwd=tmp_path, env=env, stdin=subprocess.PIPE) as original:
+        _make_entry(pid=original.pid, original_argv=argv).save()
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import os\n"
+                    "from pathlib import Path\n"
+                    "from dimos.cli.dimos import cli_main\n"
+                    "Path('.env').write_text('N_WORKERS=3\\nREPLAY_DB=new.db\\nROBOT_MODEL=new\\n')\n"
+                    "os.environ['ROBOT_MODEL'] = 'shell-model'\n"
+                    "cli_main()",
+                    "restart",
+                    "--force",
+                ],
+                cwd=tmp_path,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        finally:
+            original.terminate()
+    assert result.returncode == 0, result.stderr
+    assert {"n_workers: 3", "replay_db: shared.db", "robot_model: shell-model"} <= set(
+        result.stdout.splitlines()
+    )
+
+
 class TestStatusCommand:
     """Tests for `dimos status` CLI command."""
 
