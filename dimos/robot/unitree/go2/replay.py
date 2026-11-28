@@ -91,6 +91,8 @@ class Go2Replay(ReplayModule):
 
     @rpc
     def start(self) -> None:
+        if self._store is not None:
+            return  # already started
         super().start()
         # GO2Connection's own method: this class has the ports and config it uses.
         self.register_disposable(Disposable(self.odom.subscribe(self._publish_from_odom)))  # type: ignore[misc]

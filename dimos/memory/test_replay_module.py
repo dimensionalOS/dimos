@@ -73,6 +73,21 @@ def test_module_publishes_recorded_messages(recording: str) -> None:
     assert [round(t, 3) for t in got["goal"]] == [1.05]
 
 
+def test_starting_twice_plays_once(recording: str) -> None:
+    module = replay_module(recording)(dataset=recording)
+    got: list[float] = []
+    module.outputs["odom"].subscribe(lambda m: got.append(m.ts))
+    try:
+        module.start()
+        module.start()
+        module.on_system_modules_ready([])
+        module.on_system_modules_ready([])
+        assert module.replay_done.wait(HUNG_TEST_TIMEOUT)
+    finally:
+        module.stop()
+    assert [round(t, 3) for t in got] == [1.0, 1.1, 1.2]
+
+
 def test_stop_waits_for_in_flight_decode(recording: str, mocker: MockerFixture) -> None:
     entered = threading.Event()
     stop_waiting = threading.Event()

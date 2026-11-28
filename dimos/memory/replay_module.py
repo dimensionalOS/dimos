@@ -153,6 +153,8 @@ class ReplayModule(Module):
 
     @rpc
     def start(self) -> None:
+        if self._store is not None:
+            return  # already started
         super().start()
         if not self.config.dataset:
             raise ValueError("no recording: pass --replay-db <memory.db>")
@@ -206,14 +208,15 @@ class ReplayModule(Module):
     @rpc
     def on_system_modules_ready(self, _modules: list[RPCClient]) -> None:
         # Every module has started, so every subscriber is listening for the first frame.
+        if self._reader is None or self._publisher is not None or self._stopped.is_set():
+            return  # not started, already playing, or stopped
         for port, msg in self._static:
             self.register_disposable(interval(1.0).subscribe(partial(_republish, port, msg)))
         self._static = []
-        if self._reader is not None and self._publisher is None and not self._stopped.is_set():
-            self._publisher = Thread(
-                target=self._publish, args=(time.monotonic(),), name="replay-publisher", daemon=True
-            )
-            self._publisher.start()
+        self._publisher = Thread(
+            target=self._publish, args=(time.monotonic(),), name="replay-publisher", daemon=True
+        )
+        self._publisher.start()
 
     @rpc
     def stop(self) -> None:
