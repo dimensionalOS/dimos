@@ -23,6 +23,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
+from dimos.experimental.gta_sim2.contact_layers import ROBOT_CONTACT_MASK
 from dimos.experimental.gta_sim2.world_geometry import SourceGeometry
 from dimos.experimental.gta_sim2.world_index import file_digest
 
@@ -166,7 +167,7 @@ def rigid_hinge(meta: dict[str, Any], glb: Path) -> dict[str, Any]:
         raise ValueError("Non-rigid hinge bone")
     children = [c for c in physics["children"] if c["in_use"]]
     for child in children:
-        collides = int(child["include_flags"], 16) & ((1 << 13) | (1 << 25))
+        collides = int(child["include_flags"], 16) & ROBOT_CONTACT_MASK
         if collides and (child["group"] not in moving or child["bound"]["type"] != 3):
             raise ValueError("Fixed or undecoded collision within the source assembly")
     pieces = [c for c in children if c["group"] in moving]
@@ -240,7 +241,7 @@ def verify_collision(meta: dict[str, Any], geometry: SourceGeometry) -> None:
     bones = {int(b["index"]): b for b in meta["drawable"]["skeleton"]}
     remaining = list(geometry.primitives)
     for child in meta["physics"]["children"]:
-        if not child["in_use"] or not int(child["include_flags"], 16) & ((1 << 13) | (1 << 25)):
+        if not child["in_use"] or not int(child["include_flags"], 16) & ROBOT_CONTACT_MASK:
             continue
         expected = np.eye(4)
         bind = np.array(bones[child["bone"]]["bind_matrix"]).reshape(4, 4).T

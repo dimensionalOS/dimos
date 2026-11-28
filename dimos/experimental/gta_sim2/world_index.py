@@ -32,6 +32,12 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
+from dimos.experimental.gta_sim2.contact_layers import (
+    CONTACT_LIMIT,
+    CONTACT_POLICY,
+    ROBOT_CONTACT_MASK,
+)
+
 
 def file_digest(path: Path) -> str:
     with path.open("rb") as stream:
@@ -349,7 +355,8 @@ def build(
         "workspace": str(workspace.resolve()),
         "archive_size": stat.st_size,
         "archive_mtime_ns": stat.st_mtime_ns,
-        "include_mask": (1 << 13) | (1 << 25),
+        "include_mask": ROBOT_CONTACT_MASK,
+        "contact_policy": CONTACT_POLICY,
         "counts": dict(counts),
         "dependencies_sha256": file_digest(dependencies),
         "source_bounds_sha256": file_digest(collision_index),
@@ -360,7 +367,7 @@ def build(
         "limits": [
             "Unresolved dependencies are recorded; the data extent is not a guarantee of physical coverage.",
             "Interior links based only on heuristics are withheld.",
-            "Robot collision uses object and vehicle-wheel query masks, excluding weapon-only and ped-only helper surfaces.",
+            CONTACT_LIMIT,
         ],
     }
     (output / "catalog.json").write_text(json.dumps(manifest, indent=2) + "\n")

@@ -47,6 +47,30 @@
       "yaw_degrees": 90,
       "speed_mps": 0.4,
       "camera": "head"
+    },
+    {
+      "id": "house-stairs-east",
+      "label": "Jason\u2019s house \u00b7 east stairs",
+      "floor_rage_m": [
+        -2345.35,
+        -5529.2,
+        1.89
+      ],
+      "yaw_degrees": -90,
+      "speed_mps": 1,
+      "camera": "follow"
+    },
+    {
+      "id": "house-stairs-west",
+      "label": "Jason\u2019s house \u00b7 west stairs",
+      "floor_rage_m": [
+        -2356.85,
+        -5526.0,
+        1.89
+      ],
+      "yaw_degrees": 90,
+      "speed_mps": 1,
+      "camera": "follow"
     }
   ]
 }

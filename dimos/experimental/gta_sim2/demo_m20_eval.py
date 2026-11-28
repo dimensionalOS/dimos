@@ -80,6 +80,11 @@ def main() -> None:
     parser.add_argument("--seconds", type=float, default=4)
     parser.add_argument("--stop-after-s", type=float, help="Release input, then measure braking")
     parser.add_argument("--yaw-rate", type=float, default=0)
+    parser.add_argument(
+        "--heading-hold", action="store_true", help="Steer toward the initial forward line"
+    )
+    parser.add_argument("--goal-distance", type=float, help="Forward distance before stopping")
+    parser.add_argument("--goal-rise", type=float, default=0, help="Required base-height gain")
     parser.add_argument("--turn-after-s", type=float, default=0)
     parser.add_argument("--turning-forward-speed", type=float)
     parser.add_argument("--step-height", type=float, default=0.1)
@@ -104,6 +109,21 @@ def main() -> None:
         parser.error("step-height must be in (0, .3] metres")
     if args.stream_catalog and args.terrain != "road":
         parser.error("Streamed world evaluation requires road terrain")
+    if args.heading_hold and (args.yaw_rate or args.reverse_after_s is not None):
+        parser.error("Heading hold cannot be combined with yaw or reversal trials")
+    if args.goal_distance is not None and (
+        not np.isfinite([args.goal_distance, args.goal_rise]).all()
+        or args.goal_distance <= 0
+        or args.goal_rise < 0
+        or args.terrain != "road"
+        or args.speed <= 0
+        or args.reverse_after_s is not None
+    ):
+        parser.error(
+            "An authored-world goal requires positive forward distance and nonnegative rise"
+        )
+    if args.goal_rise and args.goal_distance is None:
+        parser.error("goal-rise requires goal-distance")
     scene = args.scene.resolve()
     if args.terrain != "road":
         scene = fixture(scene, args.output, args.terrain, args.step_height)
@@ -160,6 +180,13 @@ def main() -> None:
             )
             vx = 0.0 if stopped else args.speed * direction
             wz = args.yaw_rate if not stopped and elapsed >= args.turn_after_s else 0.0
+            if args.heading_hold and rows and not stopped:
+                heading = np.arctan2(forward_axis[1], forward_axis[0])
+                error = (heading - rows[-1][5] + np.pi) % (2 * np.pi) - np.pi
+                lateral = np.dot(
+                    np.array(rows[-1][1:3]) - rows[0][1:3], [-forward_axis[1], forward_axis[0]]
+                )
+                wz = float(np.clip(2.5 * error - 1.5 * lateral, -0.7, 0.7))
             policy.move(Twist(linear=Vector3(vx, 0, 0), angular=Vector3(0, 0, wz)), duration=0.35)
             sample = sim.inspect()
             for observation in sample.cbor_observations:
@@ -189,12 +216,21 @@ def main() -> None:
             if rows[-1][4] < 0.5 or p.z < 0.2:
                 outcome = "fallen"
                 break
-            if args.terrain == "stairs":
+            if args.terrain == "stairs" or args.goal_distance is not None:
                 on_landing = (
-                    p.x >= 4
-                    and abs(p.y) < 2.4
-                    and p.z >= rows[0][3] + 5 * args.step_height - 0.12
-                    and rows[-1][4] > 0.85
+                    (
+                        np.dot(np.array([p.x, p.y]) - rows[0][1:3], forward_axis)
+                        >= args.goal_distance
+                        and p.z >= rows[0][3] + args.goal_rise - 0.12
+                        and rows[-1][4] > 0.85
+                    )
+                    if args.goal_distance is not None
+                    else (
+                        p.x >= 4
+                        and abs(p.y) < 2.4
+                        and p.z >= rows[0][3] + 5 * args.step_height - 0.12
+                        and rows[-1][4] > 0.85
+                    )
                 )
                 if reached_goal_at is None and on_landing:
                     reached_goal_at = rows[-1][0]
@@ -215,6 +251,10 @@ def main() -> None:
         stop_index = int(stop_indices[0]) if len(stop_indices) else None
         report = {
             "terrain": args.terrain,
+            "heading_hold": args.heading_hold,
+            "goal_distance_m": args.goal_distance,
+            "goal_rise_m": args.goal_rise,
+            "goal_passed": outcome == "goal",
             "outcome": outcome,
             "stairs_passed": args.terrain == "stairs" and outcome == "goal",
             "step_height_m": args.step_height if args.terrain == "stairs" else None,
