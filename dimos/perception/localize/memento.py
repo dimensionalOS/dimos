@@ -31,7 +31,9 @@ from typing import Any, cast
 
 import numpy as np
 
+from dimos.memory.utils.sqlite import read_only_sqlite_uri
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.utils.data import writable_data_path
 
 Span = tuple[float, float]  # closed [start, end], seconds
 FrameSpan = tuple[str, float, float]  # (camera, start, end), every frame in it detected
@@ -110,6 +112,8 @@ class Memento:
     """
 
     def __init__(self, path: str | Path = ":memory:") -> None:
+        if str(path) != ":memory:":
+            writable_data_path(path)
         self._db = sqlite3.connect(str(path), check_same_thread=False)
         self._db.executescript(_SCHEMA)
         self._lock = threading.Lock()
@@ -172,7 +176,7 @@ class Memento:
 
     def dump(self, path: str | Path) -> None:
         """Write everything to a sqlite file at ``path``."""
-        target = sqlite3.connect(str(path))
+        target = sqlite3.connect(writable_data_path(path))
         try:
             with self._lock:
                 self._db.backup(target)
@@ -183,7 +187,7 @@ class Memento:
     def load(cls, path: str | Path) -> Memento:
         """An in-memory memento holding what ``dump`` wrote to ``path``."""
         memento = cls()
-        uri = f"{Path(path).resolve().as_uri()}?mode=ro"
+        uri = read_only_sqlite_uri(path)
         source = sqlite3.connect(uri, uri=True)
         try:
             source.backup(memento._db)

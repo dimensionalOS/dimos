@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from dimos.evals.environments.lib.recorded_poses import first_body_transform, last_body_transform
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.evals.types import EvalCase, Outcome, Suite, recording
-from dimos.utils.data import get_data
+from dimos.utils.data import get_data, get_generated_data_dir
 
 GradeKind = Literal["lifted"]
 
@@ -61,13 +61,20 @@ class BenchmarkManifest(BaseModel):
     cases: list[BenchmarkCase] = Field(default_factory=list)
 
 
+def _benchmark_file(root: str, relative: str) -> Path:
+    generated = get_generated_data_dir(root)
+    if (generated / "manifest.json").is_file():
+        return generated / relative
+    return get_data(f"{root}/{relative}")
+
+
 def load_manifest(root: str) -> BenchmarkManifest:
-    path = get_data(f"{root}/manifest.json")
+    path = _benchmark_file(root, "manifest.json")
     return BenchmarkManifest.model_validate(json.loads(path.read_text()))
 
 
 def scene_path(root: str, relative: str) -> Path:
-    return get_data(f"{root}/{relative}").resolve()
+    return _benchmark_file(root, relative).resolve()
 
 
 def tracked_bodies_for_case(case: BenchmarkCase) -> tuple[str, ...]:

@@ -32,7 +32,7 @@ from dimos.memory.type.recording import OnExisting
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.utils.data import backup_file
+from dimos.utils.data import backup_file, writable_data_path
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -307,7 +307,7 @@ class RustRecorder(NativeModule):
             )
 
     def _prepare_store(self, specs: list[RustStreamSpec]) -> None:
-        path = Path(self.config.store.path)
+        path = writable_data_path(self.config.store.path)
         if self.config.store.kind == "mcap" and self.config.on_existing is OnExisting.APPEND:
             raise ValueError("MCAP append is unsupported; choose overwrite, backup, or error")
         if path.exists():

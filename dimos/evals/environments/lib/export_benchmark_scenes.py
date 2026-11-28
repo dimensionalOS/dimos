@@ -28,7 +28,7 @@ from typing import Any
 import xml.etree.ElementTree as ET
 
 from dimos.evals.environments.lib.benchmark_scenes import write_manifest
-from dimos.utils.data import get_data, get_data_dir
+from dimos.utils.data import get_data, get_generated_data_dir, writable_data_path
 
 # Three free bodies so included xarm7.xml home keyframe nq still matches.
 # Attribute values are filled via ElementTree (not str.format).
@@ -165,7 +165,7 @@ def _write_pack(
     root: str,
     case: dict[str, Any],
 ) -> Path:
-    pack = out_root / "smoke"
+    pack = writable_data_path(out_root / "smoke")
     pack.mkdir(parents=True, exist_ok=True)
     _link_xarm(pack, data_dir)
     _copy(floor_src, pack / "textures" / floor_name)
@@ -257,14 +257,13 @@ def export_robocasa(source: Path, out_root: Path, *, data_dir: Path | None = Non
 
 
 def main(argv: list[str] | None = None) -> int:
-    # Always write under project data/ — smoke suites load via get_data().
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--libero-pro", type=Path)
     p.add_argument("--robocasa", type=Path)
     args = p.parse_args(argv)
     if not args.libero_pro and not args.robocasa:
         p.error("pass --libero-pro and/or --robocasa")
-    data = get_data_dir()
+    data = get_generated_data_dir()
     if args.libero_pro:
         print("wrote", export_libero_pro(args.libero_pro, data / "libero_pro"))
     if args.robocasa:

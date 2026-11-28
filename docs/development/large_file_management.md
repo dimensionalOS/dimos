@@ -199,3 +199,20 @@ When running from:
   - Linux: `~/.local/share/dimos/repo/data/`
   - macOS: `~/Library/Application Support/dimos/repo/data/`
   - Fallback: `/tmp/dimos/repo/data/`
+- **`DIMOS_DATA_DIR` set**: Uses that directory and nothing else. It takes precedence over both cases above.
+
+### A Data Directory Without a Repository
+
+Set `DIMOS_DATA_DIR` to the unpacked assets shipped with an installation. dimOS can look up those assets offline. Individual blueprints can have additional dependencies. For example, Alfred obtains its OpenArm description from a separate Git asset cache.
+
+```sh skip
+DIMOS_DATA_DIR=/opt/dimos/data dimos --simulation run unitree-go2
+```
+
+The directory holds what `data/` holds after extraction: `cafe.jpg`, `mujoco_sim/`, and so on. The `.tar.gz` archives are not needed.
+
+`get_data(name)` returns `$DIMOS_DATA_DIR/{name}`. A name that is not there raises `FileNotFoundError` with the name and the directory. Nothing is cloned, pulled or extracted.
+
+The directory can be mounted read-only. Close SQLite recordings before packaging them so committed transactions are checkpointed into the database. Replay opens packaged recordings as immutable snapshots without creating journal files.
+
+With this setting, generated scene packages, benchmark exports, and named legacy pickle recordings go under `$XDG_STATE_HOME/dimos` (normally `~/.local/state/dimos`). A named legacy recording or benchmark export in the state directory takes precedence when reopened by its consumer. Keep explicit output paths outside the packaged directory.

@@ -35,6 +35,7 @@ from dimos.memory.codecs.base import resolve_payload_type
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
 from dimos.memory.type.observation import Observation
+from dimos.memory.utils.sqlite import read_only_sqlite_uri
 from dimos.memory.utils.time_window import RecordingWindow
 from dimos.utils.data import resolve_named_path
 
@@ -73,7 +74,7 @@ def progress(total: int, label: str = "") -> Callable[[Observation[Any]], None]:
 
 def _stream_payload_types(db_path: Path) -> dict[str, type]:
     """Read each stream's registered payload type from the _streams table."""
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(read_only_sqlite_uri(db_path), uri=True)
     try:
         rows = conn.execute("SELECT name, config FROM _streams").fetchall()
     finally:

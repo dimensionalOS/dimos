@@ -35,6 +35,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import matching, recording_dir
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.service.zenohservice import ZENOH_LOG_DIRECTIVES
+from dimos.utils.data import writable_data_path
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -174,7 +175,7 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
 
 
 def _prepare_artifact(plan: RustRecordingPlan) -> None:
-    plan.path.parent.mkdir(parents=True, exist_ok=True)
+    writable_data_path(plan.path).parent.mkdir(parents=True, exist_ok=True)
     if plan.path.exists():
         plan.path.unlink()
     if global_config.record == "mcap":

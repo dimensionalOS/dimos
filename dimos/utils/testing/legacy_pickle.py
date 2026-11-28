@@ -26,7 +26,7 @@ from typing import Any, cast
 
 from reactivex.observable import Observable
 
-from dimos.utils.data import get_data, get_data_dir
+from dimos.utils.data import get_data, get_generated_data_dir, writable_data_path
 from dimos.utils.timeseries.base import T, TimeSeriesStore
 
 
@@ -66,32 +66,19 @@ class LegacyPickleStore(TimeSeriesStore[T]):
                       E.g., `Odometry.from_msg`. Saving stores frames unchanged.
         """
         self._name = str(name)
-        self._root_dir: Path | None = None
         self._counter: int = 0
         self._autocast = autocast
 
     def _get_root_dir(self, for_write: bool = False) -> Path:
         """Get root directory, creating on first write if needed."""
-        if self._root_dir is not None:
-            # Ensure directory exists if writing
-            if for_write:
-                self._root_dir.mkdir(parents=True, exist_ok=True)
-            return self._root_dir
-
-        # If absolute path, use directly
-        if Path(self._name).is_absolute():
-            self._root_dir = Path(self._name)
-            if for_write:
-                self._root_dir.mkdir(parents=True, exist_ok=True)
-        elif for_write:
-            # For writing: use get_data_dir and create if needed
-            self._root_dir = get_data_dir(self._name)
-            self._root_dir.mkdir(parents=True, exist_ok=True)
-        else:
-            # For reading: use get_data (handles LFS download)
-            self._root_dir = get_data(self._name)
-
-        return self._root_dir
+        path = Path(self._name)
+        if not path.is_absolute():
+            path = get_generated_data_dir(self._name)
+            if not for_write and not path.is_dir():
+                return get_data(self._name)
+        if for_write:
+            writable_data_path(path).mkdir(parents=True, exist_ok=True)
+        return path
 
     def _iter_files(self) -> Iterator[Path]:
         """Iterate pickle files in sorted order (by number in filename)."""
@@ -130,7 +117,7 @@ class LegacyPickleStore(TimeSeriesStore[T]):
             raise RuntimeError(f"File {full_path} already exists")
 
         # Save as (timestamp, data) tuple for legacy compatibility
-        with open(full_path, "wb") as f:
+        with writable_data_path(full_path).open("xb") as f:
             pickle.dump((timestamp, data), f)
 
         self._counter += 1

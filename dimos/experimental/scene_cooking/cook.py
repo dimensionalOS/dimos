@@ -53,12 +53,11 @@ from dimos.simulation.scene_assets.spec import (
     SceneMeshAlignment,
     ScenePackage,
 )
-from dimos.utils.data import get_data_dir
+from dimos.utils.data import get_generated_data_dir, writable_data_path
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-SCENE_PACKAGE_DIR = get_data_dir("scene_packages")
 _PACKAGE_KEY_LEN = 12
 _COOK_VERSION = 4
 #: Cap on entity id samples recorded in cook stats -- diagnostics only, not
@@ -105,11 +104,11 @@ def cook_scene_package(
     package_dir = (
         Path(output_dir).expanduser().resolve()
         if output_dir is not None
-        else SCENE_PACKAGE_DIR / _package_key(cook_spec, sidecar)
+        else get_generated_data_dir("scene_packages") / _package_key(cook_spec, sidecar)
     )
     browser_dir = package_dir / "browser"
     mujoco_dir = package_dir / "mujoco"
-    package_dir.mkdir(parents=True, exist_ok=True)
+    writable_data_path(package_dir).mkdir(parents=True, exist_ok=True)
 
     prepared_source = prepare_scene_source(source, rebake=rebake)
     cook_source = prepared_source.cook_path

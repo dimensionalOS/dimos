@@ -36,7 +36,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
 from dimos.memory.type.recording import OnExisting
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.utils.data import backup_file
+from dimos.utils.data import backup_file, writable_data_path
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -200,7 +200,6 @@ class MemoryModule(Module):
         if self._store is not None:
             return self._store
 
-        Path(self.config.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._store = self.register_disposable(
             SqliteStore(path=str(self.config.db_path)),
         )
@@ -291,7 +290,7 @@ class Recorder(MemoryModule):
         # shouldn't need to know about files (SqliteStore specific), and
         # .live() subs need to know how to re-sub in case of a restart of
         # this module in a deployed blueprint.
-        db_path = Path(self.config.db_path)
+        db_path = writable_data_path(self.config.db_path)
         if db_path.exists():
             if self.config.on_existing is OnExisting.APPEND:
                 pass  # keep the db; _prepare_streams handles any per-stream replacement

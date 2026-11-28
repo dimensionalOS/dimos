@@ -46,6 +46,8 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos.utils.data import generated_sibling, get_data, writable_data_path
+
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import MetaBlueprint
 
@@ -400,12 +402,10 @@ def _resolve_db_path(args: argparse.Namespace, pcap_path: Path) -> Path:
     """Where to record. Omitted --db -> <pcap>.db. A given --db that's missing is
     fetched via get_data (LFS) before falling back to building from scratch."""
     if not args.db:
-        return pcap_path.with_suffix(".db")
+        return generated_sibling(pcap_path.with_suffix(".db"))
     db_path = Path(args.db).expanduser().resolve()
     if not db_path.exists():
         try:
-            from dimos.utils.data import get_data
-
             fetched = get_data(args.db)
             if fetched.exists():
                 print(f"[pcap_to_db] fetched --db via get_data: {fetched}", flush=True)
@@ -426,8 +426,6 @@ def _run(args: argparse.Namespace) -> int:
     pcap_path = Path(args.pcap).expanduser()
     if not pcap_path.exists():
         try:
-            from dimos.utils.data import get_data
-
             pcap_path = get_data(args.pcap)
         except (FileNotFoundError, RuntimeError, OSError) as exc:
             print(
@@ -437,7 +435,7 @@ def _run(args: argparse.Namespace) -> int:
             return 2
     pcap_path = pcap_path.resolve()
     args.pcap_path = pcap_path
-    db_path = _resolve_db_path(args, pcap_path)
+    db_path = writable_data_path(_resolve_db_path(args, pcap_path))
     db_path.parent.mkdir(parents=True, exist_ok=True)
     overrides = _load_overrides(args.config)
     overrides.update(_cli_overrides(args))  # --tuning flags win over --config

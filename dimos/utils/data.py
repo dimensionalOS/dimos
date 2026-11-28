@@ -28,7 +28,7 @@ from typing import Any
 
 from filelock import FileLock
 
-from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -118,11 +118,50 @@ def get_project_root() -> Path:
     return repo_dir
 
 
-@cache
+def _explicit_data_dir() -> Path | None:
+    """The directory named by DIMOS_DATA_DIR. It holds unpacked data and is only read."""
+    value = os.environ.get("DIMOS_DATA_DIR")
+    return Path(value).expanduser().resolve() if value else None
+
+
 def get_data_dir(extra_path: str | None = None) -> Path:
-    if extra_path:
-        return get_project_root() / "data" / extra_path
-    return get_project_root() / "data"
+    data_dir = _explicit_data_dir() or get_project_root() / "data"
+    return data_dir / extra_path if extra_path else data_dir
+
+
+def is_packaged_data(path: str | Path) -> bool:
+    root = _explicit_data_dir()
+    if root is None:
+        return False
+    path = Path(path)
+    return path.resolve().is_relative_to(root) or path.parent.resolve().is_relative_to(root)
+
+
+def writable_data_path(path: str | Path) -> Path:
+    """Reject an output inside the configured read-only data directory."""
+    if is_packaged_data(path):
+        raise PermissionError(f"Cannot write {path} inside DIMOS_DATA_DIR")
+    return Path(path)
+
+
+def generated_sibling(path: Path) -> Path:
+    """Redirect output normally written next to a packaged input to the state directory."""
+    root = _explicit_data_dir()
+    if root is None:
+        return path
+    parent = path.parent.resolve()
+    if parent.is_relative_to(root):
+        path = writable_data_path(STATE_DIR / parent.relative_to(root) / path.name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+    return writable_data_path(path)
+
+
+def get_generated_data_dir(extra_path: str = "") -> Path:
+    """Where to write data that DimOS generates. A directory set by DIMOS_DATA_DIR is only read."""
+    if _explicit_data_dir() is not None:
+        return writable_data_path(STATE_DIR / extra_path)
+    return get_data_dir(extra_path)
 
 
 def resolve_named_path(name: str | Path, suffix: str = "", must_exist: bool = True) -> Path:
@@ -153,7 +192,7 @@ def resolve_named_path(name: str | Path, suffix: str = "", must_exist: bool = Tr
 
 
 def backup_file(path: str | Path, keep_last: int = 3) -> Path | None:
-    path = Path(path)
+    path = writable_data_path(path)
     if not path.exists():
         return None
 
@@ -171,9 +210,9 @@ def backup_file(path: str | Path, keep_last: int = 3) -> Path | None:
     return backup if backup.exists() else None
 
 
-@cache
 def _get_lfs_dir() -> Path:
-    return get_data_dir() / ".lfs"
+    # The archives belong to the repository, also when DIMOS_DATA_DIR names the data directory.
+    return get_project_root() / "data" / ".lfs"
 
 
 def _initialize_git_lfs(repo_root: Path) -> None:
@@ -316,6 +355,10 @@ def get_data(name: str | Path) -> Path:
     Supports nested paths like "dataset/subdir/file.jpg" - will download and
     decompress "dataset" archive but return the full nested path.
 
+    When DIMOS_DATA_DIR is set, the path is looked up in that directory and
+    nothing else happens: no repository, no Git LFS, no write. A name that is
+    not there raises FileNotFoundError.
+
     Args:
         name: Name of the test file or dir, optionally with nested path
               (e.g., "lidar_sample.bin" or "dataset/frames/001.png")
@@ -340,6 +383,12 @@ def get_data(name: str | Path) -> Path:
     # already pulled and decompressed, return it directly
     if file_path.exists():
         return file_path
+
+    # An explicit data directory is complete as supplied. Nothing is fetched into it.
+    if _explicit_data_dir() is not None:
+        raise FileNotFoundError(
+            f"Data '{name}' not found in {data_dir}, the directory set by DIMOS_DATA_DIR"
+        )
 
     # extract archive root (first path component) and nested path
     path_parts = Path(name).parts

@@ -171,6 +171,10 @@ data/scene_packages/<name>/
 cook statistics. Runtime code should read it through `load_scene_package()` or
 `resolve_scene_package()`.
 
+Without `--output-dir` the package goes to `data/scene_packages/<key>`. When
+`DIMOS_DATA_DIR` is set, the data directory is only read and the package goes
+to `~/.local/state/dimos/scene_packages/<key>`.
+
 ## Load
 
 Runtime consumers ask for the package representation they support:

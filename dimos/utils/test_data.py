@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 import copy
 import hashlib
@@ -192,6 +193,94 @@ def test_source_checkout_missing_archive_does_not_fetch(
     run.assert_not_called()
 
 
+@pytest.fixture
+def packaged_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> Iterator[Path]:
+    """A read-only DIMOS_DATA_DIR. A repository lookup, a lock or a subprocess fails the test."""
+    data_dir = tmp_path / "packaged"
+    (data_dir / "mujoco_sim").mkdir(parents=True)
+    (data_dir / "mujoco_sim" / "unitree_go1_policy.onnx").write_bytes(b"policy")
+    (data_dir / "cafe.jpg").write_bytes(b"jpeg")
+    read_only = [data_dir / "mujoco_sim", data_dir]
+    for path in read_only:
+        path.chmod(0o555)
+    monkeypatch.setenv("DIMOS_DATA_DIR", str(data_dir))
+    for name in ("get_project_root", "FileLock"):
+        mocker.patch.object(data, name, side_effect=AssertionError(name))
+    mocker.patch.object(data.subprocess, "run", side_effect=AssertionError("subprocess"))
+    yield data_dir
+    for path in read_only:
+        path.chmod(0o755)
+
+
+def test_relative_data_dir_returns_an_absolute_asset_path(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DIMOS_DATA_DIR", "packaged")
+    asset = tmp_path / "packaged" / "mesh.obj"
+    asset.parent.mkdir()
+    asset.touch()
+
+    assert data.get_data("mesh.obj") == asset
+
+
+def test_generated_sibling_redirects_packaged_output_through_a_symlink(
+    tmp_path, monkeypatch
+) -> None:
+    packaged = tmp_path / "packaged"
+    (packaged / "nested").mkdir(parents=True)
+    alias = tmp_path / "alias"
+    alias.symlink_to(packaged, target_is_directory=True)
+    monkeypatch.setenv("DIMOS_DATA_DIR", str(packaged))
+    monkeypatch.setattr(data, "STATE_DIR", tmp_path / "state")
+    output = alias / "nested" / "run.rrd"
+
+    path = data.generated_sibling(output)
+    path.write_bytes(b"rendered")
+
+    assert path == tmp_path / "state/nested/run.rrd"
+    assert not output.exists()
+    with pytest.raises(PermissionError, match="DIMOS_DATA_DIR"):
+        data.writable_data_path(output)
+
+
+def test_data_dir_setting_replaces_the_repository_data_directory(packaged_data: Path) -> None:
+    assert data.get_data_dir() == packaged_data
+    assert data.get_data_dir("mujoco_sim") == packaged_data / "mujoco_sim"
+
+
+@pytest.mark.parametrize("name", ["cafe.jpg", "mujoco_sim", "mujoco_sim/unitree_go1_policy.onnx"])
+def test_data_dir_setting_resolves_names_in_place(packaged_data: Path, name: str) -> None:
+    assert data.get_data(name) == packaged_data / name
+
+
+@pytest.mark.parametrize("name", ["go2_short.db", "mujoco_sim/unitree_g1_policy.onnx"])
+def test_data_dir_setting_miss_names_the_request_and_the_directory(
+    packaged_data: Path, name: str
+) -> None:
+    before = sorted(packaged_data.rglob("*"))
+
+    with pytest.raises(FileNotFoundError) as error:
+        data.get_data(name)
+
+    assert name in str(error.value)
+    assert str(packaged_data) in str(error.value)
+    assert sorted(packaged_data.rglob("*")) == before
+
+
+def test_generated_data_is_written_outside_a_data_dir_setting(packaged_data: Path) -> None:
+    assert data.get_generated_data_dir("scene_packages") == data.STATE_DIR / "scene_packages"
+
+
+def test_generated_data_is_written_to_the_repository_data_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> None:
+    monkeypatch.delenv("DIMOS_DATA_DIR", raising=False)
+    mocker.patch.object(data, "get_project_root", return_value=tmp_path)
+
+    assert data.get_generated_data_dir("scene_packages") == tmp_path / "data" / "scene_packages"
+
+
 def test_resolve_named_path_appends_the_suffix_to_a_path(tmp_path: Path) -> None:
     (tmp_path / "premap.map.db").touch()
     assert resolve_named_path(tmp_path / "premap", ".map.db") == tmp_path / "premap.map.db"
@@ -314,34 +403,41 @@ def test_backup_file_keep_last_zero_removes_all(tmp_path: Path) -> None:
     assert list(tmp_path.glob("recording_go2.*.db")) == []
 
 
+@pytest.fixture
+def lfs_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise real LFS pulls in a disposable checkout with its own extracted files."""
+    repo = tmp_path / "repo"
+    subprocess.run(
+        ["git", "clone", "--shared", "--no-checkout", str(data.DIMOS_PROJECT_ROOT), str(repo)],
+        check=True,
+    )
+    monkeypatch.setenv("GIT_LFS_SKIP_SMUDGE", "1")
+    subprocess.run(
+        [
+            "git",
+            "checkout",
+            "HEAD",
+            "--",
+            ".gitattributes",
+            ".lfsconfig",
+            "data/.lfs/cafe.jpg.tar.gz",
+            "data/.lfs/ab_lidar_frames.tar.gz",
+            "data/.lfs/three_paths.png.tar.gz",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    monkeypatch.delenv("DIMOS_DATA_DIR", raising=False)
+    monkeypatch.setattr(data, "DIMOS_PROJECT_ROOT", repo)
+    monkeypatch.setattr(data, "get_project_root", lambda: repo)
+
+
 @pytest.mark.self_hosted
+@pytest.mark.usefixtures("lfs_checkout")
 def test_pull_file() -> None:
-    repo_root = data.get_project_root()
     test_file_name = "cafe.jpg"
     test_file_compressed = data._get_lfs_dir() / (test_file_name + ".tar.gz")
     test_file_decompressed = data.get_data_dir() / test_file_name
-
-    # delete decompressed test file if it exists
-    if test_file_decompressed.exists():
-        test_file_decompressed.unlink()
-
-    # delete lfs archive file if it exists
-    if test_file_compressed.exists():
-        test_file_compressed.unlink()
-
-    assert not test_file_compressed.exists()
-    assert not test_file_decompressed.exists()
-
-    # pull the lfs file reference from git
-    env = os.environ.copy()
-    env["GIT_LFS_SKIP_SMUDGE"] = "1"
-    subprocess.run(
-        ["git", "checkout", "HEAD", "--", test_file_compressed],
-        cwd=repo_root,
-        env=env,
-        check=True,
-        capture_output=True,
-    )
 
     # ensure we have a pointer file from git (small ASCII text file)
     assert test_file_compressed.exists()
@@ -371,32 +467,11 @@ def test_pull_file() -> None:
 
 
 @pytest.mark.self_hosted
+@pytest.mark.usefixtures("lfs_checkout")
 def test_pull_dir() -> None:
-    repo_root = data.get_project_root()
     test_dir_name = "ab_lidar_frames"
     test_dir_compressed = data._get_lfs_dir() / (test_dir_name + ".tar.gz")
     test_dir_decompressed = data.get_data_dir() / test_dir_name
-
-    # delete decompressed test directory if it exists
-    if test_dir_decompressed.exists():
-        for item in test_dir_decompressed.iterdir():
-            item.unlink()
-        test_dir_decompressed.rmdir()
-
-    # delete lfs archive file if it exists
-    if test_dir_compressed.exists():
-        test_dir_compressed.unlink()
-
-    # pull the lfs file reference from git
-    env = os.environ.copy()
-    env["GIT_LFS_SKIP_SMUDGE"] = "1"
-    subprocess.run(
-        ["git", "checkout", "HEAD", "--", test_dir_compressed],
-        cwd=repo_root,
-        env=env,
-        check=True,
-        capture_output=True,
-    )
 
     # ensure we have a pointer file from git (small ASCII text file)
     assert test_dir_compressed.exists()
@@ -567,15 +642,12 @@ def test_lfs_path_with_real_file() -> None:
 
 
 @pytest.mark.self_hosted
+@pytest.mark.usefixtures("lfs_checkout")
 def test_lfs_path_unload_and_reload() -> None:
     """Test unloading and reloading an LFS file."""
     filename = "three_paths.png"
     data_dir = data.get_data_dir()
     file_path = data_dir / filename
-
-    # Clean up if file already exists
-    if file_path.exists():
-        file_path.unlink()
 
     # Create LfsPath
     lfs_path = LfsPath(filename)

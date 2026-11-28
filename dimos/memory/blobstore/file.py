@@ -19,6 +19,7 @@ from typing import Any
 
 from dimos.memory.blobstore.base import BlobStore, BlobStoreConfig
 from dimos.memory.utils.validation import validate_identifier
+from dimos.utils.data import is_packaged_data, writable_data_path
 
 
 class FileBlobStoreConfig(BlobStoreConfig):
@@ -44,13 +45,14 @@ class FileBlobStore(BlobStore):
         return self._root / stream_name / f"{key}.bin"
 
     def start(self) -> None:
-        self._root.mkdir(parents=True, exist_ok=True)
+        if not is_packaged_data(self._root):
+            self._root.mkdir(parents=True, exist_ok=True)
 
     def stop(self) -> None:
         pass
 
     def put(self, stream_name: str, key: int, data: bytes) -> None:
-        p = self._path(stream_name, key)
+        p = writable_data_path(self._path(stream_name, key))
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(data)
 
@@ -64,7 +66,7 @@ class FileBlobStore(BlobStore):
     def delete(self, stream_name: str, key: int) -> None:
         p = self._path(stream_name, key)
         try:
-            p.unlink()
+            writable_data_path(p).unlink()
         except FileNotFoundError:
             raise KeyError(f"No blob for stream={stream_name!r}, key={key}") from None
 
