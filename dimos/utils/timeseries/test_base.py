@@ -14,11 +14,15 @@
 """Tests for TimeSeriesStore implementations."""
 
 from dataclasses import dataclass
+from itertools import islice
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from reactivex import operators as ops
 
 from dimos.types.timestamped import Timestamped
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 from dimos.utils.timeseries.base import TimeSeriesStore
 from dimos.utils.timeseries.inmemory import InMemoryStore
 
@@ -37,6 +41,27 @@ class SampleData(Timestamped):
         if isinstance(other, SampleData):
             return self.value == other.value and self.ts == other.ts
         return False
+
+
+@pytest.mark.parametrize("backend", ["memory", "pickle"])
+def test_empty_loop_completes_and_nonempty_loop_repeats(backend: str, tmp_path: Path) -> None:
+    store: TimeSeriesStore[SampleData] = (
+        InMemoryStore() if backend == "memory" else LegacyPickleStore(tmp_path)
+    )
+    store.save(SampleData("later", 20), SampleData("selected", 10))
+    # Exercise both public readers, including pickle files saved out of timestamp order.
+    looped = store.iterate_ts if isinstance(store, LegacyPickleStore) else store.iterate_items
+    # Bound the number of reads so a regression cannot hang the test suite.
+    passes = [
+        store._iter_items(),
+        store._iter_items(start=110),
+        AssertionError("repeated empty scan"),
+    ]
+    with patch.object(store, "_iter_items", side_effect=passes):
+        assert list(looped(from_timestamp=110, loop=True)) == []
+
+    selection = looped(from_timestamp=10, duration=1, loop=True)
+    assert [ts for ts, _ in islice(selection, 3)] == [10, 10, 10]
 
 
 def make_in_memory_store() -> TimeSeriesStore[SampleData]:
