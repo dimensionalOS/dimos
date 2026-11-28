@@ -28,7 +28,6 @@ from reactivex.observable import Observable
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.global_config import SIMULATORS
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
@@ -184,7 +183,7 @@ def make_connection(
             exit_on_complete=cfg.replay_exit,
             module_rpc_name=cfg.rpc_name,
         )
-    elif ip == "mujoco" or mode == "mujoco":
+    elif ip == "mujoco" or mode in ("mujoco", "true"):
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
         return MujocoConnection(cfg.mujoco, robot_model=cfg.g.robot_model)
@@ -200,6 +199,8 @@ def make_connection(
             velocity_api=velocity_api,
         )
     else:
+        from dimos.core.global_config import SIMULATORS
+
         raise ValueError(
             f"Unknown simulator {cfg.g.simulation!r}. Choose from: {', '.join(SIMULATORS)}"
         )
