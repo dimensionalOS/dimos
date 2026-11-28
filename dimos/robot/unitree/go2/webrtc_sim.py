@@ -104,7 +104,8 @@ class Go2WebRtcSimConfig(SimSensorConfig):
     jpeg_quality: int = 75
     # Its frames are drawn on this many views at once (each its own render process on macOS), so one draws while another is tone mapped.
     camera_views: int = 4
-    render: RenderQuality = RenderQuality()
+    # Shadows are off so the camera holds 60 fps next to a Controller on the same Mac.
+    render: RenderQuality = RenderQuality(shadows=False)
     # Its L1 map goes out at 10 Hz.
     l1: SimL1Config = Field(default_factory=lambda: SimL1Config(period=0.1, stamp_tolerance=None))
 
