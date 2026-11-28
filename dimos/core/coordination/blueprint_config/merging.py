@@ -18,10 +18,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import difflib
-import json
-from typing import Any
+from typing import Any, Literal
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+from dimos.core.coordination.blueprint_config.fields import child_annotations
 from dimos.core.coordination.blueprint_config.schema import (
     OptionTarget,
     ParserSchema,
@@ -98,20 +98,21 @@ def merge_environment(
 
     def set_coerced(path: tuple[str, ...], raw_name: str, value: str) -> None:
         identity = _environment_identity(path)
-        target = targets.get(identity) if identity is not None else None
-        if target is not None:
-            coerced = coerce_environment_value(value, target, raw_name)
-        elif value.lstrip().startswith(("[", "{")):
-            # A leaf the schema does not enumerate (inside a dataclass field) still
-            # takes a sequence or object as JSON.
-            try:
-                coerced = json.loads(value)
-            except json.JSONDecodeError as error:
-                raise BlueprintConfigError(
-                    f"Environment variable {raw_name} contains invalid JSON: {error.msg}."
-                ) from error
-        else:
-            coerced = value
+        assert identity is not None
+        section, root, keys = identity
+        target = targets.get(identity)
+        if target is None:
+            # Structured options can be overridden below their CLI-visible leaves.
+            annotations: tuple[Any, ...] = (Any,)
+            for depth in range(len(keys) - 1, 0, -1):
+                parent = targets.get((section, root, keys[:depth]))
+                if parent is not None:
+                    annotations = parent.annotations
+                    for key in keys[depth:]:
+                        annotations = child_annotations(annotations, key)
+                    break
+            target = OptionTarget(section, root, keys, annotations)
+        coerced = coerce_environment_value(value, target, raw_name)
         deep_set(env_source, path, coerced)
 
     for raw_name, value in environ.items():
@@ -216,7 +217,9 @@ def merge_cli(
         index += 1
 
 
-def _environment_identity(path: tuple[str, ...]) -> tuple[str, str, tuple[str, ...]] | None:
+def _environment_identity(
+    path: tuple[str, ...],
+) -> tuple[Literal["module", "global", "transport"], str, tuple[str, ...]] | None:
     """Map an environment source path to an OptionTarget identity."""
     root, *rest = path
     if root == "g":

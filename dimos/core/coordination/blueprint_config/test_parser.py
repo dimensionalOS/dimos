@@ -19,6 +19,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 import pytest
+from typing_extensions import TypedDict
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import (
@@ -336,12 +337,27 @@ def test_environment_values_coerce_null_and_json_like_cli() -> None:
     assert kwargs["labels"] == ["one", "two"]
 
 
-def test_environment_str_field_keeps_bracketed_string() -> None:
-    parsed = BlueprintConfigParser(PrimaryModule.blueprint()).parse(
-        environ={"PRIMARYMODULE__NESTED__MODE": "[not json"},
-    )
+@pytest.mark.parametrize("from_env", [False, True])
+@pytest.mark.parametrize("value", ['{"west":1}', "[west] office.db"])
+def test_string_and_path_fields_keep_json_looking_values(value: str, from_env: bool) -> None:
+    class FileConfig(ModuleConfig):
+        label: str
+        path: Path | None = None
+        device: int | str = 0
 
-    assert parsed.module_kwargs("primarymodule")["nested"]["mode"] == "[not json"
+    class FileModule(Module):
+        config: FileConfig
+
+    parser = BlueprintConfigParser(FileModule.blueprint())
+    args = [] if from_env else ["--label", value, "--path", value, "--device", value]
+    names = ("FILEMODULE__LABEL", "FILEMODULE__PATH", "FILEMODULE__DEVICE")
+    env = dict.fromkeys(names, value) if from_env else {}
+    parsed = parser.parse(args, environ=env)
+    assert parsed.module_kwargs("filemodule") == {
+        "label": value,
+        "path": Path(value),
+        "device": value,
+    }
 
 
 def test_environment_invalid_json_names_the_variable() -> None:
@@ -615,3 +631,37 @@ def test_module_secret_defaults_are_hidden_in_help() -> None:
     assert "private-api-key" not in help_text
     assert "private-aes-key" not in help_text
     assert parser.parse(environ={}).module_kwargs("secretmodule")["api_key"] == "private-api-key"
+
+
+def test_sparse_environment_uses_declared_structured_field_types() -> None:
+    @dataclass
+    class Location:
+        path: Path
+
+    class FileOptions(TypedDict):
+        label: str
+
+    class FileConfig(ModuleConfig):
+        location: Location
+        options: FileOptions
+
+    class Files(Module):
+        config: FileConfig
+
+    parsed = BlueprintConfigParser(Files.blueprint()).parse(
+        environ={"FILES__LOCATION__PATH": "[west] office.db", "FILES__OPTIONS__LABEL": "{draft}"}
+    )
+    kwargs = parsed.module_kwargs("files")
+    assert kwargs["location"]["path"] == Path("[west] office.db")
+    assert kwargs["options"] == {"label": "{draft}"}
+
+
+def test_mixed_scalar_literal_accepts_bracketed_choice() -> None:
+    class ChoiceConfig(ModuleConfig):
+        kind: Literal["[auto]", 0] = 0
+
+    class Choice(Module):
+        config: ChoiceConfig
+
+    parsed = BlueprintConfigParser(Choice.blueprint()).parse(["--kind", "[auto]"], environ={})
+    assert parsed.module_kwargs("choice")["kind"] == "[auto]"
