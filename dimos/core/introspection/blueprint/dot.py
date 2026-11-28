@@ -32,7 +32,7 @@ from urllib.parse import quote
 
 from dimos.cli import theme
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.core.coordination.module_coordinator import _resolve_single_ref
+from dimos.core.coordination.module_coordinator import resolve_module_refs
 from dimos.core.introspection.utils import (
     GROUP_COLORS,
     RPC_COLOR,
@@ -76,6 +76,12 @@ def module_node_id(name: str) -> str:
     return f"module:{quote(name)}"
 
 
+def _dot_label(text: str) -> str:
+    """DOT preserves literal tabs, whereas Graphviz displays the JSON tab escape as 't'."""
+    parts = [json.dumps(part, ensure_ascii=False)[1:-1] for part in text.split("\t")]
+    return '"' + "\t".join(parts) + '"'
+
+
 def _rpc_methods(contract: type) -> tuple[str, ...]:
     if is_spec(contract):
         return tuple(sorted(get_protocol_method_signatures(contract)))
@@ -85,23 +91,13 @@ def _rpc_methods(contract: type) -> tuple[str, ...]:
 
 
 def _resolve_rpc_connections(blueprint: Blueprint) -> list[RpcConnection]:
-    disabled_set = set(blueprint.disabled_modules_tuple)
+    resolved = resolve_module_refs(blueprint)
     connections: list[RpcConnection] = []
 
     for atom in blueprint.active_blueprints:
         for module_ref in atom.module_refs:
-            replacement = blueprint.remapping_map.get((atom.name, module_ref.name), module_ref.spec)
-            if not (is_spec(replacement) or is_module_type(replacement)):
-                continue
-
-            provider_name = _resolve_single_ref(
-                atom,
-                module_ref,
-                replacement,
-                blueprint,
-                disabled_set,
-            )
-            if not isinstance(provider_name, str):
+            provider_name = resolved.get((atom.name, module_ref.name))
+            if provider_name is None:
                 continue
 
             connections.append(
@@ -219,9 +215,7 @@ def render(
             label = atom.module.__name__
             if atom.instance_name is not None:
                 label = f"{mod}\n{label}"
-            lines.append(
-                f"        {node_ids[mod]} [label={json.dumps(label, ensure_ascii=False)}];"
-            )
+            lines.append(f"        {node_ids[mod]} [label={_dot_label(label)}];")
         # Stack nodes vertically within cluster
         if LayoutAlgo.STACK_NODES in layout and len(mods) > 1:
             for i in range(len(mods) - 1):
@@ -251,7 +245,7 @@ def render(
         label = f"{name}:{type_.__name__}"
         color = color_for_string(TYPE_COLORS, label)
         lines.append(
-            f"    {node_id} [label={json.dumps(label, ensure_ascii=False)}, shape=note, style=filled, "
+            f"    {node_id} [label={_dot_label(label)}, shape=note, style=filled, "
             f'fillcolor="{color}35", color="{color}", fontcolor="{theme.FOREGROUND}", '
             f'width=0, height=0, margin="0.1,0.05", fontsize=10];'
         )

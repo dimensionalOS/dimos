@@ -20,6 +20,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
+from dimos.core.coordination.module_coordinator import resolve_module_refs
 from dimos.core.introspection.blueprint.dot import LayoutAlgo, render
 from dimos.core.introspection.module.info import ModuleInfo
 from dimos.core.introspection.svg import to_svg
@@ -37,6 +38,9 @@ def test_duplex_port_has_edges_in_both_directions() -> None:
     assert "frame:bytes" in graph
     assert len(edges) == 2
     assert edges[0] == edges[1][::-1]
+    disabled = render(Duplex.blueprint().disabled_modules(Duplex))
+    assert "frame:bytes" not in disabled
+    assert "Duplex" not in disabled
 
 
 @pytest.mark.parametrize(
@@ -108,6 +112,17 @@ def test_blueprint_graph_keeps_each_instances_stream_and_rpc(
         other = "right" if side == "left" else "left"
         assert f'{stream[1]} -> "module:{other}/display"' not in graph
         assert f'{contract[1]} -> "module:{other}/camera"' not in graph
+
+
+def test_rpc_graph_follows_an_explicit_instance_remapping(
+    camera_display: tuple[Blueprint, type[Module]],
+) -> None:
+    pair, _ = camera_display
+    blueprint = pair.namespace("left").remappings([("left/display", "camera", "left/camera")])
+    assert resolve_module_refs(blueprint) == {("left/display", "camera"): "left/camera"}
+    graph = render(blueprint)
+    assert '"module:left/display" -> rpc_0 ' in graph
+    assert 'rpc_0 -> "module:left/camera" ' in graph
 
 
 def test_disabled_modules_do_not_add_stream_nodes_or_edges(

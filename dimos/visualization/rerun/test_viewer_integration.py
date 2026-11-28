@@ -247,9 +247,23 @@ def test_bridge_breaks_label_lines_and_keeps_a_literal_backslash(
 def test_rerun_keeps_distinct_escaped_module_names(
     mocker: MockerFixture, viewer: bridge.RerunBridgeModule
 ) -> None:
-    names = ["front\nleft", r"front\nleft", "front%0Aleft"]
+    names = [
+        "front\nleft",
+        r"front\nleft",
+        "front%0Aleft",
+        "front\tleft",
+        r"front\tleft",
+        "front\u2028left",
+    ]
     blueprint = autoconnect(*(Module.blueprint(instance_name=name) for name in names)).solidify()
-    module_ids = ["module:front%0Aleft", "module:front%5Cnleft", "module:front%250Aleft"]
+    module_ids = [
+        "module:front%0Aleft",
+        "module:front%5Cnleft",
+        "module:front%250Aleft",
+        "module:front%09left",
+        "module:front%5Ctleft",
+        "module:front%E2%80%A8left",
+    ]
     log = mocker.patch.object(rr, "log")
 
     viewer.log_blueprint_graph(render(blueprint), module_ids)

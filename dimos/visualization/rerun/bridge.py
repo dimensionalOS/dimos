@@ -195,7 +195,7 @@ def _graphviz_plain_lines(output: str) -> list[str]:
     """Join physical lines that Graphviz wraps with a trailing backslash."""
     lines: list[str] = []
     pending = ""
-    for physical_line in output.splitlines():
+    for physical_line in output.split("\n"):
         pending += physical_line
         if pending.endswith("\\"):
             pending = pending[:-1]
