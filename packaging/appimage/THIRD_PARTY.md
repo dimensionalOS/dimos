@@ -15,6 +15,12 @@ under which terms.
 
 ## Attributions
 
+The GR00T policies in `opt/data/groot` include NVIDIA's model licence and
+attribution in `LICENSE` and `Notice.txt`. The Piper meshes in `opt/data/piper`
+include the AgileX model's MIT notice in `LICENSE`.
+[GR00T model licence](https://github.com/NVlabs/GR00T-WholeBodyControl/blob/1e1ec4f5f27e6c3e03048f693bd7c60cce04afda/decoupled_wbc/sim2mujoco/resources/robots/g1/policy/NVIDIA%20Open%20Model%20License)
+and [Piper mesh licence](https://github.com/google-deepmind/mujoco_menagerie/blob/eea4c7431b63da8278b0ff31638e0b0e941cec0e/agilex_piper/LICENSE).
+
 ### Mersus Office
 
 `opt/data/mujoco_sim/scene_office1` and `scene_office1.xml` are made from "Mersus
