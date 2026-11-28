@@ -18,6 +18,7 @@ from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Sequenc
 from dataclasses import dataclass
 from functools import cached_property
 import hashlib
+import importlib.util
 from pathlib import Path
 import tempfile
 from typing import Any
@@ -344,7 +345,9 @@ def _spec_is_spawn(spec: Any) -> bool:
     return listed is not None and SPAWN_API in listed.ApplyOperations([])
 
 
-register_spawn_schema()
+# usd-core is an extra (none ships for linux-aarch64), so a process without it never opens a stage.
+if importlib.util.find_spec("pxr") is not None:
+    register_spawn_schema()
 
 
 # The scene a simulated world is built on: the one unmounted HardwareModule, a USD whose spawn points are its mounts.
