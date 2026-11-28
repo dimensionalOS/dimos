@@ -138,7 +138,8 @@ def test_fake_device_lifecycle(connection_type, ports, boundary, mocker, tmp_pat
             assert rows[0, 4] != 0.0
         else:
             assert rows[0, 4] == 0.0
-        assert native.groups[jaw.name].commands[-1] == pytest.approx(0.5)
+        # halfway along the joint is halfway to the jaw's open limit
+        assert native.groups[jaw.name].commands[-1] == pytest.approx(0.5 * jaw.open_limit)
 
         # The reader keeps publishing the fake feedback in declared order.
         wait_until(lambda: len(readings.sent) > 1, timeout=2)

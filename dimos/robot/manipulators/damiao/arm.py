@@ -167,8 +167,9 @@ class DamiaoArm:
     """One Damiao robot on its buses: enable, command, read and disable it.
 
     Each jaw is read and commanded as its URDF finger joint, in that joint's
-    unit (m or rad). The SDK's opening, 0 closed to 1 open, maps linearly
-    onto the joint's URDF range, with the gripper's ``open_at`` end as open.
+    unit (m or rad). The joint's URDF range maps linearly onto the SDK's
+    opening, from 0 (closed) to the gripper's ``open_limit`` at the joint's
+    ``open_at`` end; an opening beyond the limit reads as that end.
 
     Args:
         robot: The motors, gains, gripper settings and models to use.
@@ -292,6 +293,11 @@ class DamiaoArm:
             arm.set_mode("mit")
         native.enable()
         self._enable_passive_grippers()
+        # Enabling calibrates each jaw against its stops; a jaw with an open
+        # limit is brought in from the open stop rather than left pressing it.
+        for gripper in self._robot.grippers:
+            if gripper.name not in self._passive and gripper.open_limit < 1.0:
+                self._grippers[gripper.name].set_opening(gripper.open_limit)
         self._active = True
         self._targets = dict(zip(self.joint_names, self._sample().position, strict=True))
 
@@ -637,7 +643,8 @@ class DamiaoArm:
             opening = (target - closed) / (opened - closed)
             if not 0 <= opening <= 1:
                 raise ValueError(f"{gripper.joint} target {target} is outside its URDF range")
-            openings[gripper.name] = opening
+            # The joint's open end is the jaw's open limit, not its stop.
+            openings[gripper.name] = opening * gripper.open_limit
         assert self._physical is not None
         gravity = self._physical.gravity(measured)
         torque_limits, _ = self._torque_tables()
@@ -694,6 +701,8 @@ class DamiaoArm:
             opening = float(self._grippers[gripper.name].opening) if self._active else 0.0
             if not np.isfinite(opening) or not 0 <= opening <= 1:
                 raise RuntimeError(f"gripper {gripper.name!r} returned invalid opening {opening}")
+            # Beyond the open limit (at the stop, e.g. after calibration) reads as fully open.
+            opening = min(1.0, opening / gripper.open_limit)
             closed, opened = self._travel[gripper.joint]
             q.append(closed * (1.0 - opening) + opened * opening)
             dq.append(0.0)

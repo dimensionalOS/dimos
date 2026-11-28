@@ -104,7 +104,7 @@ closest example: `openyam/` or `makermods_metal/` (one arm, one bus) or `openarm
     which the calibration drives; each arm id's entry is an `ArmConfigState` or `ArmConfigPatch` from
     `dimos/control/calibration/schema.py`.
 
-6. **Gripper.** `DamiaoGripper(name, joint, open_at, motor, opening, current, calibration_travel)`. `joint` is the
+6. **Gripper.** `DamiaoGripper(name, joint, open_at, motor, opening, current, calibration_travel, open_limit)`. `joint` is the
     URDF finger joint (a second finger must be a mimic or fixed joint, see `RobotModel.with_mimic_joint`; if the
     URDF has no driven finger joint, add one as `dual_openyam/config.py` does), and the jaw is read and commanded in
     that joint's unit, with the `open_at` end (`"lower"` or `"upper"`) open. `opening` is the motor direction that
@@ -113,7 +113,9 @@ closest example: `openyam/` or `makermods_metal/` (one arm, one bus) or `openarm
     one silently calibrates only part of it. A wrong `opening` or `open_at`, or a gripper task whose `open_at`
     differs from the robot data, inverts the jaw. These values depend on the physical gripper: take them from the
     vendor or measure them, and say which values are unverified. Activation calibrates the gripper by driving it to
-    both of its stops, and the arm motors get no commands while it does.
+    both of its stops, and the arm motors get no commands while it does. `open_limit` (default 1.0) is the fraction
+    of the calibrated stroke that fully open drives the jaw to: set it below 1.0 when the jaw would otherwise be held
+    against its open stop (see [Grippers and joints that rest on a hard stop](#grippers-and-joints-that-rest-on-a-hard-stop)).
 
 7. **Model and gravity.** `model` is the URDF the connection drives and reports: its movable, non-mimic joints must
     be exactly `joint_names`, each with a finite position range. Don't make an arm joint continuous: the limit
@@ -149,6 +151,24 @@ closest example: `openyam/` or `makermods_metal/` (one arm, one bus) or `openarm
     value, so they pass with gains or gravity torques the codec rejects; check those as described in step 5. Add
     `docs/capabilities/manipulation/<yourarm>_integration.md`, modeled on
     [OpenYAM integration](/docs/capabilities/manipulation/openyam_integration.md).
+
+## Grippers and joints that rest on a hard stop
+
+A command aimed at a mechanical stop, or past it, never arrives: a current-limited or force-limited hold then
+pushes against the stop at its limit for as long as the command stands, and the motor heats. On the Seeed
+B601-DM the gripper held at fully open (the calibrated open stop) reached 65 C in the motor winding; at 0.99 of the
+stroke it moves freely (holding torque at most 0.29 N m, against 2.87 N m on the stop).
+
+- Limit fully open, not fully closed: closing onto the closed stop is how the jaw grips, so that end stays where it
+  is. For a Damiao gripper, set `open_limit` on its `DamiaoGripper`.
+- Measure the limit rather than guessing. For a Damiao gripper 1.0 is the calibrated open stop, so the measured
+  opening follows the command all the way: step the opening up in 1 % steps (0.80 to 1.00), let the jaw settle at
+  each step, find the first step where the settled torque jumps above its free-motion level, and use the step before
+  it (0.99 on the B601).
+- Do not leave a jaw at a stop after a calibration that drives it there. A Damiao gripper with an `open_limit`
+  below 1.0 is brought in to it when the arm is enabled.
+- Check it on the arm: read the gripper motor's torque with the jaw open and still (near zero), and its temperature
+  after a while open.
 
 ## Prerequisites
 

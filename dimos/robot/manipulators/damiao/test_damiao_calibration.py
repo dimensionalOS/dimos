@@ -157,6 +157,14 @@ ROWS_BEFORE_CALIBRATION: dict[str, Any] = json.loads(
     Path(__file__).with_name("damiao_rows_before_calibration.json").read_text()
 )["cases"]
 
+# Sends that changed on purpose since that recording. The B601's gripper has an
+# open_limit of 0.99: it is brought in from its open stop at enable, and an
+# opening the coordinator commands is scaled by 0.99 (a hold at the jaw's own
+# reading sends the same as before).
+CHANGED_SINCE_RECORDING: dict[str, dict[str, list[float]]] = {
+    "b601": {"gripper": [0.99, 0.3 * 0.99, 0.4, 0.4]},
+}
+
 
 @pytest.mark.parametrize("case", list(ROWS_BEFORE_CALIBRATION))
 def test_auto_without_a_saved_file_sends_what_was_sent_before_calibration(
@@ -191,6 +199,13 @@ def test_auto_without_a_saved_file_sends_what_was_sent_before_calibration(
             continue
         if "rows" not in group:
             # A jaw: its openings, or its passive MIT frames while teaching.
+            changed = CHANGED_SINCE_RECORDING.get(case, {}).get(name)
+            if changed is not None:
+                assert sent[name]["openings"] == pytest.approx(changed), name
+                assert {k: v for k, v in sent[name].items() if k != "openings"} == {
+                    k: v for k, v in group.items() if k != "openings"
+                }, name
+                continue
             assert sent[name] == group, name
             continue
         assert sent[name]["modes"] == group["modes"]

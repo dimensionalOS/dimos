@@ -44,6 +44,12 @@ B601_DM_FINGER_JOINTS = ("finger_left", "finger_right")
 # past the full stroke so it reaches both stops from any start.
 GRIPPER_CALIBRATION_TRAVEL_RAD = 7.0
 GRIPPER_CURRENT = 0.15
+# "Fully open" stops just short of the open stop. From one sweep on one B601
+# (the opening from 0.80 to 1.00 in steps of 0.01): settled torque at most
+# 0.29 N m up to 0.99, -2.87 N m on the stop at 1.00. Held at 1.0 the gripper
+# motor's winding reached 65 C. The open stop is re-measured at every enable;
+# how repeatable it is across calibrations and temperatures is not known.
+GRIPPER_OPEN_LIMIT = 0.99
 B601_DM_SOURCE = RobotDescriptionSource(
     url="https://github.com/Seeed-Projects/reBot-DevArm",
     ref="8494bdfa91f4e3712bb7e7743e7bbcc63b01b9af",
@@ -139,6 +145,7 @@ B601_DM = DamiaoRobot(
                 opening="decreasing_position",
                 current=GRIPPER_CURRENT,
                 calibration_travel=GRIPPER_CALIBRATION_TRAVEL_RAD,
+                open_limit=GRIPPER_OPEN_LIMIT,
             ),
             name="arm",
         )
