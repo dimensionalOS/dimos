@@ -18,6 +18,7 @@
 Publishes 29-DOF JointState messages to /g1/joint_command (positional samples
 zipped onto make_humanoid_joints("g1")). Under unitree-g1-groot-wbc, the 14 arm
 joints follow the trajectory while groot_wbc keeps the 15 leg and waist joints.
+Use the same DIMOS_TRANSPORT and, for Zenoh, ZENOH_DOMAIN in both processes.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ import threading
 import time
 
 from dimos.control.components import make_humanoid_joints
-from dimos.core.transport import LCMTransport
+from dimos.core.transport_factory import make_transport
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
@@ -116,10 +117,9 @@ def main() -> None:
                 current_q[n] = q
         state_event.set()
 
-    state_sub: LCMTransport[JointState] = LCMTransport(_JOINT_STATE_TOPIC, JointState)
-    # subscribe() returns an unsub callable; signature claims None (see transport.py).
-    state_unsub = state_sub.subscribe(on_state)  # type: ignore[func-returns-value]
-    cmd_pub: LCMTransport[JointState] = LCMTransport("/g1/joint_command", JointState)
+    state_sub = make_transport(_JOINT_STATE_TOPIC, JointState)
+    cmd_pub = make_transport("/g1/joint_command", JointState)
+    state_unsub = state_sub.subscribe(on_state)
 
     try:
         logger.info(f"waiting up to 10s for {_JOINT_STATE_TOPIC} ...")

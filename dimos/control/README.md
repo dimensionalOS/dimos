@@ -378,6 +378,10 @@ Consumers about one named robot read that robot's stream: `scripts/g1_replay.py`
 reads `/g1/joints`, and the Go2 controller blueprints pin the connection's
 `joint_state` to `/coordinator/joint_state` for existing observers.
 
+The G1 replay script follows the same transport settings as the coordinator.
+Use the same `DIMOS_TRANSPORT` in both processes (default `zenoh`, or `lcm`)
+and, when using a Zenoh domain, the same `ZENOH_DOMAIN`.
+
 ### Unitree connection boundary
 
 The G1 and Go2 coordinator blueprints declare connection models and per-joint
