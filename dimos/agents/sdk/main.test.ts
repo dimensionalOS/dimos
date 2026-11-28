@@ -95,6 +95,7 @@ function serveGateway(afterSend: (request: UserRequestId | null) => void = () =>
     modules: cell(self, "modules", []),
     streams: cell(self, "streams", []),
     jobs: cell(self, "jobs", []),
+    skills: cell(self, "skills", []),
     settings: cell(self, "settings", { workspace: null, model: null, thinkingLevel: null, theme: null }),
     accounts: cell(self, "accounts", { providers: [], models: [] }),
     loginFlow: cell<LoginState>(self, "loginFlow", { phase: "idle" }),

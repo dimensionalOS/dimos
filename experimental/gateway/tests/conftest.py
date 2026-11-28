@@ -102,6 +102,8 @@ def launch_targets(mocker: MockerFixture) -> AsyncMock:
     run_child = introspect.run_child
 
     async def read(dimos_dir: Path, args: list[str], *rest: Any, **kwargs: Any) -> dict[str, Any]:
+        if args[0] == "validate_launch":
+            return {}
         if args[0] == "targets":
             return {
                 "agent": ["api_key"],

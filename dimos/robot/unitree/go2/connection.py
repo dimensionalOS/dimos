@@ -22,7 +22,7 @@ import time
 from typing import Any, Protocol
 
 from pydantic import Field, model_validator
-from reactivex import empty, timer
+from reactivex import timer
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 from scipy.spatial.transform import Rotation
@@ -36,11 +36,8 @@ from dimos.control.connection.connection_module import (
 from dimos.control.contract.convert import joint_state_to_values
 from dimos.control.contract.keys import Interface
 from dimos.core.core import rpc
-from dimos.core.resource import CompositeResource
+from dimos.core.global_config import global_config
 from dimos.core.stream import In, Out
-from dimos.memory.cli.dataset import open_store, resolve_dataset
-from dimos.memory.replay import Replay, ReplayStream
-from dimos.memory.replay_progress import ReplayProgress
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -60,7 +57,7 @@ from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.simulation.dimsim.config import DimSimConfig
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.spec.perception import Camera, Pointcloud
-from dimos.utils.decorators.decorators import cached_property, simple_mcache
+from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import pose_to_values
 
@@ -235,13 +232,8 @@ def make_connection(
 ) -> Go2ConnectionProtocol:
     mode = connection_type(replay=cfg.g.replay, simulation=cfg.g.simulation).lower()
 
-    if ip in ("fake", "mock", "replay") or mode == "replay":
-        return ReplayConnection(
-            dataset=cfg.g.replay_db,
-            loop=cfg.replay_loop,
-            exit_on_complete=cfg.replay_exit,
-            module_rpc_name=cfg.rpc_name,
-        )
+    if ip in _REPLAY_IPS or mode == "replay":
+        raise ValueError("A Go2 replay is a Go2Replay module: GO2Connection.blueprint() picks it")
     elif ip == "mujoco" or mode in ("mujoco", "true"):
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
@@ -262,153 +254,7 @@ def make_connection(
         raise ValueError(f"Unknown simulator {cfg.g.simulation!r}. Choose from: mujoco, dimsim")
 
 
-_T = TypeVar("_T")
-
-
-class ReplayConnection(CompositeResource):
-    def __init__(
-        self,
-        dataset: str = "go2_china_office",
-        *,
-        seek: float | None = None,
-        duration: float | None = None,
-        loop: bool = False,
-        exit_on_complete: bool = False,
-        module_rpc_name: str | None = None,
-    ) -> None:
-        self.dataset = dataset
-        self._seek = seek
-        self._duration = duration
-        self._loop = loop
-        self._exit_on_complete = exit_on_complete
-        self._module_rpc_name = module_rpc_name
-        self._progress = ReplayProgress(dataset, on_complete=self._on_complete)
-        self._replay_path: str | None = None
-        self._pending_streams: list[ReplayStream[Any]] = []
-
-    @cached_property
-    def replay(self) -> Replay:
-        # One shared store + Replay so lidar/odom/video advance against the
-        # same wall-clock anchor on subscribe.
-        path = resolve_dataset(self.dataset)
-        self._replay_path = str(path.resolve())
-        store = self.register_disposable(open_store(path))
-        store.start()
-        return store.replay(loop=self._loop, seek=self._seek, duration=self._duration)
-
-    def start(self) -> None:
-        pass
-
-    def standup(self) -> bool:
-        return True
-
-    def liedown(self) -> bool:
-        return True
-
-    def balance_stand(self) -> bool:
-        return True
-
-    def sport_command(self, api_id: int) -> bool:
-        return True
-
-    def stop_movement(self) -> None:
-        # No webrtc deadman timer to cancel; the cmd_vel timeout covers replay.
-        pass
-
-    def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
-        return True
-
-    def set_rage_mode(self, enable: bool) -> bool:
-        return True
-
-    def set_light(self, level: int) -> bool:
-        return True
-
-    def switch_joystick(self, enable: bool = True) -> bool:
-        return True
-
-    def _stream_name(self, *names: str) -> str:
-        """Return the first of ``names`` present in the dataset (stream naming
-        changed over time: mid360 recordings use go2_lidar/go2_odom, older ones
-        lidar/odom)."""
-        available = self.replay.list_streams()
-        for name in names:
-            if name in available:
-                return name
-        raise KeyError(f"None of {names!r} in dataset {self.dataset!r}; available: {available}")
-
-    def _tracked(self, source: Observable[_T]) -> Observable[_T]:
-        return self._progress.track(source)
-
-    def _replay_observable(self, stream: ReplayStream[_T]) -> Observable[_T]:
-        self._pending_streams.append(stream)
-        return self._tracked(stream.observable())
-
-    def seal_subscriptions(self) -> None:
-        """Mark the subscription set complete so end-of-playback can be reported."""
-        if self._pending_streams:
-            # Only inspect selected streams: unused recordings may depend on
-            # unavailable payload types or contain unrelated timestamp ranges.
-            self._progress.start(self.replay, self._pending_streams, path=self._replay_path)
-            self._pending_streams.clear()
-        self._progress.seal()
-
-    def _on_complete(self) -> None:
-        if self._exit_on_complete:
-            logger.info("Requesting coordinator shutdown after replay", source=self.dataset)
-            # Keep the RPC round trip off the replay emission thread.
-            Thread(target=self._request_shutdown, daemon=True).start()
-
-    def _request_shutdown(self) -> None:
-        # Inline import: the connection must stay importable without the
-        # coordination stack.
-        from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
-
-        try:
-            client = CoordinatorRPC.connect(timeout=10.0)
-            try:
-                client.call("shutdown", requesting_module=self._module_rpc_name)
-            finally:
-                client.stop()
-        except Exception:
-            logger.error("Failed to request coordinator shutdown", exc_info=True)
-
-    @simple_mcache
-    def lidar_stream(self) -> Observable[PointCloud2]:
-        stream: ReplayStream[PointCloud2] = self.replay.stream(
-            self._stream_name("go2_lidar", "lidar")
-        )
-        return self._replay_observable(stream)
-
-    @simple_mcache
-    def odom_stream(self) -> Observable[PoseStamped]:
-        name = self._stream_name("go2_odom", "odom")
-        kind = self.replay.store.stream(name).data_type
-        if kind is None or not issubclass(kind, PoseStamped):
-            # A legacy Go2 DDS recording stores nav_msgs.Odometry. Replayed as is,
-            # it kills the odom subscriber and leaves lidar and video without TF.
-            raise TypeError(
-                f"Go2 replay needs PoseStamped odometry, but stream {name!r} in dataset "
-                f"{self.dataset!r} holds {kind.__name__ if kind else None}"
-            )
-        stream: ReplayStream[PoseStamped] = self.replay.stream(name)
-        return self._replay_observable(stream)
-
-    @simple_mcache
-    def video_stream(self) -> Observable[Image]:
-        return self._replay_observable(self.replay.streams.color_image)
-
-    @simple_mcache
-    def lowstate_stream(self) -> Observable:  # type: ignore[type-arg]
-        # Replay datasets carry no low-level state (battery/IMU) — emit nothing.
-        return empty()
-
-    def move(self, twist: Twist, duration: float = 0.0) -> bool:
-        return True
-
-    def publish_request(self, topic: str, data: dict):  # type: ignore[no-untyped-def, type-arg]
-        """Fake publish request for testing."""
-        return {"status": "ok", "message": "Fake publish"}
+_REPLAY_IPS = ("fake", "mock", "replay")
 
 
 _Config = TypeVar("_Config", bound=ConnectionConfig, default=ConnectionConfig)
@@ -445,6 +291,22 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
                 origin="world/robot/camera/rgb",
             ),
         ]
+
+    @classproperty
+    def blueprint(cls) -> Any:  # noqa: N805
+        """Under ``--replay`` (or a fake/mock/replay ip) the Go2 is a :class:`Go2Replay`."""
+        from dimos.core.coordination.blueprints import Blueprint
+
+        def create(**kwargs: Any) -> Blueprint:
+            mode = connection_type(replay=global_config.replay, simulation=global_config.simulation)
+            ip = kwargs.get("ip", global_config.robot_ip)
+            if cls is GO2Connection and (mode.lower() == "replay" or ip in _REPLAY_IPS):  # type: ignore[comparison-overlap]
+                from dimos.robot.unitree.go2.replay import Go2Replay
+
+                return Blueprint.create(Go2Replay, **kwargs)
+            return Blueprint.create(cls, **kwargs)  # type: ignore[arg-type]
+
+        return create
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -519,11 +381,6 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
                 daemon=True,
             )
             self._camera_info_thread.start()
-
-        if isinstance(self.connection, ReplayConnection):
-            # Every replay subscription is wired; completion can now be reported
-            # and optionally shut the run down (--go2connection.replay-exit).
-            self.connection.seal_subscriptions()
 
         if self.config.motion_mode and isinstance(self.connection, UnitreeWebRTCConnection):
             self.connection.set_motion_mode(self.config.motion_mode)
@@ -602,6 +459,11 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
         ]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
+        if self._publish_from_odom(msg) and self.odom.transport:
+            self.odom.publish(msg)
+
+    def _publish_from_odom(self, msg: PoseStamped) -> bool:
+        """joint_state, odometry and tf from one odom pose. False for an invalid pose."""
         # The backend exposes measured poses, not native chassis rates. Estimate
         # average body rates over valid source-timestamp intervals, never commands.
         try:
@@ -611,7 +473,7 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
         except ValueError:
             with self._odom_lock:
                 self._previous_odom = None
-            return
+            return False
         with self._odom_lock:
             previous = self._previous_odom
             self._previous_odom = copy.deepcopy(msg)
@@ -650,8 +512,7 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
         if self.config.publish_tf:
             transforms = self._odom_to_tf(msg, prefix=self.frame_id_prefix)
             self.tf.publish(TFMessage(*transforms))
-        if self.odom.transport:
-            self.odom.publish(msg)
+        return True
 
     def publish_camera_info(self) -> None:
         while not self._camera_info_stop.is_set():

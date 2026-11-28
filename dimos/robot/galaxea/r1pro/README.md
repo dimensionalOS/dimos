@@ -47,12 +47,16 @@ in that pane; until then the wrist cameras log and retry.
 ## Blueprints
 
 ```bash
-dimos run r1pro-coordinator     # connection + coordinator + Point-LIO + viewer
-dimos run r1pro-teleop          # + chassis teleop from the viewer
-dimos run r1pro-nav             # + click-to-drive nav (costmap + A*)
-dimos run r1pro-manipulation    # + dual-arm planning (experimental)
-dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
+dimos run r1pro-coordinator      # the base: connection, head cameras, Mid-360 + Point-LIO, viewer
+dimos run r1pro-nav              # base + head depth + 3D ray-traced map + MLS planner (click a goal)
+dimos run r1pro-manipulation     # dual-arm planning (experimental)
+dimos run r1pro-planar-preview   # planar-base planning preview on mock hardware
 ```
+
+`r1pro-coordinator` is the one standard R1 blueprint: `R1ProConnection` (chassis
+`cmd_vel`, joints, grippers, wheel odometry; it boots the vendor stack if it
+is not already running), the head and wrist cameras (V4L2), and our
+Mid-360 driver into Point-LIO. `r1pro-nav` builds on the same pieces.
 
 ## Control path
 
@@ -93,8 +97,7 @@ coordinator going down, `R1ProConnection` halts within
 `deadman_timeout_s` (0.1 s): the chassis is told zero speed once and the
 arms are held where they were last measured. Stale feedback
 (`reading_timeout_s`, 0.2 s) also stops commands until fresh readings
-return. This replaces the old adapter path, where an estopped robot simply
-kept its last position command with no deadman. After clearing software E-stop,
+return. After clearing software E-stop,
 fresh operator velocity input is required; pre-stop intent is not replayed.
 
 **Grippers.** Each jaw (`r1pro/left_gripper`, `r1pro/right_gripper`) is an
@@ -115,16 +118,18 @@ guarantee ends at "we never re-send an interrupted intent" — not at "the
 jaw stops moving". For a real emergency stop use the robot's own E-stop
 hardware.
 
-## Point-LIO
+## Point-LIO and head depth
 
-Every blueprint built on `r1pro-coordinator` places `base_link` by Point-LIO on
-the chassis Mid-360 instead of wheel odometry; `chassis_odom` keeps its name.
-`r1pro-manipulation` builds on `r1pro_control` alone and keeps wheel odometry.
-The Mid-360 driver and Point-LIO are native binaries built on first run, so
-`cargo` must be on the path.
+`base_link` is placed by Point-LIO on the chassis Mid-360, not by wheel odometry.
+The connection still publishes wheel odometry on `odometry`, just not on tf.
+`r1pro-manipulation` builds on `r1pro_control` alone and keeps wheel odometry on tf.
+`r1pro-nav` adds a dense cloud from the left head camera: Depth Anything,
+calibrated per pixel to the last few seconds of Point-LIO scans (`Depth2DepthCloud`).
+The Mid-360 driver, Point-LIO and the head depth are native binaries built on
+first run, so `cargo` (and on an Orin, `nvcc` for CUDA) must be on the path.
 
-**Transport.** Run with `--g.transport lcm`. The vendor's `realsense2_camera`
-holds LCM's default port, so set
+**Transport.** The blueprints run on zenoh. On LCM, the vendor's
+`realsense2_camera` holds LCM's default port, so set
 `LCM_DEFAULT_URL=udpm://239.255.76.67:7767?ttl=0`.
 
 **Other vendor profiles.** With a `--r1proconnection.vendor-profile` that starts

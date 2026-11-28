@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import sqlite3
 import threading
@@ -22,14 +21,14 @@ from typing import Any
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
-from reactivex import Observable
 from reactivex.disposable import Disposable
-from reactivex.testing import TestScheduler
 
+from dimos.constants import HUNG_TEST_TIMEOUT
 from dimos.experimental.robot.bosdyn.spot.replay import SpotReplay
 from dimos.mapping.relocalization.blueprints import RecordingPlayer
-from dimos.memory.replay import ReplayStream
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.type.observation import Observation
+from dimos.memory.utils.time_window import RecordingWindow
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -42,8 +41,9 @@ pytestmark = [
 
 @pytest.fixture(
     params=[
-        pytest.param((RecordingPlayer, "dataset", {}), id="recording"),
-        pytest.param((SpotReplay, "db_path", {"loop": False}), id="spot"),
+        # Reading one frame ahead, so a stop finds the reader mid-recording.
+        pytest.param((RecordingPlayer, "dataset", {"buffer_size": 1}), id="recording"),
+        pytest.param((SpotReplay, "dataset", {"loop": False, "buffer_size": 1}), id="spot"),
     ]
 )
 def player(
@@ -54,7 +54,7 @@ def player(
         lidar = store.stream("pointlio_lidar", PointCloud2)
         odometry = store.stream("odometry", Odometry)
         tf = store.stream("tf", TFMessage)
-        for ts in (1.0, 11.0, 21.0):
+        for ts in (1.0, 1.1, 1.2):
             lidar.append(PointCloud2.from_numpy(np.zeros((1, 3), dtype=np.float32)), ts=ts)
             odometry.append(Odometry(ts=ts), ts=ts)
             tf.append(TFMessage(), ts=ts)
@@ -69,7 +69,8 @@ def test_player_stops_mid_replay(player: RecordingPlayer | SpotReplay) -> None:
     started = threading.Event()
     with Disposable(player.tf.subscribe(lambda _: started.set())):
         player.start()
-        assert started.wait(5)
+        player.on_system_modules_ready([])
+        assert started.wait(HUNG_TEST_TIMEOUT)
         # Both streams still hold an open cursor here.
         player.stop()
 
@@ -78,38 +79,50 @@ def test_concurrent_stop_keeps_store_open_until_decode_finishes(
     player: RecordingPlayer | SpotReplay, mocker: MockerFixture
 ) -> None:
     entered = threading.Event()
-    release = threading.Event()
+    stops_waiting = threading.Event()
     decoded = threading.Event()
-    disposing = threading.Event()
-    decode = ReplayStream._decode
+    decoded_at_dispose: list[bool] = []
+    reader: list[threading.Thread] = []
+    waiting: set[threading.Thread] = set()
+    decode = Observation.data.fget
+    join = threading.Thread.join
+    calls = 0
 
-    def held_decode(self: ReplayStream[Any], obs: Any) -> Any:
+    def held_decode(obs: Observation[Any]) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:  # the frame start() buffers
+            return decode(obs)
+        reader.append(threading.current_thread())
         entered.set()
-        assert release.wait(10), "decode was not released"
-        value = decode(self, obs)
+        assert stops_waiting.wait(HUNG_TEST_TIMEOUT), "stop did not wait for the decode"
+        value = decode(obs)
         decoded.set()
         return value
 
-    mocker.patch.object(ReplayStream, "_decode", held_decode)
-    replay = mocker.spy(SqliteStore, "replay")
-    player.register_disposable(Disposable(disposing.set))
-    with ThreadPoolExecutor(max_workers=2) as workers:
-        try:
-            player.start()
-            store = replay.spy_return.store
-            assert entered.wait(5), "no replay callback reached decode"
-            first_stop = workers.submit(player.stop)
-            assert disposing.wait(5), "stop did not reach subscription disposal"
-            second_stop = workers.submit(player.stop)
-            second_stop.result(timeout=5)
-            assert not first_stop.done()
-            # A second stop must not close the database owned by the first stop.
-            assert store.stream("tf").count() == 3
-        finally:
-            release.set()
-        first_stop.result(timeout=5)
+    def tracked_join(thread: threading.Thread, timeout: float | None = None) -> None:
+        if thread in reader:
+            waiting.add(threading.current_thread())
+            if waiting == stoppers:
+                stops_waiting.set()
+        join(thread, timeout)
 
-    assert decoded.is_set()
+    mocker.patch.object(Observation, "data", property(held_decode))
+    mocker.patch.object(threading.Thread, "join", tracked_join)
+    player.register_disposable(Disposable(lambda: decoded_at_dispose.append(decoded.is_set())))
+    first_stop = threading.Thread(target=player.stop)
+    second_stop = threading.Thread(target=player.stop)
+    stoppers = {first_stop, second_stop}
+    player.start()
+    store = player._store
+    assert entered.wait(HUNG_TEST_TIMEOUT), "the reader did not decode ahead of the buffer"
+    for stopper in stoppers:
+        stopper.start()
+    for stopper in stoppers:
+        join(stopper, HUNG_TEST_TIMEOUT)
+        assert not stopper.is_alive()
+
+    assert all(decoded_at_dispose)
     with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
         store.list_streams()
 
@@ -117,61 +130,58 @@ def test_concurrent_stop_keeps_store_open_until_decode_finishes(
 def test_player_can_stop_from_replay_callback(
     player: RecordingPlayer | SpotReplay, mocker: MockerFixture
 ) -> None:
-    scheduler = TestScheduler()
-    mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
-    replay = mocker.spy(SqliteStore, "replay")
     received = []
+    stopped = threading.Event()
 
     def stop_on_frame(message: TFMessage) -> None:
         received.append(message)
         player.stop()
+        stopped.set()
 
     with Disposable(player.tf.subscribe(stop_on_frame)):
         player.start()
-        scheduler.advance_by(30)
+        store = player._store
+        player.on_system_modules_ready([])
+        assert stopped.wait(HUNG_TEST_TIMEOUT)
 
     assert len(received) == 1
     with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
-        replay.spy_return.store.list_streams()
+        store.list_streams()
 
 
 def test_player_closes_store_after_partial_startup(
     player: RecordingPlayer | SpotReplay, mocker: MockerFixture
 ) -> None:
-    observable = ReplayStream.observable
+    apply = RecordingWindow.apply
+    opened = mocker.spy(SqliteStore, "start")
 
-    def fail_tf(self: ReplayStream[Any]) -> Observable[Any]:
-        if self.name == "tf":
+    def fail_tf(window: RecordingWindow, stream: Any) -> Any:
+        if stream.name == "tf":
             raise RuntimeError("cannot open tf replay")
-        return observable(self)
+        return apply(window, stream)
 
-    mocker.patch.object(ReplayStream, "observable", fail_tf)
-    replay = mocker.spy(SqliteStore, "replay")
+    mocker.patch.object(RecordingWindow, "apply", fail_tf)
     with pytest.raises(RuntimeError, match="cannot open tf replay"):
         player.start()
     player.stop()
 
+    (store,) = [call.args[0] for call in opened.call_args_list]
     with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
-        replay.spy_return.store.list_streams()
+        store.list_streams()
 
 
 def test_player_logs_source_duration_and_completion(player, mocker):
-    scheduler = TestScheduler()
-    mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
-    log = mocker.patch("dimos.memory.replay_progress.logger")
+    log = mocker.patch("dimos.memory.replay_module.logger")
     player.start()
-    path = (
-        str(player.config.dataset) if isinstance(player, RecordingPlayer) else player.config.db_path
-    )
+    path = player.config.dataset
     log.info.assert_called_once_with(
         "Replay started",
         source=path,
         path=path,
-        duration_s=20.0,
+        duration_s=pytest.approx(0.2),
         speed=1.0,
         loop=False,
     )
-    scheduler.advance_by(5)
-    assert log.info.call_count == 1
-    scheduler.advance_by(100)
+    player.on_system_modules_ready([])
+    assert player.replay_done.wait(HUNG_TEST_TIMEOUT)
     assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=path)]
