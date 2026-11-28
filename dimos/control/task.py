@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, NamedTuple, Protocol, runtime_checkable
 
 from dimos.control.components import JointName
 from dimos.control.contract.keys import Interface
@@ -50,7 +50,7 @@ class ControlMode(Enum):
     TORQUE = "torque"
     CARTESIAN = "cartesian"
     CARTESIAN_VELOCITY = "cartesian_velocity"
-    IMPEDANCE = "impedance"
+    MOTOR_COMMAND = "motor_command"
 
 
 @dataclass(frozen=True)
@@ -148,6 +148,30 @@ class CoordinatorState:
     sensors: SensorStateSnapshot = field(default_factory=SensorStateSnapshot)
 
 
+class MotorCommand(NamedTuple):
+    """One joint pulled toward a target by a spring and slowed by a damper, plus extra torque.
+
+    A field left as None means the same on every robot:
+
+    - position: hold where the joint is measured, so the spring adds no force.
+    - velocity: 0.
+    - effort: no extra torque.
+    - stiffness, damping: the robot's own configured values.
+
+    Effort is torque added on top of whatever the robot already applies to
+    hold up its own weight.
+    """
+
+    # Same order as contract.limits.PD_INTERFACES. The motor applies
+    # torque = stiffness * (position - measured position)
+    #        + damping * (velocity - measured velocity) + effort
+    position: float | None = None  # target angle, rad
+    velocity: float | None = None  # target speed, rad/s
+    effort: float | None = None  # extra torque, Nm
+    stiffness: float | None = None  # spring strength, Nm/rad
+    damping: float | None = None  # damper strength, Nm·s/rad
+
+
 @dataclass
 class JointCommandOutput:
     """Joint-centric command output from a task.
@@ -165,7 +189,10 @@ class JointCommandOutput:
         positions: Position commands (radians), or None
         velocities: Velocity commands (rad/s), or None
         efforts: Effort commands (Nm), or None
-        mode: Control mode - must match which field is populated
+        mode: Control mode - must match which field is populated. MOTOR_COMMAND
+            takes any of the five arrays; see MotorCommand for an unset one.
+        stiffness: Spring strength per joint (Nm/rad), or None. MOTOR_COMMAND only.
+        damping: Damper strength per joint (Nm·s/rad), or None. MOTOR_COMMAND only.
     """
 
     joint_names: list[JointName]
@@ -173,9 +200,12 @@ class JointCommandOutput:
     velocities: list[float] | None = None
     efforts: list[float] | None = None
     mode: ControlMode = ControlMode.POSITION
+    stiffness: list[float] | None = None
+    damping: list[float] | None = None
 
     def __post_init__(self) -> None:
-        """Validate that lengths match and at least one value field is set."""
+        """Validate that lengths match, a MOTOR_COMMAND output sets at least one
+        array, and only a MOTOR_COMMAND output sets stiffness or damping."""
         n = len(self.joint_names)
 
         if self.positions is not None and len(self.positions) != n:
@@ -184,6 +214,31 @@ class JointCommandOutput:
             raise ValueError(f"velocities length {len(self.velocities)} != joint_names length {n}")
         if self.efforts is not None and len(self.efforts) != n:
             raise ValueError(f"efforts length {len(self.efforts)} != joint_names length {n}")
+        if self.stiffness is not None and len(self.stiffness) != n:
+            raise ValueError(f"stiffness length {len(self.stiffness)} != joint_names length {n}")
+        if self.damping is not None and len(self.damping) != n:
+            raise ValueError(f"damping length {len(self.damping)} != joint_names length {n}")
+        if self.mode is ControlMode.MOTOR_COMMAND:
+            if (
+                self.positions is None
+                and self.velocities is None
+                and self.efforts is None
+                and self.stiffness is None
+                and self.damping is None
+            ):
+                raise ValueError("a MOTOR_COMMAND output must set at least one array")
+        elif self.stiffness is not None or self.damping is not None:
+            raise ValueError(f"stiffness and damping are for MOTOR_COMMAND, not {self.mode.name}")
+
+    def motor_command(self, i: int) -> MotorCommand:
+        """The five numbers for ``joint_names[i]``, None where that array is unset."""
+        return MotorCommand(
+            self.positions[i] if self.positions is not None else None,
+            self.velocities[i] if self.velocities is not None else None,
+            self.efforts[i] if self.efforts is not None else None,
+            self.stiffness[i] if self.stiffness is not None else None,
+            self.damping[i] if self.damping is not None else None,
+        )
 
     def get_values(self) -> list[float] | None:
         """Get the active values based on mode."""

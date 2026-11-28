@@ -34,6 +34,7 @@ from dimos.control.task import (
     CoordinatorState,
     JointCommandOutput,
     JointStateSnapshot,
+    MotorCommand,
     ResourceClaim,
 )
 from dimos.control.tasks.trajectory_task.trajectory_task import (
@@ -923,6 +924,46 @@ class TestArbitration:
         assert winners["j2"][3] == "task1"
         assert winners["j3"][3] == "task2"
         assert winners["j4"][3] == "task2"
+
+    def test_motor_command_output_wins_with_its_numbers(self):
+        position_task = MagicMock()
+        position_task.name = "position"
+        motor_task = MagicMock()
+        motor_task.name = "motor"
+        tick_loop = TickLoop(
+            tick_rate=100.0,
+            hardware_lock=threading.Lock(),
+            tasks={},
+            task_lock=threading.Lock(),
+            joint_to_hardware={},
+        )
+
+        joint_commands, _ = tick_loop._arbitrate(
+            [
+                (
+                    position_task,
+                    ResourceClaim(joints=frozenset({"j1"}), priority=10),
+                    JointCommandOutput(joint_names=["j1"], positions=[0.5]),
+                ),
+                (
+                    motor_task,
+                    ResourceClaim(joints=frozenset({"j1"}), priority=20),
+                    JointCommandOutput(
+                        joint_names=["j1"],
+                        positions=[0.2],
+                        efforts=[1.5],
+                        stiffness=[30.0],
+                        mode=ControlMode.MOTOR_COMMAND,
+                    ),
+                ),
+            ]
+        )
+
+        assert joint_commands["j1"] == (
+            MotorCommand(position=0.2, velocity=None, effort=1.5, stiffness=30.0, damping=None),
+            ControlMode.MOTOR_COMMAND,
+            "motor",
+        )
 
 
 class TestTickLoop:
