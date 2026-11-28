@@ -108,7 +108,7 @@ class NavigationSkillContainer(Module):
             return "No odometry data received yet, cannot tag location."
 
         position = self._latest_odom.position
-        rotation = self._latest_odom.orientation
+        rotation = self._latest_odom.orientation.to_euler()
 
         location = RobotLocation(
             name=location_name,
