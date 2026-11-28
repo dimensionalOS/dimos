@@ -320,7 +320,11 @@ stage_launcher() {
 
 stage_check() {
   log "check: the tree before it is packed"
-  local site found
+  local site found notice
+  for notice in groot/LICENSE groot/Notice.txt piper/LICENSE g1_urdf/LICENSE xarm6/LICENSE \
+    yam_description/i2rt/LICENSE yam_description/LICENSE models_edgetam/LICENSE; do
+    [[ -s "$APPDIR/opt/data/$notice" ]] || die "missing data notice: $notice"
+  done
   site="$(site_packages)"
   if grep -rIl -e "$OUT" -e "$REPO" "$APPDIR/opt/python/bin" "$site"/*.pth; then
     die "the files above hold a build path"

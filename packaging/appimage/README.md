@@ -145,6 +145,7 @@ Check a copy with `sha256sum -c dimos-<version>-<arch>.AppImage.sha256`.
 
 The `check` stage stops the build when:
 
+- a staged data licence or the NVIDIA model attribution is missing,
 - a console script or a `.pth` file holds a build path,
 - two packages own `site-packages/onnxruntime`,
 - Ultralytics or one of its weight files is in the tree,
