@@ -106,7 +106,7 @@ def _run(
         world.time += opening
         return view
 
-    monkeypatch.setattr(sim_protocol, "open_view", open_view)
+    monkeypatch.setattr(sensor, "open_view", open_view)
     monkeypatch.setattr(getattr(sensor, stream), "publish", published.append)
     asyncio.run(getattr(sensor, loop)())
     return {"view": view, "published": published, "ticked": world.ticked}
@@ -148,7 +148,7 @@ def l1(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     from dimos.sim2.l1 import SimL1
 
     sensor = SimL1(instance_name="left/l1", stamp_tolerance=math.inf)
-    monkeypatch.setattr(sim_protocol, "_rider_odometry", lambda rider: ("left/odom", np.eye(4)))
+    monkeypatch.setattr(sensor, "_rider_odometry", lambda rider: ("left/odom", np.eye(4)))
     yield sensor
     sensor.stop()
 
