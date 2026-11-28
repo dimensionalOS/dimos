@@ -68,6 +68,7 @@ def test_a_frame_pose_is_where_the_frame_sits_above_the_mount(tmp_path: Path) ->
 
 
 def test_a_model_refuses_a_frame_hung_off_a_frame_it_lacks(tmp_path: Path) -> None:
+    pytest.importorskip("pxr")
     source = tmp_path / "arm.urdf"
     source.write_text('<robot name="arm"><link name="base_link"/></robot>')
     model = UsdModel.from_robot_model(RobotModel.from_file(source))
@@ -91,6 +92,7 @@ _LEG_URDF = (
 def test_a_usd_model_says_which_tf_edges_are_static_and_where_the_moving_ones_sit(
     tmp_path: Path,
 ) -> None:
+    pytest.importorskip("pxr")
     """Fixed joints and prim edges never move, other single-position joints do; a floating joint's child keeps its rest pose."""
     import numpy as np
 
