@@ -33,6 +33,7 @@ from dimos.control.tasks.pose_target_ik import (
     string_tuple_converter,
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix, twist_to_numpy
 
@@ -68,14 +69,16 @@ class EEFTwistTask(PoseTargetIKTask):
 
     Each tick the target pose moves by twist x tick time and the IK solver
     drives the joints after it. A zero twist after motion stops the target where
-    the arm is, so a target pushed out of reach does not freeze later twists.
+    the arm is held, so a target pushed out of reach does not freeze later
+    twists. That is the held pose, not the measured one: an arm that rests off
+    its command would otherwise move by that offset on every stop.
 
     With ``command_timeout`` > 0 the task is idle until the first non-zero
     twist and goes idle again once ``command_timeout`` seconds pass with no
     non-zero twist: on that tick it commands the stopped target one last
     time, then claims no joints, so a lower-priority task (e.g. a planned
     trajectory) can move the arm. The next non-zero twist starts again from
-    where the arm is then. With ``command_timeout`` 0 it never goes idle.
+    where the arm is held then. With ``command_timeout`` 0 it never goes idle.
 
     While the e-stop is latched it ignores twists and commands nothing.
     """
@@ -131,16 +134,14 @@ class EEFTwistTask(PoseTargetIKTask):
                 return False
             if np.allclose(values, 0.0):
                 if self._latest_twist is not None:
-                    # Re-anchor at the measured pose; the target may have run past reach.
+                    # Re-anchor at the held pose; the target may have run past reach.
                     self._latest_twist = None
                     self._target_pose = None
-                    self._reset_command_state()
                 return True
             if self._idle:
-                # Start from where the arm is now; another task may have moved it.
+                # Start from where the arm is held now; another task may have moved it.
                 self._idle = False
                 self._target_pose = None
-                self._reset_command_state()
             self._latest_twist = twist
             self._last_twist_time = t_now
         return True
@@ -181,10 +182,13 @@ class EEFTwistTask(PoseTargetIKTask):
             target = self._target_pose
 
         if target is None:
-            poses = self.current_frame_poses(state, self._config.target_frames)
-            if poses is None:
+            start = self._held_joint_state(state)
+            if start is None:
                 return None
-            target = poses[self._config.target_frames[0]]
+            self._solver.reset(start)
+            target = self._solver.frame_poses(start, self._config.target_frames)[
+                self._config.target_frames[0]
+            ]
 
         if twist is not None:
             target = _integrate_twist(target, twist, max(state.dt, 0.0))
@@ -199,6 +203,22 @@ class EEFTwistTask(PoseTargetIKTask):
             targets={self._config.target_frames[0]: target},
             last_update_time=state.t_now,
         )
+
+    def _held_joint_state(self, state: CoordinatorState) -> JointState | None:
+        """Where the arm is held, within the solver's tracking limit of the
+        measured joints; the measured joints if any joint is not held."""
+        measured = self._measured_joint_state(state)
+        if measured is None:
+            return None
+        held = state.joints.joint_held_positions
+        if any(name not in held for name in self._joint_names):
+            return measured
+        positions = np.asarray(measured.position, dtype=np.float64)
+        limit = np.deg2rad(self._config.max_command_tracking_error_deg)
+        start = np.clip(
+            [held[name] for name in self._joint_names], positions - limit, positions + limit
+        )
+        return JointState(name=list(self._joint_names), position=start.tolist())
 
     def _on_target_timeout(self) -> None:
         self.clear()

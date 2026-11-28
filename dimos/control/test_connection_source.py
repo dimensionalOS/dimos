@@ -222,6 +222,29 @@ def test_task_values_are_sent_and_the_other_joints_held() -> None:
     assert source.command({})[f"{J1}/position"] == 0.5
 
 
+def test_tasks_see_where_each_joint_is_held() -> None:
+    source = arm_at(0.3, -0.2)
+    assert source.read_joints().joint_held_positions == {}
+
+    source.command({J1: (0.5, ControlMode.POSITION)})
+    source.on_message("joint_state", reading(0.45, -0.2))
+
+    assert source.read_joints().joint_held_positions == {J1: 0.5, J2: -0.2}
+
+
+def test_held_positions_are_withheld_until_dropped_holds_are_taken_again() -> None:
+    source = arm_at(0.3, 0.0)
+    source.command({J1: (0.5, ControlMode.POSITION)})
+
+    source.drop_holds()
+    assert source.read_joints().joint_held_positions == {}
+    source.on_message("joint_state", reading(0.42, 0.0))
+    assert source.read_joints().joint_held_positions == {}
+
+    source.command({})
+    assert source.read_joints().joint_held_positions == {J1: 0.42, J2: 0.0}
+
+
 def test_a_position_outside_its_limit_is_refused_and_the_holds_kept() -> None:
     """A refused tick leaves the holds alone, so stopping the task afterwards
     does not move the robot to what was refused."""

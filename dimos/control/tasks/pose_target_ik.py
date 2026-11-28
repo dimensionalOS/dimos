@@ -333,10 +333,10 @@ class PinkPoseTargetSolver(_PinkSolverCore):
             measured_state,
         )
 
-    def reset(self) -> None:
-        """Discard the persistent command trajectory."""
+    def reset(self, command: JointState | None = None) -> None:
+        """Discard the persistent command trajectory, or restart it at ``command``."""
         with self._command_state_lock:
-            self._command_state = None
+            self._command_state = None if command is None else JointState(command)
             self._command_increment_history.clear()
             self._command_state_generation += 1
 

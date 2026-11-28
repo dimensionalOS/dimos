@@ -253,6 +253,7 @@ class TickLoop:
                 snapshot.joint_positions.update(joints.joint_positions)
                 snapshot.joint_velocities.update(joints.joint_velocities)
                 snapshot.joint_efforts.update(joints.joint_efforts)
+                snapshot.joint_held_positions.update(joints.joint_held_positions)
                 snapshot.joint_command_interfaces.update(joints.joint_command_interfaces)
         return snapshot
 
