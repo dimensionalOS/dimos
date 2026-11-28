@@ -14,406 +14,72 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
+
+pytest.importorskip("pxr")
+
+from pxr import Sdf, Usd, UsdGeom, UsdPhysics
 
 from dimos.robot.assets.model import RobotModel, UsdModel
 from dimos.robot.assets.usd_utils.assets import (
     asset_hash,
+    publish_usd_assets,
+    referenced_asset_paths,
+    resolve_usd_assets,
 )
-from dimos.robot.assets.usd_utils.frames import usd_frame_names, usd_with_frames
+from dimos.robot.assets.usd_utils.frames import (
+    usd_frame_edges,
+    usd_frame_names,
+    usd_with_frame_names,
+    usd_with_frames,
+    usd_world_frame_prims,
+)
 from dimos.robot.assets.usd_utils.from_urdf import PASSTHROUGH_KEY, urdf_to_usd
+from dimos.robot.assets.usd_utils.joints import usd_joints, usd_root_link
+from dimos.robot.assets.usd_utils.layers import usd_moved_under, usd_under_namespace
 
-pytest.importorskip("pxr")
-
-_URDF = """<?xml version="1.0"?>
-<robot name="toy">
+_TOY_URDF = """<robot name="toy">
+  <material name="green"><color rgba="0 0 1 1"/></material>
   <link name="base_link">
     <visual>
-      <origin xyz="0 0 0.05"/>
-      <geometry><box size="0.4 0.3 0.1"/></geometry>
+      <origin xyz="0 0 0.05"/><geometry><box size="0.4 0.3 0.1"/></geometry>
       <material name="green"><color rgba="0.2 0.6 0.2 1"/></material>
     </visual>
     <collision><geometry><cylinder radius="0.2" length="0.1"/></geometry></collision>
+    <inertial>
+      <origin xyz="0 0 -0.076" rpy="0 0 0"/><mass value="3.813"/>
+      <inertia ixx="0.010549" iyy="0.0093089" izz="0.0079184" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <vendor:thing xmlns:vendor="http://example.com" note="keep me"/>
   </link>
-  <link name="mount"/>
-  <link name="arm_1"><visual><geometry><sphere radius="0.05"/></geometry></visual></link>
-  <link name="spin"/>
+  <link name="mount"/><link name="spin"/><link name="slider"/>
+  <link name="arm_1">
+    <visual><geometry><sphere radius="0.05"/></geometry><material name="green"/></visual>
+    <inertial>
+      <mass value="2"/><inertia ixx="0.02" iyy="0.03" izz="0.04" ixy="0.005" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
   <joint name="base_to_mount" type="fixed">
     <parent link="base_link"/><child link="mount"/>
-    <origin xyz="0.1 0 0.1" rpy="0 0 0.3"/>
+    <origin xyz="0.1 0 0.1" rpy="0 0 0.3"/><dynamics damping="0.7"/>
   </joint>
   <joint name="mount_to_arm" type="revolute">
     <parent link="mount"/><child link="arm_1"/>
     <origin xyz="0 0 0.02" rpy="0 0.2 0"/><axis xyz="0.6 0.8 0"/>
     <limit lower="-1.5707963267948966" upper="1.5707963267948966" effort="10" velocity="1"/>
   </joint>
-  <joint name="arm_to_spin" type="continuous">
-    <parent link="arm_1"/><child link="spin"/>
-    <axis xyz="0 0 1"/>
-  </joint>
-</robot>
-"""
-
-
-@pytest.fixture
-def toy(tmp_path: Path) -> Any:
-    urdf = tmp_path / "toy.urdf"
-    urdf.write_text(_URDF)
-    return RobotModel.from_file(urdf).load()
-
-
-def _stage(usd: str) -> Any:
-    from pxr import Sdf, Usd
-
-    layer = Sdf.Layer.CreateAnonymous(".usda")
-    assert layer.ImportFromString(usd)
-    return Usd.Stage.Open(layer)
-
-
-def _prim_by_link(stage: Any, link: str) -> Any:
-    from pxr import UsdPhysics
-
-    for prim in stage.Traverse():
-        if not prim.HasAPI(UsdPhysics.RigidBodyAPI):
-            continue
-        if prim.GetName() == link:
-            return prim
-    raise AssertionError(f"no prim for link {link!r}")
-
-
-def test_the_default_prim_is_the_urdf_robot_name(toy: Any) -> None:
-    stage = _stage(urdf_to_usd(toy))
-
-    assert stage.GetDefaultPrim().GetName() == "toy"
-
-
-def test_links_nest_down_the_kinematic_tree(toy: Any) -> None:
-    stage = _stage(urdf_to_usd(toy))
-
-    assert str(_prim_by_link(stage, "arm_1").GetPath()) == "/toy/base_link/mount/arm_1"
-
-
-def test_a_link_is_named_by_its_prim_path(toy: Any) -> None:
-    stage = _stage(urdf_to_usd(toy))
-
-    assert {"toy", "toy/base_link/mount/arm_1"} <= usd_frame_names(urdf_to_usd(toy))
-    assert not _prim_by_link(stage, "arm_1").HasAuthoredDisplayName()
-
-
-@pytest.mark.parametrize(
-    "link,complaint",
-    [
-        ("arm-1", r"'arm-1' has at position 3 '-'"),
-        ("1arm", r"'1arm' starts with '1'"),
-        ("a/b", "has a '/'"),
-    ],
-)
-def test_a_link_name_that_cannot_be_a_prim_name_is_refused(
-    tmp_path: Path, link: str, complaint: str
-) -> None:
-    source = tmp_path / "bad.urdf"
-    source.write_text(
-        f'<robot name="bad"><link name="base"/><link name="{link}"/>'
-        f'<joint name="j" type="fixed"><parent link="base"/><child link="{link}"/></joint></robot>'
-    )
-    with pytest.raises(ValueError, match=complaint):
-        urdf_to_usd(RobotModel.from_file(source).load())
-
-
-def test_two_joint_names_that_sanitise_alike_still_get_their_own_prims(tmp_path: Path) -> None:
-    source = tmp_path / "twins.urdf"
-    source.write_text(
-        '<robot name="twins"><link name="base"/><link name="mid"/><link name="tip"/>'
-        '<joint name="turn-1" type="fixed"><parent link="base"/><child link="mid"/></joint>'
-        '<joint name="turn_1" type="fixed"><parent link="mid"/><child link="tip"/></joint>'
-        "</robot>"
-    )
-    stage = _stage(urdf_to_usd(RobotModel.from_file(source).load()))
-
-    named = {
-        prim.GetDisplayName(): str(prim.GetPath())
-        for prim in stage.Traverse()
-        if str(prim.GetPath()).startswith("/twins/joints/")
-    }
-    assert set(named) == {"turn-1", "turn_1"}, named
-    assert len(set(named.values())) == 2, named
-
-
-def test_each_link_sits_at_its_urdf_zero_pose(toy: Any) -> None:
-    from pxr import UsdGeom
-
-    stage = _stage(urdf_to_usd(toy))
-    joint = toy.get_joint("base_to_mount")
-    assert joint is not None
-
-    local = UsdGeom.Xformable(_prim_by_link(stage, "mount")).GetLocalTransformation()
-
-    np.testing.assert_allclose(np.array(local).T, joint.parent_from_child(0.0), atol=1e-9)
-
-
-def test_a_revolute_limit_is_radians_in_urdf_and_degrees_in_usd(toy: Any) -> None:
-    stage = _stage(urdf_to_usd(toy))
-    joint = stage.GetPrimAtPath("/toy/joints/mount_to_arm")
-
-    assert joint.GetAttribute("physics:lowerLimit").Get() == pytest.approx(-90.0, abs=1e-3)
-    assert joint.GetAttribute("physics:upperLimit").Get() == pytest.approx(90.0, abs=1e-3)
-
-
-def test_a_continuous_joint_is_authored_without_limits(toy: Any) -> None:
-    stage = _stage(urdf_to_usd(toy))
-    joint = stage.GetPrimAtPath("/toy/joints/arm_to_spin")
-
-    assert joint.GetTypeName() == "PhysicsRevoluteJoint"
-    assert not joint.GetAttribute("physics:lowerLimit").HasAuthoredValue()
-
-
-def test_an_off_axis_joint_turns_about_the_urdf_axis(toy: Any) -> None:
-    from scipy.spatial.transform import Rotation
-
-    stage = _stage(urdf_to_usd(toy))
-    joint = stage.GetPrimAtPath("/toy/joints/mount_to_arm")
-    assert str(joint.GetAttribute("physics:axis").Get()) == "Z"
-
-    rot = joint.GetAttribute("physics:localRot0").Get()
-    imaginary = rot.GetImaginary()
-    rotation = Rotation.from_quat([imaginary[0], imaginary[1], imaginary[2], rot.GetReal()])
-    description = toy.get_joint("mount_to_arm")
-    assert description is not None
-    expected = Rotation.from_euler("xyz", description.origin_rpy).apply(description.axis)
-
-    np.testing.assert_allclose(rotation.apply([0.0, 0.0, 1.0]), expected, atol=1e-6)
-
-
-def test_collision_geometry_is_carried_but_not_rendered(toy: Any) -> None:
-    stage = _stage(urdf_to_usd(toy))
-    collision = stage.GetPrimAtPath("/toy/base_link/collision_1")
-
-    assert collision.GetTypeName() == "Cylinder"
-    assert str(collision.GetAttribute("visibility").Get()) == "invisible"
-    assert "PhysicsCollisionAPI" in collision.GetAppliedSchemas()
-
-
-def test_a_box_is_a_unit_cube_scaled_to_its_extents(toy: Any) -> None:
-    stage = _stage(urdf_to_usd(toy))
-    cube = stage.GetPrimAtPath("/toy/base_link/visual_0")
-
-    assert cube.GetAttribute("size").Get() == pytest.approx(1.0)
-    np.testing.assert_allclose(cube.GetAttribute("xformOp:scale").Get(), (0.4, 0.3, 0.1), atol=1e-9)
-
-
-def test_a_material_colour_becomes_the_display_colour(toy: Any) -> None:
-    stage = _stage(urdf_to_usd(toy))
-    colors = stage.GetPrimAtPath("/toy/base_link/visual_0").GetAttribute("primvars:displayColor")
-
-    np.testing.assert_allclose(colors.Get()[0], (0.2, 0.6, 0.2), atol=1e-6)
-
-
-def _mesh_urdf(mesh_path: str) -> str:
-    return f"""<?xml version="1.0"?>
-<robot name="meshy">
-  <link name="base_link">
-    <visual><geometry><mesh filename="{mesh_path}" scale="2 2 2"/></geometry></visual>
-  </link>
-</robot>
-"""
-
-
-@pytest.fixture
-def meshy(tmp_path: Path) -> Any:
-    urdf = tmp_path / "meshy.urdf"
-    urdf.write_text(_mesh_urdf("meshes/box.stl"))
-    return RobotModel.from_file(urdf).load()
-
-
-def _references(prim: Any) -> list[str]:
-    from pxr import Usd
-
-    items: list[str] = []
-    for spec in prim.GetPrimStack():
-        for ref in spec.referenceList.GetAddedOrExplicitItems():
-            items.append(ref.assetPath)
-    assert Usd
-    return items
-
-
-def test_a_mesh_names_the_path_the_urdf_named(meshy: Any) -> None:
-    stage = _stage(urdf_to_usd(meshy))
-    mesh = stage.GetPrimAtPath("/meshy/base_link/visual_0")
-
-    assert str(mesh.GetAssetInfo()["identifier"].path) == "meshes/box.stl"
-
-
-def test_a_mesh_file_is_not_referenced_as_though_it_were_a_usd_layer(meshy: Any) -> None:
-    stage = _stage(urdf_to_usd(meshy))
-
-    offenders = {
-        str(prim.GetPath()): path
-        for prim in stage.Traverse()
-        for path in _references(prim)
-        if not path.endswith((".usd", ".usda", ".usdc", ".usdz"))
-    }
-
-    assert offenders == {}
-
-
-def test_a_mesh_carries_no_geometry_of_its_own(meshy: Any) -> None:
-    stage = _stage(urdf_to_usd(meshy))
-    mesh = stage.GetPrimAtPath("/meshy/base_link/visual_0")
-
-    assert not mesh.GetAttribute("points").HasAuthoredValue()
-
-
-def test_the_layer_authors_no_custom_attributes(toy: Any) -> None:
-    usd = urdf_to_usd(toy)
-
-    assert "custom " not in usd
-    assert "dimos:" not in usd
-
-
-def test_a_frame_added_to_a_link_is_welded_to_it(toy: Any) -> None:
-    from pxr import UsdPhysics
-
-    grown = usd_with_frames(
-        urdf_to_usd(toy), {"spot": ("toy/base_link", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))}
-    )
-    stage = _stage(grown)
-
-    frame = _prim_by_link(stage, "spot")
-    assert frame, "the frame is still a link"
-    welds = [
-        prim
-        for prim in stage.Traverse()
-        if prim.IsA(UsdPhysics.FixedJoint)
-        and prim.GetRelationship("physics:body1").GetTargets() == [frame.GetPath()]
-    ]
-    assert len(welds) == 1, "the frame is held by exactly one weld"
-    base = _prim_by_link(stage, "base_link")
-    assert welds[0].GetRelationship("physics:body0").GetTargets() == [base.GetPath()]
-
-
-def test_an_added_frames_pose_survives_into_the_kinematics(toy: Any) -> None:
-    """The prim transform places the body, but tf is rebuilt from the weld's local frames."""
-    import math
-
-    import numpy as np
-    from scipy.spatial.transform import Rotation
-
-    xyz, rpy = (0.1, 0.0, 0.42), (math.pi, -0.04, 0.0)
-    scene = usd_with_frames(urdf_to_usd(toy), {"spot": ("toy/base_link", xyz, rpy)})
-
-    joint = next((j for j in UsdModel.from_layer(scene).joints if j.name == "spot_joint"), None)
-    assert joint is not None, "the added frame is a joint of the description"
-    placed = joint.parent_from_child(0.0)
-    expected = np.eye(4)
-    expected[:3, :3] = Rotation.from_euler("xyz", rpy).as_matrix()
-    expected[:3, 3] = xyz
-    assert np.allclose(placed, expected, atol=1e-6), "the frame hangs where it was added"
-
-
-def test_a_frame_welded_to_the_world_is_a_joint_on_the_scene_root(toy: Any) -> None:
-    scene = usd_with_frames(urdf_to_usd(toy), {"spot": ("toy", (0.3, 0.0, 0.7), (0.0, 0.0, 0.0))})
-
-    joint = next(j for j in UsdModel.from_layer(scene).joints if j.child_link == "toy/spot")
-
-    assert joint.parent_link == "toy", "a body0-less weld hangs off the scene root"
-    assert joint.origin_xyz == pytest.approx((0.3, 0.0, 0.7)), (
-        "the weld carries where the frame actually sits, not the joint's zero offset"
-    )
-
-
-def test_a_frame_added_to_something_that_is_not_a_link_is_welded_to_the_world(toy: Any) -> None:
-    from pxr import UsdPhysics
-
-    stage = _stage(
-        usd_with_frames(urdf_to_usd(toy), {"spot": ("toy", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
-    )
-
-    frame = _prim_by_link(stage, "spot")
-    assert frame, "the frame is a link"
-    welds = [
-        prim
-        for prim in stage.Traverse()
-        if prim.IsA(UsdPhysics.FixedJoint)
-        and prim.GetRelationship("physics:body1").GetTargets() == [frame.GetPath()]
-    ]
-    assert len(welds) == 1, "the frame is held by exactly one weld"
-    assert welds[0].GetRelationship("physics:body0").GetTargets() == []
-
-
-def test_a_frame_can_hang_off_a_frame_added_in_the_same_call(toy: Any) -> None:
-    stage = _stage(
-        usd_with_frames(
-            urdf_to_usd(toy),
-            {
-                "front_camera": ("toy/base_link", (0.1, 0.0, 0.2), (0.0, 0.0, 0.0)),
-                "lidar": ("toy/base_link/front_camera", (0.0, 0.0, 0.05), (0.0, 0.0, 0.0)),
-            },
-        )
-    )
-
-    camera = _prim_by_link(stage, "front_camera")
-    assert camera
-    assert stage.GetPrimAtPath(camera.GetPath().AppendChild("lidar")), "the lidar is on the camera"
-
-
-def test_a_frame_added_where_one_already_lives_is_an_error(toy: Any) -> None:
-    with pytest.raises(ValueError, match="is taken"):
-        usd_with_frames(
-            urdf_to_usd(toy), {"mount": ("toy/base_link", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))}
-        )
-
-
-@pytest.mark.parametrize(
-    "name,complaint",
-    [("a/b", "has no '/'"), ("front-camera", "'front-camera' has at position 5 '-'")],
-)
-def test_an_added_frame_name_that_cannot_be_a_prim_name_is_an_error(
-    toy: Any, name: str, complaint: str
-) -> None:
-    with pytest.raises(ValueError, match=complaint):
-        usd_with_frames(
-            urdf_to_usd(toy), {name: ("toy/base_link", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))}
-        )
-
-
-def test_a_frame_is_named_by_its_prim_path_through_any_scope_on_the_way() -> None:
-    from dimos.robot.assets.usd_utils.frames import usd_frame_edges
-
-    layer = (
-        '#usda 1.0\n(\n    defaultPrim = "go2"\n)\n\ndef Xform "go2"\n{\n    def Scope "Geometry"\n    {\n'
-        '        def Xform "base_link" (prepend apiSchemas = ["PhysicsRigidBodyAPI"])\n        {\n'
-        "            double3 xformOp:translate = (0, 0, 0.3)\n"
-        '            uniform token[] xformOpOrder = ["xformOp:translate"]\n'
-        '            def Mesh "visual" {}\n        }\n    }\n}\n'
-    )
-
-    assert usd_frame_names(layer) == {"go2", "go2/Geometry", "go2/Geometry/base_link"}
-    edges = {(parent, child): pose for parent, child, pose in usd_frame_edges(layer)}
-    assert set(edges) == {("go2", "go2/Geometry"), ("go2/Geometry", "go2/Geometry/base_link")}
-    assert edges["go2/Geometry", "go2/Geometry/base_link"][2, 3] == pytest.approx(0.3)
-
-
-def test_a_frame_hung_off_a_frame_the_scene_does_not_have_is_an_error(toy: Any) -> None:
-    with pytest.raises(ValueError, match="no frame 'nowhere'"):
-        usd_with_frames(urdf_to_usd(toy), {"spot": ("nowhere", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
-
-
-_EXTRAS_URDF = """<?xml version="1.0"?>
-<robot name="extra">
-  <link name="base_link">
-    <inertial><mass value="0.718"/></inertial>
-    <visual><geometry><box size="0.1 0.1 0.1"/></geometry></visual>
-    <vendor:thing xmlns:vendor="http://example.com" note="keep me"/>
-  </link>
-  <link name="arm"/>
-  <joint name="shoulder" type="fixed">
-    <parent link="base_link"/><child link="arm"/>
-    <origin xyz="0 0 0.1"/>
-    <dynamics damping="0.7"/>
+  <joint name="arm_to_spin" type="continuous"><parent link="arm_1"/><child link="spin"/>
+    <axis xyz="0 0 1"/></joint>
+  <joint name="base_to_slider" type="prismatic">
+    <parent link="base_link"/><child link="slider"/>
+    <origin xyz="0.01 0.02 0.03" rpy="0.1 0.2 0.3"/><axis xyz="0 1 0"/>
+    <limit lower="-0.05" upper="0.05" effort="5" velocity="1"/>
   </joint>
   <gazebo reference="base_link"><mu1>0.2</mu1></gazebo>
 </robot>
@@ -421,244 +87,470 @@ _EXTRAS_URDF = """<?xml version="1.0"?>
 
 
 @pytest.fixture
-def extra(tmp_path: Path) -> Any:
-    urdf = tmp_path / "extra.urdf"
-    urdf.write_text(_EXTRAS_URDF)
-    return RobotModel.from_file(urdf).load()
+def toy() -> Any:
+    return RobotModel.from_urdf_string(_TOY_URDF).load()
 
 
-def _passthrough(stage: Any, path: str) -> list[str]:
-    return list(stage.GetPrimAtPath(path).GetCustomDataByKey(PASSTHROUGH_KEY) or [])
+def _layer(usd: str) -> Any:
+    layer = Sdf.Layer.CreateAnonymous(".usda")
+    assert layer.ImportFromString(usd)
+    return layer
 
 
-def test_a_links_unconverted_urdf_rides_along_on_its_prim(extra: Any) -> None:
-    stage = _stage(urdf_to_usd(extra))
-
-    kept = _passthrough(stage, "/extra/base_link")
-
-    assert any("inertial" in fragment and "0.718" in fragment for fragment in kept)
+def _stage(usd: str) -> Any:
+    return Usd.Stage.Open(_layer(usd))
 
 
-def test_a_vendors_own_tag_rides_along_too(extra: Any) -> None:
-    stage = _stage(urdf_to_usd(extra))
-
-    kept = _passthrough(stage, "/extra/base_link")
-
-    assert any("keep me" in fragment for fragment in kept)
+def _pose(rotation: Any, xyz: Any) -> Any:
+    pose = np.eye(4)
+    pose[:3, :3], pose[:3, 3] = rotation.as_matrix(), xyz
+    return pose
 
 
-def test_what_the_converter_does_read_is_not_duplicated_into_the_passthrough(
-    extra: Any,
-) -> None:
-    stage = _stage(urdf_to_usd(extra))
-
-    kept = _passthrough(stage, "/extra/base_link")
-
-    assert not any("<visual" in fragment for fragment in kept)
+def _converted(urdf: str) -> Any:
+    return _stage(urdf_to_usd(RobotModel.from_urdf_string(urdf).load()))
 
 
-def test_a_joints_unconverted_urdf_rides_along_on_its_joint_prim(extra: Any) -> None:
-    stage = _stage(urdf_to_usd(extra))
-
-    kept = _passthrough(stage, "/extra/joints/shoulder")
-
-    assert any("dynamics" in fragment and "0.7" in fragment for fragment in kept)
-    assert not any("<origin" in fragment for fragment in kept)
+def _prim_by_link(stage: Any, link: str) -> Any:
+    for prim in stage.Traverse():
+        if prim.HasAPI(UsdPhysics.RigidBodyAPI) and prim.GetName() == link:
+            return prim
+    raise AssertionError(f"no prim for link {link!r}")
 
 
-def test_a_link_with_nothing_unconverted_carries_no_passthrough(extra: Any) -> None:
-    stage = _stage(urdf_to_usd(extra))
-
-    assert stage.GetPrimAtPath("/extra/base_link/arm").GetCustomDataByKey(PASSTHROUGH_KEY) is None
-
-
-def test_passthrough_is_customdata_not_an_attribute(extra: Any) -> None:
-    usd = urdf_to_usd(extra)
-
-    assert "customData" in usd
-    assert "custom " not in usd
+def _welds_holding(stage: Any, frame: Any) -> list[Any]:
+    return [
+        prim
+        for prim in stage.Traverse()
+        if prim.IsA(UsdPhysics.FixedJoint)
+        and prim.GetRelationship("physics:body1").GetTargets() == [frame.GetPath()]
+    ]
 
 
-_FLOATING_URDF = """<?xml version="1.0"?>
-<robot name="floater">
-  <link name="world"/>
-  <link name="base_link"><visual><geometry><box size="0.1 0.1 0.1"/></geometry></visual></link>
-  <joint name="floating_base_joint" type="floating">
-    <parent link="world"/><child link="base_link"/>
-    <origin xyz="0 0 0.8"/>
-  </joint>
-</robot>
-"""
+def test_a_urdf_becomes_a_usd_physics_layer_that_reads_back_the_same(toy: Any) -> None:
+    usd = urdf_to_usd(toy)
+    stage = _stage(usd)
 
+    assert stage.GetDefaultPrim().GetName() == "toy"
+    arm = _prim_by_link(stage, "arm_1")
+    assert str(arm.GetPath()) == "/toy/base_link/mount/arm_1"
+    assert {"toy", "toy/base_link/mount/arm_1"} <= usd_frame_names(usd)
+    assert not arm.HasAuthoredDisplayName()
+    mount_joint = toy.get_joint("base_to_mount")
+    local = UsdGeom.Xformable(_prim_by_link(stage, "mount")).GetLocalTransformation()
+    np.testing.assert_allclose(np.array(local).T, mount_joint.parent_from_child(0.0), atol=1e-9)
 
-@pytest.fixture
-def floater(tmp_path: Path) -> Any:
-    urdf = tmp_path / "floater.urdf"
-    urdf.write_text(_FLOATING_URDF)
-    return RobotModel.from_file(urdf).load()
+    revolute = stage.GetPrimAtPath("/toy/joints/mount_to_arm")
+    assert revolute.GetAttribute("physics:lowerLimit").Get() == pytest.approx(-90.0, abs=1e-3)
+    assert revolute.GetAttribute("physics:upperLimit").Get() == pytest.approx(90.0, abs=1e-3)
+    assert str(revolute.GetAttribute("physics:axis").Get()) == "Z"
+    rot = revolute.GetAttribute("physics:localRot0").Get()
+    rotation = Rotation.from_quat([*rot.GetImaginary(), rot.GetReal()])
+    arm_joint = toy.get_joint("mount_to_arm")
+    expected_axis = Rotation.from_euler("xyz", arm_joint.origin_rpy).apply(arm_joint.axis)
+    np.testing.assert_allclose(rotation.apply([0.0, 0.0, 1.0]), expected_axis, atol=1e-6)
 
+    continuous = stage.GetPrimAtPath("/toy/joints/arm_to_spin")
+    assert continuous.GetTypeName() == "PhysicsRevoluteJoint"
+    assert not continuous.GetAttribute("physics:lowerLimit").HasAuthoredValue()
 
-def test_a_floating_base_converts_at_all(floater: Any) -> None:
-    stage = _stage(urdf_to_usd(floater))
-
-    assert stage.GetPrimAtPath("/floater/world/base_link")
-
-
-def test_a_floating_joints_child_sits_at_the_joint_origin(floater: Any) -> None:
-    from pxr import UsdGeom
-
-    stage = _stage(urdf_to_usd(floater))
-    prim = stage.GetPrimAtPath("/floater/world/base_link")
-
-    transform = UsdGeom.Xformable(prim).GetLocalTransformation()
-    np.testing.assert_allclose(tuple(transform.ExtractTranslation()), (0, 0, 0.8), atol=1e-9)
-
-
-def test_a_floating_joint_is_the_generic_joint(floater: Any) -> None:
-    stage = _stage(urdf_to_usd(floater))
-
-    prim = stage.GetPrimAtPath("/floater/joints/floating_base_joint")
-    assert prim, [p.GetName() for p in stage.Traverse()]
-    assert str(prim.GetTypeName()) == "PhysicsJoint"
-    assert not prim.GetAttribute("physics:axis")
-
-
-def test_a_planar_joint_locks_the_axes_out_of_its_plane(tmp_path: Path) -> None:
-    source = tmp_path / "cart.urdf"
-    source.write_text(
-        '<robot name="cart"><link name="world"/><link name="body"/>'
-        '<joint name="planar_base" type="planar"><parent link="world"/>'
-        '<child link="body"/></joint></robot>'
+    collision = stage.GetPrimAtPath("/toy/base_link/collision_1")
+    assert collision.GetTypeName() == "Cylinder"
+    assert str(collision.GetAttribute("visibility").Get()) == "invisible"
+    assert "PhysicsCollisionAPI" in collision.GetAppliedSchemas()
+    cube = stage.GetPrimAtPath("/toy/base_link/visual_0")
+    assert cube.GetAttribute("size").Get() == pytest.approx(1.0)
+    np.testing.assert_allclose(cube.GetAttribute("xformOp:scale").Get(), (0.4, 0.3, 0.1), atol=1e-9)
+    np.testing.assert_allclose(
+        cube.GetAttribute("primvars:displayColor").Get()[0], (0.2, 0.6, 0.2), atol=1e-6
     )
-    stage = _stage(urdf_to_usd(RobotModel.from_file(source).load()))
-
-    prim = stage.GetPrimAtPath("/cart/joints/planar_base")
-    assert prim
-    applied = {str(name) for name in prim.GetAppliedSchemas()}
-    assert {"PhysicsLimitAPI:transZ", "PhysicsLimitAPI:rotX", "PhysicsLimitAPI:rotY"} <= applied
-    assert prim.GetAttribute("limit:transZ:physics:high").Get() == 0.0
-
-
-def test_a_planar_joint_moves_in_the_plane_its_normal_names(tmp_path: Path) -> None:
-    """URDF's planar axis is the plane's normal, and the locks USD writes are about joint Z."""
-    source = tmp_path / "cart.urdf"
-    source.write_text(
-        '<robot name="cart"><link name="world"/><link name="body"/>'
-        '<joint name="planar_base" type="planar"><parent link="world"/>'
-        '<child link="body"/><axis xyz="1 0 0"/></joint></robot>'
+    # A visual naming a robot-level material takes its colour; an inline one wins over it.
+    sphere = stage.GetPrimAtPath("/toy/base_link/mount/arm_1/visual_0")
+    np.testing.assert_allclose(
+        sphere.GetAttribute("primvars:displayColor").Get()[0], (0.0, 0.0, 1.0), atol=1e-6
     )
-    usd = UsdModel.from_robot_model(RobotModel.from_file(source))
 
-    joint = next(j for j in usd.joints if j.name == "planar_base")
-    assert joint is not None
-    np.testing.assert_allclose(joint.axis, [1.0, 0.0, 0.0], atol=1e-6)
+    joints = usd_joints(usd)
+    assert [joint.name for joint in joints] == [joint.name for joint in toy.joints]
+    for got, original in zip(joints, toy.joints, strict=True):
+        parent, child = (
+            str(_prim_by_link(stage, link).GetPath()).lstrip("/")
+            for link in (original.parent_link, original.child_link)
+        )
+        assert (got.type, got.parent_link, got.child_link) == (original.type, parent, child)
+        for position in (0.0, 0.3):
+            np.testing.assert_allclose(
+                got.parent_from_child(position), original.parent_from_child(position), atol=1e-6
+            )
+        assert (got.lower, got.upper) == pytest.approx((original.lower, original.upper), abs=1e-6)
+    assert usd_root_link(usd) == "toy/base_link"
 
 
-def test_a_mimic_joint_keeps_following_its_leader(tmp_path: Path) -> None:
-    """USD cannot say "this joint follows that one", so mimic has to travel as passthrough."""
-    source = tmp_path / "gripper.urdf"
-    source.write_text(
-        '<robot name="gripper"><link name="palm"/><link name="left"/><link name="right"/>'
-        '<joint name="lead" type="revolute"><parent link="palm"/><child link="left"/>'
-        '<axis xyz="0 0 1"/><limit lower="0" upper="1" effort="1" velocity="1"/></joint>'
-        '<joint name="follow" type="revolute"><parent link="palm"/><child link="right"/>'
-        '<axis xyz="0 0 1"/><limit lower="0" upper="1" effort="1" velocity="1"/>'
-        '<mimic joint="lead" multiplier="-1" offset="0.5"/></joint></robot>'
+def test_urdf_names_become_prim_names_or_are_refused() -> None:
+    stage = _converted(
+        '<robot name="twins"><link name="base"/><link name="mid"/><link name="tip"/>'
+        '<joint name="turn-1" type="fixed"><parent link="base"/><child link="mid"/></joint>'
+        '<joint name="turn_1" type="fixed"><parent link="mid"/><child link="tip"/></joint></robot>'
     )
-    usd = UsdModel.from_robot_model(RobotModel.from_file(source))
+    named = {
+        prim.GetDisplayName(): str(prim.GetPath())
+        for prim in stage.Traverse()
+        if str(prim.GetPath()).startswith("/twins/joints/")
+    }
+    assert set(named) == {"turn-1", "turn_1"} and len(set(named.values())) == 2, named
 
-    joint = next(j for j in usd.joints if j.name == "follow")
-    assert joint is not None
-    assert joint.mimic == ("lead", -1.0, 0.5), "the follower came back independent"
+    for link, complaint in (
+        ("arm-1", "'arm-1' has at position 3 '-'"),
+        ("1arm", "'1arm' starts with '1'"),
+        ("a/b", "has a '/'"),
+    ):
+        with pytest.raises(ValueError, match=complaint):
+            _converted(
+                f'<robot name="bad"><link name="base"/><link name="{link}"/><joint name="j" '
+                f'type="fixed"><parent link="base"/><child link="{link}"/></joint></robot>'
+            )
 
 
-_HASHED_URDF = """<?xml version="1.0"?>
-<robot name="hashy">
-  <link name="base_link">
-    <visual><geometry><mesh filename="meshes/arm.stl"/></geometry></visual>
-  </link>
-</robot>
-"""
-
-
-@pytest.fixture
-def hashy(tmp_path: Path) -> Any:
+def test_a_mesh_is_a_hashed_asset_and_scaled_shapes_sit_at_their_origin(tmp_path: Path) -> None:
+    contents = b"solid arm\nendsolid arm\n"
     (tmp_path / "meshes").mkdir()
-    (tmp_path / "meshes" / "arm.stl").write_bytes(b"solid arm\nendsolid arm\n")
-    urdf = tmp_path / "hashy.urdf"
-    urdf.write_text(_HASHED_URDF)
-    return RobotModel.from_file(urdf).load()
-
-
-def test_a_mesh_is_identified_by_the_hash_of_its_contents(hashy: Any) -> None:
-    stage = _stage(urdf_to_usd(hashy))
-    prim = stage.GetPrimAtPath("/hashy/base_link/visual_0")
-
-    expected = asset_hash(b"solid arm\nendsolid arm\n")
-    assert prim.GetAssetInfo()["version"] == expected
-
-
-def test_the_asset_identifier_is_the_path_it_references(hashy: Any) -> None:
-    stage = _stage(urdf_to_usd(hashy))
-    prim = stage.GetPrimAtPath("/hashy/base_link/visual_0")
-
-    assert prim.GetAssetInfo()["identifier"].path.endswith("meshes/arm.stl")
-
-
-def test_a_link_carries_its_mass_where_a_physics_engine_looks_for_it(tmp_path: Path) -> None:
-    from pxr import UsdPhysics
-
-    urdf = tmp_path / "weighed.urdf"
+    (tmp_path / "meshes" / "box.stl").write_bytes(contents)
+    origin = '<origin xyz="0.2 -0.1 0.05" rpy="0 0 0.3"/>'
+    urdf = tmp_path / "meshy.urdf"
     urdf.write_text(
-        """<?xml version="1.0"?>
-<robot name="weighed">
-  <link name="base">
-    <inertial>
-      <origin xyz="0 0 -0.076" rpy="0 0 0"/>
-      <mass value="3.813"/>
-      <inertia ixx="0.010549" iyy="0.0093089" izz="0.0079184" ixy="0" ixz="0" iyz="0"/>
-    </inertial>
-  </link>
-  <link name="frame_only"/>
-  <joint name="base_to_frame" type="fixed">
-    <parent link="base"/><child link="frame_only"/>
-  </joint>
-</robot>
-"""
+        f'<robot name="meshy"><link name="base_link"><visual>{origin}<geometry>'
+        '<box size="0.4 0.3 0.1"/></geometry></visual><visual>'
+        f'{origin}<geometry><mesh filename="meshes/box.stl" scale="0.4 0.3 0.1"/></geometry>'
+        "</visual></link></robot>"
     )
     stage = _stage(urdf_to_usd(RobotModel.from_file(urdf).load()))
+    mesh = stage.GetPrimAtPath("/meshy/base_link/visual_1")
 
-    base = _prim_by_link(stage, "base")
-    assert base.HasAPI(UsdPhysics.MassAPI)
-    mass = UsdPhysics.MassAPI(base)
-    assert mass.GetMassAttr().Get() == pytest.approx(3.813)
-    assert tuple(mass.GetCenterOfMassAttr().Get()) == pytest.approx((0.0, 0.0, -0.076))
-    assert tuple(mass.GetDiagonalInertiaAttr().Get()) == pytest.approx(
+    assert mesh.GetAssetInfo()["identifier"].path.endswith("meshes/box.stl")
+    assert mesh.GetAssetInfo()["version"] == asset_hash(contents)
+    assert not mesh.GetAttribute("points").HasAuthoredValue()
+    references = [
+        ref.assetPath
+        for prim in stage.Traverse()
+        for spec in prim.GetPrimStack()
+        for ref in spec.referenceList.GetAddedOrExplicitItems()
+    ]
+    assert all(path.endswith((".usd", ".usda", ".usdc", ".usdz")) for path in references)
+    for shape in ("visual_0", "visual_1"):
+        prim = stage.GetPrimAtPath(f"/meshy/base_link/{shape}")
+        world = UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+        world = np.array(world)
+        # USD matrices are row-vector: the translation is the last row, the axes scaled rows.
+        np.testing.assert_allclose(world[3, :3], (0.2, -0.1, 0.05), atol=1e-9)
+        np.testing.assert_allclose(
+            np.linalg.norm(world[:3, :3], axis=1), (0.4, 0.3, 0.1), atol=1e-9
+        )
+
+
+def test_added_frames_are_welded_where_they_hang_or_refused(toy: Any) -> None:
+    spot_xyz, spot_rpy = (0.1, 0.0, 0.42), (math.pi, -0.04, 0.0)
+    scene = usd_with_frames(
+        urdf_to_usd(toy),
+        {
+            "spot": ("toy/base_link", spot_xyz, spot_rpy),
+            "beacon": ("toy", (0.3, 0.0, 0.7), (0.0, 0.0, 0.0)),
+            "front_camera": ("toy/base_link", (0.1, 0.0, 0.2), (0.0, 0.0, 0.0)),
+            "lidar": ("toy/base_link/front_camera", (0.0, 0.0, 0.05), (0.0, 0.0, 0.0)),
+        },
+    )
+    stage = _stage(scene)
+
+    (spot_weld,) = _welds_holding(stage, _prim_by_link(stage, "spot"))
+    base_path = _prim_by_link(stage, "base_link").GetPath()
+    assert spot_weld.GetRelationship("physics:body0").GetTargets() == [base_path]
+    (beacon_weld,) = _welds_holding(stage, _prim_by_link(stage, "beacon"))
+    assert beacon_weld.GetRelationship("physics:body0").GetTargets() == []
+    camera = _prim_by_link(stage, "front_camera")
+    assert stage.GetPrimAtPath(camera.GetPath().AppendChild("lidar")), "the lidar is on the camera"
+
+    # The prim transform places the body, but tf is rebuilt from the weld's local frames.
+    joints = UsdModel.from_layer(scene).joints
+    spot_joint = next(joint for joint in joints if joint.name == "spot_joint")
+    expected = _pose(Rotation.from_euler("xyz", spot_rpy), spot_xyz)
+    np.testing.assert_allclose(spot_joint.parent_from_child(0.0), expected, atol=1e-6)
+    beacon_joint = next(joint for joint in joints if joint.child_link == "toy/beacon")
+    assert beacon_joint.parent_link == "toy", "a body0-less weld hangs off the scene root"
+    assert beacon_joint.origin_xyz == pytest.approx((0.3, 0.0, 0.7))
+
+    for name, parent, complaint in (
+        ("mount", "toy/base_link", "is taken"),
+        ("a/b", "toy/base_link", "has no '/'"),
+        ("front-camera", "toy/base_link", "'front-camera' has at position 5 '-'"),
+        ("spot", "nowhere", "no frame 'nowhere'"),
+    ):
+        with pytest.raises(ValueError, match=complaint):
+            usd_with_frames(urdf_to_usd(toy), {name: (parent, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
+
+
+def test_a_links_mass_is_where_an_engine_looks_and_the_rest_rides_along(toy: Any) -> None:
+    usd = urdf_to_usd(toy)
+    stage = _stage(usd)
+
+    base = UsdPhysics.MassAPI(_prim_by_link(stage, "base_link"))
+    assert base.GetMassAttr().Get() == pytest.approx(3.813)
+    assert tuple(base.GetCenterOfMassAttr().Get()) == pytest.approx((0.0, 0.0, -0.076))
+    assert tuple(base.GetDiagonalInertiaAttr().Get()) == pytest.approx(
         (0.0079184, 0.0093089, 0.010549), rel=1e-5
     )
+    # An off-diagonal inertia is diagonalised rather than dropped.
+    tilted = UsdPhysics.MassAPI(_prim_by_link(stage, "arm_1"))
+    assert sum(tilted.GetDiagonalInertiaAttr().Get()) == pytest.approx(0.02 + 0.03 + 0.04)
+    assert tilted.GetPrincipalAxesAttr().Get() is not None
+    assert not _prim_by_link(stage, "mount").HasAPI(UsdPhysics.MassAPI)
 
-    assert not _prim_by_link(stage, "frame_only").HasAPI(UsdPhysics.MassAPI)
+    def kept(path: str) -> list[str]:
+        return list(stage.GetPrimAtPath(path).GetCustomDataByKey(PASSTHROUGH_KEY) or [])
+
+    link_kept = kept("/toy/base_link")
+    assert any("inertial" in fragment and "3.813" in fragment for fragment in link_kept)
+    assert any("keep me" in fragment for fragment in link_kept)
+    assert not any("<visual" in fragment for fragment in link_kept)
+    joint_kept = kept("/toy/joints/base_to_mount")
+    assert any("dynamics" in fragment and "0.7" in fragment for fragment in joint_kept)
+    assert not any("<origin" in fragment for fragment in joint_kept)
+    assert not kept("/toy/base_link/mount")
+    assert "customData" in usd and "custom " not in usd and "dimos:" not in usd
 
 
-def test_an_off_diagonal_inertia_is_diagonalised_rather_than_dropped(tmp_path: Path) -> None:
-    from pxr import UsdPhysics
-
-    urdf = tmp_path / "tilted.urdf"
-    urdf.write_text(
-        """<?xml version="1.0"?>
-<robot name="tilted">
-  <link name="base">
-    <inertial>
-      <mass value="2"/>
-      <inertia ixx="0.02" iyy="0.03" izz="0.04" ixy="0.005" ixz="0" iyz="0"/>
-    </inertial>
-  </link>
-</robot>
-"""
+def test_floating_planar_and_mimic_joints_survive_the_trip_through_usd() -> None:
+    revolute = '<axis xyz="0 0 1"/><limit lower="0" upper="1" effort="1" velocity="1"/>'
+    urdf = (
+        '<robot name="cart"><link name="world"/><link name="base"/><link name="body"/>'
+        '<link name="left"/><link name="right"/>'
+        '<joint name="float" type="floating"><parent link="world"/><child link="base"/>'
+        '<origin xyz="0 0 0.8"/></joint>'
+        '<joint name="planar" type="planar"><parent link="base"/><child link="body"/>'
+        '<axis xyz="1 0 0"/></joint>'
+        '<joint name="lead" type="revolute"><parent link="base"/><child link="left"/>'
+        f"{revolute}</joint>"
+        f'<joint name="follow" type="revolute"><parent link="base"/><child link="right"/>{revolute}'
+        '<mimic joint="lead" multiplier="-1" offset="0.5"/></joint></robot>'
     )
-    stage = _stage(urdf_to_usd(RobotModel.from_file(urdf).load()))
-    mass = UsdPhysics.MassAPI(_prim_by_link(stage, "base"))
-    moments = tuple(mass.GetDiagonalInertiaAttr().Get())
-    assert sum(moments) == pytest.approx(0.02 + 0.03 + 0.04)
-    axes = mass.GetPrincipalAxesAttr().Get()
-    assert axes is not None
+    stage = _converted(urdf)
+
+    base = stage.GetPrimAtPath("/cart/world/base")
+    translation = UsdGeom.Xformable(base).GetLocalTransformation().ExtractTranslation()
+    np.testing.assert_allclose(tuple(translation), (0, 0, 0.8), atol=1e-9)
+    floating = stage.GetPrimAtPath("/cart/joints/float")
+    assert str(floating.GetTypeName()) == "PhysicsJoint"
+    assert not floating.GetAttribute("physics:axis")
+    planar = stage.GetPrimAtPath("/cart/joints/planar")
+    applied = {str(name) for name in planar.GetAppliedSchemas()}
+    assert {"PhysicsLimitAPI:transZ", "PhysicsLimitAPI:rotX", "PhysicsLimitAPI:rotY"} <= applied
+    assert planar.GetAttribute("limit:transZ:physics:high").Get() == 0.0
+
+    joints = {
+        joint.name: joint
+        for joint in UsdModel.from_robot_model(RobotModel.from_urdf_string(urdf)).joints
+    }
+    # URDF's planar axis is the plane's normal, and the locks USD writes are about joint Z.
+    np.testing.assert_allclose(joints["planar"].axis, [1.0, 0.0, 0.0], atol=1e-6)
+    assert joints["follow"].mimic == ("lead", -1.0, 0.5), "the follower came back independent"
+
+
+def _rig(joint: str, axis: str = "X", pos1: str = "(0, 0, 0.2)") -> str:
+    body = '(prepend apiSchemas = ["PhysicsRigidBodyAPI"])'
+    return f"""#usda 1.0
+(defaultPrim = "rig")
+def Xform "rig" {{
+    def Xform "base" {body} {{
+        def Scope "Geometry" {{
+            def Xform "mast" {body} {{
+                double3 xformOp:translate = (0, 0, 0.5)
+                uniform token[] xformOpOrder = ["xformOp:translate"]
+            }}
+        }}
+    }}
+    def Xform "arm" {body} {{
+        def {joint} "elbow" {{
+            uniform token physics:axis = "{axis}"
+            rel physics:body0 = </rig/base>
+            rel physics:body1 = </rig/arm>
+            point3f physics:localPos0 = (0, 0, 1)
+            point3f physics:localPos1 = {pos1}
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (0.70710678, 0, 0, 0.70710678)
+        }}
+    }}
+}}
+"""
+
+
+def _arm_pose(joints: Any, angle: float) -> Any:
+    by_child = {joint.child_link: joint for joint in joints}
+    pose, link = np.eye(4), "rig/arm"
+    while link in by_child:
+        joint = by_child[link]
+        pose = joint.parent_from_child(angle if joint.type != "fixed" else 0.0) @ pose
+        link = joint.parent_link
+    return pose
+
+
+def test_a_usd_joint_turns_about_its_anchor_and_axis_and_loose_bodies_are_welded() -> None:
+    # base_from_joint @ motion @ inverse(arm_from_joint), straight from UsdPhysics.
+    base_from_joint = _pose(Rotation.identity(), (0, 0, 1))
+    joint_from_arm = np.linalg.inv(_pose(Rotation.from_euler("z", np.pi / 2), (0, 0, 0.2)))
+    for joint, angles in (
+        ("PhysicsFixedJoint", (0.0,)),
+        ("PhysicsRevoluteJoint", (0.0, 0.7, -1.3)),
+    ):
+        joints = usd_joints(_rig(joint))
+        for angle in angles:
+            motion = _pose(Rotation.from_rotvec([angle, 0, 0]), (0, 0, 0))
+            expected = base_from_joint @ motion @ joint_from_arm
+            np.testing.assert_allclose(_arm_pose(joints, angle), expected, atol=1e-6)
+
+    # The axis token is in the joint frame; localRot1 turns it into the child's frame.
+    elbow = next(joint for joint in usd_joints(_rig("PhysicsRevoluteJoint", "Y", "(0, 0, 0)")))
+    np.testing.assert_allclose(
+        elbow.axis, Rotation.from_euler("z", np.pi / 2).apply([0, 1, 0]), atol=1e-6
+    )
+
+    # A nested body no joint holds is welded where it sits, even through a scope.
+    rig = _rig("PhysicsFixedJoint")
+    mast = "rig/base/Geometry/mast"
+    weld = next(joint for joint in usd_joints(rig) if joint.child_link == mast)
+    assert (weld.type, weld.parent_link) == ("fixed", "rig/base")
+    np.testing.assert_allclose(weld.origin_xyz, (0, 0, 0.5), atol=1e-9)
+    assert usd_root_link(rig) == "rig/base"
+    # A frame is named by its prim path through any scope on the way.
+    assert {"rig/base/Geometry", mast} <= usd_frame_names(rig)
+    edges = {(parent, child): pose for parent, child, pose in usd_frame_edges(rig)}
+    assert {("rig/base", "rig/base/Geometry"), ("rig/base/Geometry", mast)} <= set(edges)
+    assert edges["rig/base/Geometry", mast][2, 3] == pytest.approx(0.5)
+
+
+_ROOT = "/robots/arm"
+
+_EVERY_KIND_OF_ASSET = """#usda 1.0
+(defaultPrim = "arm"
+    subLayers = [@lights.usda@ (offset = 7)])
+def Xform "arm" (
+    append references = @appended.usda@</clip> (offset = 3; scale = 2; customData = {string take = "b"})
+    prepend payload = @payload.usda@ (offset = 5)
+) {
+    asset[] textures = [@albedo.png@, @normal.png@]
+}
+"""
+
+_EVERY_KIND_OF_FILE = {"lights.usda", "appended.usda", "payload.usda", "albedo.png", "normal.png"}
+
+
+def _targets(prim: Any, relationship: str) -> list[str]:
+    return [str(target) for target in prim.GetRelationship(relationship).GetTargets()]
+
+
+def test_every_kind_of_asset_is_listed_resolved_and_published(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert referenced_asset_paths(_EVERY_KIND_OF_ASSET) == _EVERY_KIND_OF_FILE
+    resolved = resolve_usd_assets(_EVERY_KIND_OF_ASSET, _ROOT)
+    assert referenced_asset_paths(resolved) == {
+        str(Path(_ROOT) / name) for name in _EVERY_KIND_OF_FILE
+    }
+    published, public = publish_usd_assets(_EVERY_KIND_OF_ASSET)
+    assert set(public.values()) == _EVERY_KIND_OF_FILE
+    assert referenced_asset_paths(published) == set(public)
+    assert not [name for name in public if name.startswith("/") or ".." in name.split("/")]
+    assert list(_layer(resolved).subLayerPaths) == [f"{_ROOT}/lights.usda"]
+
+    # A moved arc keeps its timing and custom data.
+    for moved in (resolved, published):
+        layer = _layer(moved)
+        assert layer.subLayerOffsets[0].offset == 7
+        prim = layer.GetPrimAtPath("/arm")
+        (reference,) = prim.referenceList.appendedItems
+        assert reference.assetPath != "appended.usda", "the reference did not move at all"
+        assert (reference.layerOffset.offset, reference.layerOffset.scale) == (3, 2)
+        assert (dict(reference.customData), str(reference.primPath)) == ({"take": "b"}, "/clip")
+        (payload,) = prim.payloadList.prependedItems
+        assert payload.assetPath != "payload.usda", "the payload did not move at all"
+        assert payload.layerOffset.offset == 5
+
+    # A deleted reference is not a file the layer needs, but it still moves.
+    deleting = '#usda 1.0\n\ndef Xform "arm" (\n    delete references = @gone.usda@\n)\n{\n}\n'
+    assert referenced_asset_paths(deleting) == set()
+    deleting_layer = _layer(resolve_usd_assets(deleting, _ROOT))
+    deleted = deleting_layer.GetPrimAtPath("/arm")
+    assert [arc.assetPath for arc in deleted.referenceList.deletedItems] == [f"{_ROOT}/gone.usda"]
+
+    # Assets already in place are left alone, without a list editor per arc.
+    def opened(spec: Any) -> None:
+        pytest.fail(f"opened a list editor on {spec.path}")
+
+    for name in ("referenceList", "payloadList"):
+        monkeypatch.setattr(Sdf.PrimSpec, name, property(opened))
+    assert resolve_usd_assets(resolved, _ROOT) == resolved
+
+
+_BOUND_ARM = """#usda 1.0
+(defaultPrim = "arm"
+    upAxis = "Z")
+def Xform "arm" {
+    def Xform "base" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "MaterialBindingAPI"]) {
+        rel material:binding = </Looks/paint>
+        float level.connect = </arm/tip.level>
+    }
+    def Xform "tip" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+        prepend references = </arm/base>) {
+        float level
+    }
+    def PhysicsFixedJoint "weld" {
+        rel physics:body0 = </arm/base>
+        rel physics:body1 = </arm/tip>
+    }
+}
+def Scope "Looks" {
+    def Material "paint" {}
+}
+"""
+
+
+@pytest.mark.parametrize("namespace", ["left", "fleet/robot0", "arm"])
+def test_a_layer_nested_under_a_namespace_names_each_frame_as_on_tf(namespace: str) -> None:
+    nested = usd_under_namespace(_BOUND_ARM, namespace)
+    stage = _stage(nested)
+
+    under = {f"{namespace}/{frame}" for frame in usd_frame_names(_BOUND_ARM)}
+    ancestors = {"/".join(namespace.split("/")[: n + 1]) for n in range(namespace.count("/") + 1)}
+    assert usd_frame_names(nested) == under | ancestors
+    assert str(stage.GetDefaultPrim().GetPath()) == f"/{namespace.partition('/')[0]}"
+    assert stage.GetMetadata("upAxis") == "Z"
+    base = stage.GetPrimAtPath(f"/{namespace}/arm/base")
+    assert _targets(base, "material:binding") == [f"/{namespace}/Looks/paint"]
+    assert [str(c) for c in base.GetAttribute("level").GetConnections()] == [
+        f"/{namespace}/arm/tip.level"
+    ]
+    weld = stage.GetPrimAtPath(f"/{namespace}/arm/weld")
+    assert _targets(weld, "physics:body1") == [f"/{namespace}/arm/tip"]
+    tip = stage.GetPrimAtPath(f"/{namespace}/arm/tip")
+    assert tip.HasAPI(UsdPhysics.RigidBodyAPI), "the internal reference still composes"
+    assert not stage.GetPrimAtPath("/arm/base") or namespace == "arm"
+
+
+def test_a_namespaced_layer_moves_anywhere_and_its_frames_keep_their_tf_ids() -> None:
+    assert usd_under_namespace(_BOUND_ARM, "") == _BOUND_ARM
+    with pytest.raises(ValueError, match="'2nd' starts with '2'"):
+        usd_under_namespace(_BOUND_ARM, "fleet/2nd")
+
+    named = usd_with_frame_names(_BOUND_ARM, "fleet/robot0", {"arm/tip": "fleet/robot0/tip"})
+    served = usd_under_namespace(named, "fleet/robot0")
+    prims = usd_world_frame_prims(served)
+    assert prims["fleet/robot0/tip"] == "fleet/robot0/arm/tip"
+    for under in ("room/spot", "left"):
+        moved = usd_moved_under(served, "fleet/robot0", under)
+        stage = _stage(moved)
+        assert not stage.GetPrimAtPath("/fleet")
+        assert str(stage.GetDefaultPrim().GetPath()) == f"/{under.partition('/')[0]}"
+        weld = stage.GetPrimAtPath(f"/{under}/arm/weld")
+        assert _targets(weld, "physics:body1") == [f"/{under}/arm/tip"]
+        assert stage.GetPrimAtPath(f"/{under}/arm/tip").HasAPI(UsdPhysics.RigidBodyAPI)
+        prims = usd_world_frame_prims(moved)
+        assert prims["fleet/robot0/tip"] == f"{under}/arm/tip"
+        assert prims["fleet/robot0/arm/base"] == f"{under}/arm/base"
+        assert "fleet/robot0/arm/tip" not in prims
