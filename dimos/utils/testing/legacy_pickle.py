@@ -173,7 +173,8 @@ class LegacyPickleStore(TimeSeriesStore[T]):
             if start is not None and ts < start:
                 continue
             if end is not None and ts >= end:
-                break
+                # Files are numbered on arrival. A later file can still be in the clip.
+                continue
 
             if self._autocast is not None:
                 data = self._autocast(data)
