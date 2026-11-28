@@ -15,11 +15,19 @@ under which terms.
 
 ## Attributions
 
-The GR00T policies in `opt/data/groot` include NVIDIA's model licence and
-attribution in `LICENSE` and `Notice.txt`. The Piper meshes in `opt/data/piper`
-include the AgileX model's MIT notice in `LICENSE`.
-[GR00T model licence](https://github.com/NVlabs/GR00T-WholeBodyControl/blob/1e1ec4f5f27e6c3e03048f693bd7c60cce04afda/decoupled_wbc/sim2mujoco/resources/robots/g1/policy/NVIDIA%20Open%20Model%20License)
-and [Piper mesh licence](https://github.com/google-deepmind/mujoco_menagerie/blob/eea4c7431b63da8278b0ff31638e0b0e941cec0e/agilex_piper/LICENSE).
+### Licence files added by the build
+
+The archives of these folders hold no licence file. The build adds one to each.
+
+| Folder in `opt/data` | Added | Terms | Where the text is from |
+|---|---|---|---|
+| `groot` | `LICENSE`, `Notice.txt` | NVIDIA Open Model License. `Notice.txt` is the attribution that it asks for. | [GR00T-WholeBodyControl](https://github.com/NVlabs/GR00T-WholeBodyControl/blob/1e1ec4f5f27e6c3e03048f693bd7c60cce04afda/decoupled_wbc/sim2mujoco/resources/robots/g1/policy/NVIDIA%20Open%20Model%20License) |
+| `piper` | `LICENSE` | MIT, for the AgileX model. | [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie/blob/eea4c7431b63da8278b0ff31638e0b0e941cec0e/agilex_piper/LICENSE) |
+| `g1_urdf` | `LICENSE` | BSD 3-Clause, for the Unitree model. | `go2_sim/unitree_go2/LICENSE`, the same Unitree text. |
+| `xarm6` | `LICENSE` | BSD 3-Clause, for the UFACTORY meshes. | `xarm7/LICENSE`, the same UFACTORY text. |
+| `yam_description` | `LICENSE` | Apache-2.0, for the OpenYAM model. Upstream declares it in `package.xml` and has no licence file, as `SOURCE_COMMIT.txt` says. | The standard Apache-2.0 text. |
+| `yam_description/i2rt` | `LICENSE` | MIT, for the I2RT model. | `dual_openyam_abc_box_v2/I2RT_YAM_LICENSE`, the same I2RT text. |
+| `models_edgetam` | `LICENSE` | Apache-2.0, for the EdgeTAM checkpoint. | The licence file of the `edgetam_dimos` package. |
 
 ### Mersus Office
 

@@ -233,7 +233,21 @@ stage_data() {
   while read -r archive; do
     tar -xzf "$archive" -C "$APPDIR/opt/data" --warning=no-unknown-keyword
   done <<<"$archives"
+  add_data_notices
   /usr/bin/du -sh "$APPDIR/opt/data"
+}
+
+# Licence files for the archives that hold none. THIRD_PARTY.md lists them.
+add_data_notices() {
+  local data="$APPDIR/opt/data"
+  cp "$HERE/notices/groot.LICENSE" "$data/groot/LICENSE"
+  echo 'Licensed by NVIDIA Corporation under the NVIDIA Open Model License' > "$data/groot/Notice.txt"
+  cp "$HERE/notices/piper.LICENSE" "$data/piper/LICENSE"
+  cp "$data/go2_sim/unitree_go2/LICENSE" "$data/g1_urdf/LICENSE"
+  cp "$data/xarm7/LICENSE" "$data/xarm6/LICENSE"
+  cp "$data/dual_openyam_abc_box_v2/I2RT_YAM_LICENSE" "$data/yam_description/i2rt/LICENSE"
+  cp /usr/share/common-licenses/Apache-2.0 "$data/yam_description/LICENSE"
+  cp "$(site_packages)"/edgetam_dimos-*.dist-info/licenses/LICENSE "$data/models_edgetam/LICENSE"
 }
 
 # A Hugging Face cache with the models of models.tsv, each at its pinned commit.
@@ -283,19 +297,11 @@ print(GitAssetCache(sys.argv[1]).resolve(sys.argv[2], sys.argv[3]))' "$APPDIR/op
 
 stage_licences() {
   log "licences: attribution and the tables of what the image redistributes"
-  local package data="$APPDIR/opt/data"
+  local package
   rm -rf "$APPDIR/licences"
   mkdir -p "$APPDIR/licences"
   cp "$REPO/LICENSE" "$HERE/THIRD_PARTY.md" "$HERE"/{data,models,robot_descriptions}.tsv \
     "$OUT"/{native,system}-libraries.tsv "$APPDIR/licences/"
-  cp "$HERE/notices/groot.LICENSE" "$data/groot/LICENSE"
-  echo 'Licensed by NVIDIA Corporation under the NVIDIA Open Model License' > "$data/groot/Notice.txt"
-  cp "$HERE/notices/piper.LICENSE" "$data/piper/LICENSE"
-  cp "$data/go2_sim/unitree_go2/LICENSE" "$data/g1_urdf/LICENSE"
-  cp "$data/xarm7/LICENSE" "$data/xarm6/LICENSE"
-  cp "$data/dual_openyam_abc_box_v2/I2RT_YAM_LICENSE" "$data/yam_description/i2rt/LICENSE"
-  cp /usr/share/common-licenses/Apache-2.0 "$data/yam_description/LICENSE"
-  cp "$(site_packages)"/edgetam_dimos-*.dist-info/licenses/LICENSE "$data/models_edgetam/LICENSE"
   cut -f2 "$OUT/system-libraries.tsv" | sort -u | while read -r package; do
     cp "/usr/share/doc/$package/copyright" "$APPDIR/licences/$package.copyright"
   done

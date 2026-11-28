@@ -131,8 +131,8 @@ Check a copy with `sha256sum -c dimos-<version>-<arch>.AppImage.sha256`.
 | `deps` | Installs the locked packages, then the wheels. Of `onnxruntime` and `onnxruntime-gpu` only the GPU one. |
 | `relay` | Fills the Deno module cache of the relay. |
 | `native` | Builds the native modules with Nix and copies them out of the Nix store. |
-| `syslibs` | Copies PortAudio, TurboJPEG and quadmath from the build machine. |
-| `data` | Pulls the LFS archives of `data.tsv`, checks the list, unpacks them. |
+| `syslibs` | Copies PortAudio, TurboJPEG and quadmath from the build machine. Links Open3D's TBB, so Numba finds it. |
+| `data` | Pulls the LFS archives of `data.tsv`, checks the list, unpacks them. Adds a licence file where an archive has none. |
 | `models` | Downloads the models of `models.tsv` at their pinned commits. |
 | `robots` | Clones the robot descriptions of `robot_descriptions.tsv`. |
 | `licences` | Writes the `licences` folder and prints the packages to review. |
