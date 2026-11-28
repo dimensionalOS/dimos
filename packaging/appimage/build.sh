@@ -108,7 +108,7 @@ stage_wheel() {
   # Found the same way as bin/pyo3-extensions, with its own target folder per module.
   "$PY" "$REPO/bin/pyo3-extensions" --list | while read -r manifest module; do
     MATURIN_PEP517_ARGS="--target-dir $CACHE/pyo3/$module" \
-      uv build --wheel --python "$PY" --out-dir "$WHEELS" "$REPO/$(dirname "$manifest")"
+      uv build --wheel --python "$PY" --out-dir "$WHEELS" "$REPO/$(dirname "$manifest")" < /dev/null
   done
   ls "$WHEELS"
 }
@@ -307,12 +307,12 @@ stage_check() {
   if grep -rIl -e "$OUT" -e "$REPO" "$APPDIR/opt/python/bin" "$site"/*.pth; then
     die "the files above hold a build path"
   fi
-  found="$(grep -l '^onnxruntime/__init__.py,' "$site"/*.dist-info/RECORD)"
-  [[ "$(wc -l <<<"$found")" == 1 ]] || die "site-packages/onnxruntime needs one owner, got: $found"
+  found="$(grep -l '^onnxruntime/__init__.py,' "$site"/*.dist-info/RECORD || true)"
+  [[ "$(grep -c . <<<"$found")" == 1 ]] || die "site-packages/onnxruntime needs one owner, got: $found"
   found="$(find "$APPDIR" \( -path "$site/ultralytics*" -o -iname 'yolo*.pt' -o -iname 'fastsam*.pt' -o -iname 'mobileclip*' \) -print -quit)"
   [[ -z "$found" ]] || die "Ultralytics is in the image: $found"
   found="$(find "$APPDIR" -type f -name 'libcublasLt.so*')"
-  [[ "$(wc -l <<<"$found")" == 1 ]] || die "expected one libcublasLt, got: $found"
+  [[ "$(grep -c . <<<"$found")" == 1 ]] || die "expected one libcublasLt, got: $found"
   found="$(find "$APPDIR" -type f -size -1024c -exec grep -lI -m1 '^version https://git-lfs.github.com/spec/' {} +)" || true
   [[ -z "$found" ]] || die "LFS pointers instead of files: $found"
   # Ubuntu 26.04 with the documented packages and no network after the install.
