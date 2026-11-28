@@ -305,6 +305,7 @@ class WorldMirror:
 
 
 async def _sleep_until(due: float) -> None:
-    """Until wall time ``due``, in short sleeps: macOS lets a background process's sleep overrun by several times its length."""
+    """Until wall time ``due``, in short sleeps (macOS lets a background process's sleep overrun by several times its length), yielding to the loop at least once so a loop that is behind never starves the loop's other tasks."""
+    await asyncio.sleep(0)
     while (remaining := due - time.time()) > 0:
         await asyncio.sleep(min(max(remaining / 8, 0.0005), 0.5))
