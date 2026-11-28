@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""A simulated Livox Mid-360: the real Mid360 module's lidar and imu streams, cast and read from the simulated world."""
 
 import asyncio
 from collections.abc import Coroutine
@@ -31,12 +32,15 @@ from dimos.sim2.view_sensor import ViewSensor, imu_message
 from dimos.simulation.sensors.lidar import OcclusionMap, SimLidar
 from dimos.simulation.sensors.mid360.lidar import sim_mid360
 from dimos.simulation.sensors.mid360.pattern import POINT_RATE
+from dimos.spec import perception
 from dimos.utils.data import get_data
 
 
 class LivoxSimConfig(SimSensorConfig):
     usd: UsdModel = UsdModel.from_file(Path(__file__).parent / "assets" / "mid360.usda")
     rate_hz: float = 10.0
+    # Seconds a cloud may reach its stream after the world time it was cast at (its cast included); a later one is dropped with a warning. None is one scan period.
+    stamp_tolerance: float | None = None
     imu_rate_hz: float = 200.0
     # stamp_tolerance for its IMU; None is one IMU sample period.
     imu_stamp_tolerance: float | None = None
@@ -45,7 +49,9 @@ class LivoxSimConfig(SimSensorConfig):
     seed: int = 0
 
 
-class LivoxSim(ViewSensor):
+class LivoxSim(ViewSensor, perception.Lidar, perception.IMU):
+    """A Mid-360 on its mount, sending what the real Mid360 module sends: a cloud each scan and its IMU, each stamped with the world time it read."""
+
     config: LivoxSimConfig
     lidar: Out[PointCloud2]
     imu: Out[Imu]

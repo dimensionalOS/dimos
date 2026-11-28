@@ -18,6 +18,7 @@ import asyncio
 from collections.abc import AsyncIterator, Iterator, Sequence
 import math
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -88,10 +89,15 @@ class _View:
 
 
 def _run(
-    sensor: Any, loop: str, stream: str, monkeypatch: pytest.MonkeyPatch, opening: float = 0.0
+    sensor: Any,
+    loop: str,
+    stream: str,
+    monkeypatch: pytest.MonkeyPatch,
+    opening: float = 0.0,
+    world: _World | None = None,
 ) -> dict[str, Any]:
-    """Run ``sensor``'s ``loop`` in a _World, its view taking ``opening`` sim seconds to open."""
-    world = _World()
+    """Run ``sensor``'s ``loop`` in ``world`` (a new _World unless given), its view taking ``opening`` sim seconds to open."""
+    world = world or _World()
     view = _View(world)
     published: list[Any] = []
     sensor._world = world
@@ -113,6 +119,28 @@ def livox() -> Iterator[Any]:
     sensor = LivoxSim(instance_name="left/livox", **ANY_STAMP)
     yield sensor
     sensor.stop()
+
+
+@pytest.mark.self_hosted  # the Mid-360 scan pattern is Git LFS data
+@pytest.mark.parametrize(("stamp_tolerance", "sent"), [(0.5, 0), (2.0, TICKS - 1)])
+def test_a_livox_cloud_cast_slower_than_its_stamp_tolerance_is_dropped_and_warned_once(
+    stamp_tolerance: float, sent: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dimos.sim2 import sensor
+    from dimos.sim2.livox import LivoxSim
+
+    livox = LivoxSim(instance_name="left/livox", stamp_tolerance=stamp_tolerance)
+    warned: list[str] = []
+    monkeypatch.setattr(sensor.logger, "warning", warned.append)
+    world_clock = _World()
+    # Wall time is the world's own time, which a cast takes a second of.
+    monkeypatch.setattr(sensor, "time", SimpleNamespace(time=lambda: world_clock.time))
+    try:
+        run = _run(livox, "_scan", "lidar", monkeypatch, world=world_clock)
+    finally:
+        livox.stop()
+    assert len(run["published"]) == sent
+    assert len(warned) == (1 if sent == 0 else 0)
 
 
 @pytest.fixture

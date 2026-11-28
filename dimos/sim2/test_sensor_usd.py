@@ -13,28 +13,27 @@
 # limitations under the License.
 
 
-import math
-from typing import Any
+from typing import Any, get_origin, get_type_hints
 
 import pytest
 
+from dimos.core.hardware_module import HardwareModule
+from dimos.core.stream import In, Out
 from dimos.robot.assets.usd_utils.frames import usd_frame_names
 
 pytest.importorskip("pxr")
 
 _SENSORS = [
-    ("camera", {"left/sim_camera/camera_link"}),
     ("imu", {"left/sim_imu/imu_link"}),
     ("livox", {"left/mid360/lidar_link", "left/mid360/lidar_link/imu_link"}),
 ]
 
 
 def _sensor(kind: str) -> Any:
-    from dimos.sim2.camera import SimCamera
     from dimos.sim2.imu import SimImu
     from dimos.sim2.livox import LivoxSim
 
-    sensor = {"camera": SimCamera, "imu": SimImu, "livox": LivoxSim}[kind]
+    sensor = {"imu": SimImu, "livox": LivoxSim}[kind]
     return sensor(instance_name=f"left/{kind}")
 
 
@@ -58,41 +57,20 @@ def test_a_namespaced_lidar_puts_its_namespace_on_its_imu_frame_too() -> None:
         lidar.stop()
 
 
-def test_a_camera_usd_says_what_it_can_see_from_its_frame() -> None:
-    from pxr import Sdf, Usd, UsdGeom
-
-    from dimos.sim2.sensor_usd import camera_usd
-
-    layer = Sdf.Layer.CreateAnonymous(".usda")
-    assert layer.ImportFromString(
-        camera_usd("camera_link", name="camera", fovy=90.0, aspect=1.0).usd
-    )
-    stage = Usd.Stage.Open(layer)
-    optics = [prim for prim in stage.Traverse() if prim.IsA(UsdGeom.Camera)]
-    assert len(optics) == 1, "one camera, under the frame it looks from"
-    lens = UsdGeom.Camera(optics[0])
-    aperture = lens.GetVerticalApertureAttr().Get()
-    focal = lens.GetFocalLengthAttr().Get()
-    assert math.degrees(2 * math.atan(aperture / 2 / focal)) == pytest.approx(90.0)
-    forward = lens.ComputeLocalToWorldTransform(Usd.TimeCode.Default()).TransformDir((0, 0, -1))
-    assert tuple(round(axis, 6) for axis in forward) == (0.0, 0.0, 1.0)
+def _streams(module: type, *, direction: type) -> dict[str, type]:
+    hints = get_type_hints(module)
+    return {name: hint.__args__[0] for name, hint in hints.items() if get_origin(hint) is direction}
 
 
-def test_a_camera_usd_is_as_wide_as_the_images_its_camera_renders() -> None:
-    from pxr import Sdf, Usd, UsdGeom
+def test_a_livox_is_hardware_sending_what_a_real_mid360_sends() -> None:
+    from dimos.hardware.sensors.lidar.livox.module import Mid360
+    from dimos.sim2.livox import LivoxSim
+    from dimos.sim2.sensor import SimSensor
 
-    camera = _sensor("camera")
-    try:
-        usd, config = camera.get_usd(), camera.config
-    finally:
-        camera.stop()
-    layer = Sdf.Layer.CreateAnonymous(".usda")
-    assert layer.ImportFromString(usd)
-    stage = Usd.Stage.Open(layer)
-    lens = UsdGeom.Camera(next(p for p in stage.Traverse() if p.IsA(UsdGeom.Camera)))
-    focal = lens.GetFocalLengthAttr().Get()
-    rendered = 2 * math.atan(math.tan(math.radians(config.fovy) / 2) * config.width / config.height)
-    assert config.width != config.height
-    assert 2 * math.atan(lens.GetHorizontalApertureAttr().Get() / 2 / focal) == pytest.approx(
-        rendered
-    )
+    assert issubclass(LivoxSim, HardwareModule)
+    assert _streams(LivoxSim, direction=Out) == {
+        **_streams(SimSensor, direction=Out),
+        **_streams(Mid360, direction=Out),
+    }
+    # It reads the world where the real one reads its network.
+    assert _streams(LivoxSim, direction=In) == _streams(SimSensor, direction=In)
