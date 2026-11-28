@@ -1,54 +1,40 @@
 # Installing DDS Transport Libs on Ubuntu
 
-The `dds` extra provides DDS (Data Distribution Service) transport support via [Eclipse Cyclone DDS](https://cyclonedds.io/docs/cyclonedds-python/latest/). The Python package builds C extensions against the CycloneDDS C library, so the C library must be installed before the Python package.
-
-## Recommended: nix-provided cyclonedds
-
-No `sudo`, no system pollution. Requires [Nix](/docs/installation/nix.md).
+The `dds` extra provides DDS (Data Distribution Service) transport support via [Eclipse Cyclone DDS](https://cyclonedds.io/docs/cyclonedds-python/latest/). On x86_64 Linux, macOS and Windows it installs from wheels that bundle the CycloneDDS C library, so nothing else is needed there:
 
 ```bash
-nix build nixpkgs#cyclonedds        # creates ./result symlink (GC root)
-export CYCLONEDDS_HOME=$PWD/result
-export LD_LIBRARY_PATH="$CYCLONEDDS_HOME/lib:$LD_LIBRARY_PATH"
-uv pip install -e '.[dds]'
+uv sync --extra dds --inexact
 ```
 
-`LD_LIBRARY_PATH` must stay set at runtime. Persist with one of:
+## Linux arm64
+
+There are no arm64 wheels, so the Python package builds C extensions against the CycloneDDS C library, and it needs the same release as the locked `cyclonedds` (11.1.0). Ubuntu's apt package (0.10) and nixpkgs (11.0.1) don't build with it, so build the C library from source:
+
+```bash
+sudo apt install -y build-essential cmake git
+git clone --depth 1 -b 11.1.0 https://github.com/eclipse-cyclonedds/cyclonedds ~/cyclonedds-src
+cmake -S ~/cyclonedds-src -B ~/cyclonedds-src/build -DCMAKE_INSTALL_PREFIX="$HOME/cyclonedds-11" \
+    -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -DENABLE_SSL=OFF -DENABLE_SECURITY=OFF
+cmake --build ~/cyclonedds-src/build --target install -j"$(nproc)"
+export CYCLONEDDS_HOME="$HOME/cyclonedds-11"
+export LD_LIBRARY_PATH="$CYCLONEDDS_HOME/lib:${LD_LIBRARY_PATH:-}"
+uv sync --extra dds --inexact
+```
+
+`CYCLONEDDS_HOME` and `LD_LIBRARY_PATH` must stay set at runtime. Persist with one of:
 
 ```bash
 # Per-venv (auto-set on `source .venv/bin/activate`)
-cat >> .venv/bin/activate <<EOF
-export CYCLONEDDS_HOME=$(readlink -f ./result)
-export LD_LIBRARY_PATH="\$CYCLONEDDS_HOME/lib:\${LD_LIBRARY_PATH:-}"
+cat >> .venv/bin/activate <<'EOF'
+export CYCLONEDDS_HOME="$HOME/cyclonedds-11"
+export LD_LIBRARY_PATH="$CYCLONEDDS_HOME/lib:${LD_LIBRARY_PATH:-}"
 EOF
 ```
 
 ```bash
 # Global (every shell)
-cat >> ~/.bashrc <<EOF
-export CYCLONEDDS_HOME=$(readlink -f ./result)
-export LD_LIBRARY_PATH="\$CYCLONEDDS_HOME/lib:\${LD_LIBRARY_PATH:-}"
+cat >> ~/.bashrc <<'EOF'
+export CYCLONEDDS_HOME="$HOME/cyclonedds-11"
+export LD_LIBRARY_PATH="$CYCLONEDDS_HOME/lib:${LD_LIBRARY_PATH:-}"
 EOF
-```
-
-## Alternative: Ubuntu apt + symlink shim
-
-```bash
-# Install the CycloneDDS development library
-sudo apt install cyclonedds-dev
-
-# Create a compatibility directory structure
-# (required because Ubuntu's multiarch layout doesn't match the expected CMake layout)
-sudo mkdir -p /opt/cyclonedds/{lib,bin,include}
-sudo ln -sf /usr/lib/x86_64-linux-gnu/libddsc.so* /opt/cyclonedds/lib/
-sudo ln -sf /usr/lib/x86_64-linux-gnu/libcycloneddsidl.so* /opt/cyclonedds/lib/
-sudo ln -sf /usr/bin/idlc /opt/cyclonedds/bin/
-sudo ln -sf /usr/bin/ddsperf /opt/cyclonedds/bin/
-sudo ln -sf /usr/include/dds /opt/cyclonedds/include/
-```
-
-To install all extras including DDS:
-
-```bash
-CYCLONEDDS_HOME=/opt/cyclonedds uv sync --extra dds --inexact
 ```

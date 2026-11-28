@@ -285,8 +285,9 @@ unitree = [
 
 unitree-dds = [
     "dimos[unitree]",
-    "unitree-sdk2py-dimos>=1.0.2",
-    "cyclonedds>=0.10.5",
+    # 1.0.4 is the first release whose messages match the robots' under cyclonedds 11.
+    "unitree-sdk2py-dimos>=1.0.4",
+    "cyclonedds>=11.1.0",
     "mcap>=1.2.0",  # decode Go2 DDS mcap recordings (go2 dds store)
 ]
 
@@ -363,7 +364,7 @@ drone = [
 ]
 
 dds = [
-    "cyclonedds>=0.10.5",
+    "cyclonedds>=11.1.0",
 ]
 
 webrtc = [
@@ -478,6 +479,9 @@ tests = [
     "python-can>=4",
     "unitree-webrtc-connect>=2.1.2",
     "viser[urdf]>=1.0.29; sys_platform != 'linux' or platform_machine != 'aarch64'",
+    # DDS tests. Not on Linux arm64: no wheels there, so it needs CycloneDDS built from
+    # source (docs/usage/transports/dds.md).
+    "cyclonedds>=11.1.0; sys_platform != 'linux' or platform_machine != 'aarch64'",
 
     {include-group = "project-deps"},
 ]
@@ -523,9 +527,7 @@ lint = [
 tests-self-hosted = [
     {include-group = "tests"},
     "dimos[manipulation,misc,unitree]",
-    # go2 dds store tests decode mcap (pure-Python). The full `unitree-dds` extra
-    # pulls `cyclonedds`, whose wheel needs a CycloneDDS C lib the ros-dev image
-    # doesn't expose to the build — and these tests never open a live DDS link.
+    # go2 dds store tests decode mcap (pure-Python).
     "mcap>=1.2.0",
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
@@ -550,7 +552,7 @@ docs = {requires-python = ">=3.11"}
 required-version = ">=0.9.25"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false, mjcf-to-urdf = false, cel-expr-python = false }
+exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false, mjcf-to-urdf = false, unitree-sdk2py-dimos = false }
 constraint-dependencies = [
     # TODO(PY311): drop this fork. onnxruntime(-gpu) 1.24 dropped cp310
     # wheels, so 3.10 environments resolve 1.23.x (matching what a 3.10

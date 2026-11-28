@@ -50,10 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 
 #### Notes
 
-For DDS dependencies, follow the [DDS setup guide](/docs/usage/transports/dds.md). The installer does not provision every robot SDK. If you're using the Unitree SDK directly, set:
-```bash
-export CYCLONEDDS_HOME="$HOME/cyclonedds/install"
-```
+For DDS dependencies, follow the [DDS setup guide](/docs/usage/transports/dds.md). The installer does not provision every robot SDK. The G1 computer is Linux arm64, so the guide has you build CycloneDDS 11.1.0 and point `CYCLONEDDS_HOME` at it. The 0.10 build in `~/cyclonedds/install` that Unitree's own tools use doesn't work with dimos.
 
 ## 3. Get the G1 in Sport Mode
 

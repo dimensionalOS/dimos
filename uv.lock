@@ -46,7 +46,7 @@ eclipse-zenoh = false
 can-motor-control = false
 md-babel-py = false
 dim-odom = false
-cel-expr-python = false
+unitree-sdk2py-dimos = false
 mjcf-to-urdf = false
 
 [manifest]
@@ -1584,18 +1584,25 @@ wheels = [
 
 [[package]]
 name = "cyclonedds"
-version = "0.10.5"
+version = "11.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "rich-click" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/91/cf/28eb9c823dfc245c540f5286d71b44aeee2a51021fc85b25bb9562be78cc/cyclonedds-0.10.5.tar.gz", hash = "sha256:63fc4d6fdb2fd35181c40f4e90757149f2def5f570ef19fb71edc4f568755f8a", size = 156919, upload-time = "2024-06-05T18:50:42.999Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8a/01/0037ab0b885e97fd13950a78807a98d7628b6b9ae4eae6300b83a176de80/cyclonedds-11.1.0.tar.gz", hash = "sha256:28dc2b38e222e7a162506c8d58accf2c32cdeb23283da9de60200ac938cf0c7d", size = 194976, upload-time = "2026-11-09T15:13:50.97Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cb/c3/69ba063a51c06ba24fa4fd463157d4cc2bc54ab1a2ab8ebdf88e8f3dde25/cyclonedds-0.10.5-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:03644e406d0c1cac45887b378d35054a0033c48f2e29d9aab3bfc1ee6c4b9aa6", size = 864591, upload-time = "2024-06-05T18:50:46.563Z" },
-    { url = "https://files.pythonhosted.org/packages/cf/98/08508aff65c87bcef473e23a51506a100fb35bf70450c40eb227a576a018/cyclonedds-0.10.5-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:4a0d9fa8747827dc9bd678d73ed6f12b0ab9853b2cb7ebadbf3d8d89625f0e34", size = 799626, upload-time = "2024-06-05T18:50:48.17Z" },
-    { url = "https://files.pythonhosted.org/packages/99/0d/02da52ffd27b92b85b64997cc449106479456648da17aa44a09124e8ebe5/cyclonedds-0.10.5-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:861d2ffd9513126d6a62ad9f842e85122518a7db1fb0a11d6e4fa86e3cacf61c", size = 6631487, upload-time = "2024-06-05T18:50:50.747Z" },
-    { url = "https://files.pythonhosted.org/packages/e4/2b/d8fff5008c2c62882c2ffc185bdb0d4d1c9caf7bc5aaaef77bd9739bdc12/cyclonedds-0.10.5-cp310-cp310-musllinux_1_1_x86_64.whl", hash = "sha256:8276b2bc347540e3ca892adf976421dbce4c6d2672934a32409db121a1431b86", size = 6653044, upload-time = "2024-06-05T18:50:52.786Z" },
-    { url = "https://files.pythonhosted.org/packages/07/ab/acaa119f552019bdb2b06478553cf712967672f5970be80ecc9b4ca805f4/cyclonedds-0.10.5-cp310-cp310-win_amd64.whl", hash = "sha256:103a681e9490229f12c151a125e00c4db8fdb344c8e12e35ee515cd9d5d1ecd7", size = 1200672, upload-time = "2024-06-05T18:50:54.303Z" },
+    { url = "https://files.pythonhosted.org/packages/68/81/133e42b8d7182cdf320675323be188cfb25c89913b70c7232806096dc8b6/cyclonedds-11.1.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:a9ec7df04696db38e0003f095892e4e80d32cc71d8e422d070f4b93bd308c1ec", size = 990503, upload-time = "2026-11-09T15:13:53.767Z" },
+    { url = "https://files.pythonhosted.org/packages/51/99/4c7a6a8c9d9aa986a1c26da644f19bddab26b6ff78739ac167ea6b9be83a/cyclonedds-11.1.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:acc3153ae5830b11cb7d5d398420bff9ff24d74d648719020425ff9bf2e565e3", size = 915494, upload-time = "2026-11-09T15:13:55.298Z" },
+    { url = "https://files.pythonhosted.org/packages/16/33/0e1e1fc80da75021dd3cc4b45ae2f027ac0a445da040becbe3dd4bdd3b1e/cyclonedds-11.1.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:71d6159054433c8d7021f0915ab0a7d5921751d27c156e24b6b79ab605663633", size = 8332490, upload-time = "2026-11-09T15:13:57.437Z" },
+    { url = "https://files.pythonhosted.org/packages/74/3b/27f64743b75aaf935774c24d0cea5f57c45b5cf326557e3d977e5f9fb252/cyclonedds-11.1.0-cp310-cp310-win_amd64.whl", hash = "sha256:3a91edaac15ab753a0456df3f8904e27b0621acf5b0763de63d0632dc0ff876a", size = 1459549, upload-time = "2026-11-09T15:13:59.067Z" },
+    { url = "https://files.pythonhosted.org/packages/99/79/3b2f2f980b2a9d27c4f56a12a8087a963ab52fe46addda6ed0ebf657a3b0/cyclonedds-11.1.0-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:ffc6679a6dff3e7045bcecf53e0edd2c09054594b9357d174da01db055ed83b4", size = 990529, upload-time = "2026-11-09T15:14:00.656Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/fb/04592533b4a4fa4c17fd3e1300dc74f5bf62ee710ad4a117c8f5640fcd83/cyclonedds-11.1.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:9cc591178f7f889ec3100699879d9359bf5540cd9884f9ce39d13f8c2bd0fcdc", size = 915511, upload-time = "2026-11-09T15:14:01.977Z" },
+    { url = "https://files.pythonhosted.org/packages/f4/ab/f2d6281e8d5d816fe8db46a97f7791d7c5667ff8f812de2a6d8739440f17/cyclonedds-11.1.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:616b1fb1cfc4bd7d5a7f5e884c20afe8a596ec38c8f5a097337d26e7e0f89d21", size = 8333416, upload-time = "2026-11-09T15:14:04.06Z" },
+    { url = "https://files.pythonhosted.org/packages/93/2a/cba65794959881324423f7ae610523fcd23ecb57f937b261c465ad9ac4fc/cyclonedds-11.1.0-cp311-cp311-win_amd64.whl", hash = "sha256:d514ca3194ba0e90e5ae6cbd32059a0493ff19d899e1aea0717678c51d7e6ec0", size = 1459550, upload-time = "2026-11-09T15:14:05.637Z" },
+    { url = "https://files.pythonhosted.org/packages/15/c3/4c9a890e8f89272adc3b0468495301e768244e8735b993a12539a73ed901/cyclonedds-11.1.0-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:53a86d7f3ea44cc7f81ec3068d7f66b5e6c6c25c0eeccff4d96154122befe460", size = 989873, upload-time = "2026-11-09T15:14:07.002Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/79/f604bc25653694baa79f3f90c1220b39cef13a5048c1533fb9331e58da53/cyclonedds-11.1.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:0333dd66e344cfdf483f776fb0ed0520ced61ddd4a6049acc3a61573812d1cba", size = 915407, upload-time = "2026-11-09T15:14:08.33Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/1e/352c939e1e2e86494a1f79dc378c224034b84f6f943716a3bc156b238783/cyclonedds-11.1.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7651d6db1ce31e547894dc678fbb30dd3f0ba1131cc845499b0181a38873c401", size = 8335220, upload-time = "2026-11-09T15:14:10.386Z" },
+    { url = "https://files.pythonhosted.org/packages/90/b0/fb372da2270ebf98356651b8398c7e390c7b9fa7688155434e9afc18c511/cyclonedds-11.1.0-cp312-cp312-win_amd64.whl", hash = "sha256:553b579ba1f2c9dafe2d9b16d721de7cc7110b2e915bd03d3f304739288324be", size = 1459679, upload-time = "2026-11-09T15:14:12.703Z" },
 ]
 
 [[package]]
@@ -2309,6 +2316,7 @@ tests = [
     { name = "click" },
     { name = "coacd" },
     { name = "coverage" },
+    { name = "cyclonedds", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
     { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "mapping", "visualization", "web", "webrtc"] },
     { name = "dimos-cdrgen" },
     { name = "einops" },
@@ -2365,6 +2373,7 @@ tests-self-hosted = [
     { name = "click" },
     { name = "coacd" },
     { name = "coverage" },
+    { name = "cyclonedds", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
     { name = "dim-odom" },
     { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "manipulation", "mapping", "misc", "unitree", "visualization", "web", "webrtc"] },
     { name = "dimos-cdrgen" },
@@ -2438,8 +2447,8 @@ requires-dist = [
     { name = "cmeel-tinyxml2", specifier = ">=11,<12" },
     { name = "coacd", marker = "extra == 'scene'", specifier = ">=1.0.0" },
     { name = "cryptography", specifier = ">=46.0.5" },
-    { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
-    { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
+    { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=11.1.0" },
+    { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=11.1.0" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["apriltag", "cuda", "drone", "manipulation", "misc", "scene", "unitree", "webrtc"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
@@ -2559,7 +2568,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.19.2,<1" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'", specifier = ">=4.7" },
     { name = "ultralytics", marker = "extra == 'perception'", specifier = ">=8.3.70" },
-    { name = "unitree-sdk2py-dimos", marker = "extra == 'unitree-dds'", specifier = ">=1.0.2" },
+    { name = "unitree-sdk2py-dimos", marker = "extra == 'unitree-dds'", specifier = ">=1.0.4" },
     { name = "unitree-webrtc-connect", marker = "extra == 'unitree'", specifier = ">=2.1.2" },
     { name = "usd-core", marker = "extra == 'scene'", specifier = ">=23.11" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.34.0" },
@@ -2662,6 +2671,7 @@ tests = [
     { name = "click", specifier = ">=8.3" },
     { name = "coacd", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
+    { name = "cyclonedds", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=11.1.0" },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
     { name = "dimos-cdrgen", specifier = "==0.1.0" },
@@ -2719,6 +2729,7 @@ tests-self-hosted = [
     { name = "click", specifier = ">=8.3" },
     { name = "coacd", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
+    { name = "cyclonedds", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=11.1.0" },
     { name = "dim-odom", specifier = ">=0.4.1" },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["manipulation", "misc", "unitree"] },
@@ -10237,7 +10248,7 @@ wheels = [
 
 [[package]]
 name = "unitree-sdk2py-dimos"
-version = "1.0.3"
+version = "1.0.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cyclonedds" },
@@ -10245,9 +10256,9 @@ dependencies = [
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "opencv-python", marker = "sys_platform == 'never'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/93/d2/8c927709a432e6003a7ffdb434c2a3570c1b4ed97c9a0b7b85313e32f6bb/unitree_sdk2py_dimos-1.0.3.tar.gz", hash = "sha256:d0076b9501849a8f144dd076ffb3894c5c804c87cdad7521095c2bc893049438", size = 48758, upload-time = "2026-03-03T21:19:32.8Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/56/86/d2f6f898c249df3c5f41154feaeeb032cb6d74eee0a0038f43f43be5108d/unitree_sdk2py_dimos-1.0.4.tar.gz", hash = "sha256:2b6b474c79a59ffbb68d97153f7910975d676a3935fe08c66a4d359744d9732a", size = 49753, upload-time = "2026-11-17T19:12:02.689Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/39/69/76b879edbf5eab1cb200bf818b87a5943effe441722429ab940ea38a6887/unitree_sdk2py_dimos-1.0.3-py3-none-any.whl", hash = "sha256:8057cad5de5877757bc586b2ba5ddbe84522ce4c8c3d624464ef975cafa5daec", size = 110245, upload-time = "2026-03-03T21:19:31.692Z" },
+    { url = "https://files.pythonhosted.org/packages/92/f1/048406b6ce80efbe0be9d015be34f8963c3e51a17389ae09a1c00ed3af3d/unitree_sdk2py_dimos-1.0.4-py3-none-any.whl", hash = "sha256:21f52cf2062f0d2bf44e98d544f869839ad5df155c61a56c7b42158a574a7b89", size = 111158, upload-time = "2026-11-17T19:12:01.551Z" },
 ]
 
 [[package]]
