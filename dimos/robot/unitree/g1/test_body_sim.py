@@ -25,17 +25,27 @@ pytest.importorskip("mujoco")
 # Its USD names its Git LFS meshes, over the hosted runner's pull cap.
 pytestmark = pytest.mark.self_hosted
 
-from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import G1_GROOT_KD, G1_GROOT_KP
+from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
+    G1_GROOT_KD,
+    G1_GROOT_KP,
+)
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import UsdModel
+from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
 from dimos.robot.unitree.g1.body_sim import G1_BODY, G1_IMU, G1_ODOM_TF, G1BodySim
 from dimos.robot.unitree.g1.config import G1_JOINT_NAMES
 from dimos.sim2.body import is_site
 from dimos.sim2.mujoco.backend import MujocoBackend
 from dimos.sim2.mujoco.drives import usd_drives
 from dimos.sim2.odom_tf import OdomTf
-from dimos.sim2.sim import JointCommand, WorldWriter, compose_usds, fetched_usd, read_actions
+from dimos.sim2.sim import (
+    JointCommand,
+    WorldWriter,
+    compose_usds,
+    fetched_usd,
+    read_actions,
+)
 
 SCENE = Path(__file__).parents[3] / "sim2" / "mujoco" / "assets" / "scene.usda"
 MOUNT = "scene/g1"
@@ -63,19 +73,13 @@ def _providing_hardware_files(module: Any) -> str:
     return str(module.namespace)
 
 
-def test_its_usd_drives_every_joint_the_controller_commands(g1: G1BodySim) -> None:
+def test_its_usd_drives_every_joint_and_its_mounts_and_pelvis_imu_are_isaac_sim_sites(
+    g1: G1BodySim,
+) -> None:
     usd = g1.config.usd
     assert set(usd_drives(usd.usd, usd.asset_root)) == {
         G1BodySim.usd_joint(name) for name in G1_JOINT_NAMES
     }
-
-
-def test_its_lidar_and_camera_mounts_and_its_pelvis_imu_are_isaac_sim_sites(
-    g1: G1BodySim,
-) -> None:
-    from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
-
-    usd = g1.config.usd
     pxr = load_pxr()
     stage = pxr.Usd.Stage.Open(layer_from(pxr, usd.usd, "a robot", usd.asset_root))
     for frame in [*G1BodySim.mounts, G1_IMU]:
@@ -83,9 +87,27 @@ def test_its_lidar_and_camera_mounts_and_its_pelvis_imu_are_isaac_sim_sites(
     assert set(G1BodySim.mounts) <= usd.frame_names()
     assert g1.frame.lidar == f"{MOUNT}/lidar"
     assert g1.frame.camera == f"{MOUNT}/camera"
+    # The IMU site sits below the pelvis origin, unturned, as the vendored MJCF puts it.
+    imu_in_body = g1._imu_in_body
+    assert np.allclose(imu_in_body[:3, :3], np.eye(3))
+    assert imu_in_body[2, 3] < 0
+    assert np.linalg.norm(imu_in_body[:3, 3]) < 0.2
 
 
-def test_odom_is_from_the_mount_so_the_pelvis_stands_above_it(g1: G1BodySim) -> None:
+def test_its_mount_holds_its_odom_and_the_odom_tf_its_body_with_the_pelvis_above_the_mount(
+    g1: G1BodySim,
+) -> None:
+    static = {(t.frame_id, t.child_frame_id) for t in g1.static_transforms()}
+    assert (MOUNT, g1.attach_frame) in static
+    assert not any(child == g1.body_frame for _, child in static), sorted(static)
+    # Point-LIO puts its namespace in front of its frame_id itself.
+    assert g1.attach_frame == f"{MOUNT}/{G1_ODOM_TF['tf_frames_local']['odom']}"
+    odom_tf = OdomTf(instance_name=f"{MOUNT}/OdomTf", **G1_ODOM_TF)
+    try:
+        assert odom_tf.tf_edge_ids == {(g1.attach_frame, g1.body_frame)}
+    finally:
+        odom_tf.stop()
+
     scene = UsdModel.from_file(SCENE).with_frames(
         {"g1": ("scene", MOUNT_XYZ, (0.0, 0.0, MOUNT_YAW))}
     )
@@ -93,10 +115,8 @@ def test_odom_is_from_the_mount_so_the_pelvis_stands_above_it(g1: G1BodySim) -> 
     backend = MujocoBackend(world, [g1.simulated_robot()])
     g1._world.apply(backend.frame())
     base = g1._world.entity(g1.namespace)
-    assert base is not None and base.pose is not None
-    assert base.velocity is not None
+    assert base is not None and base.pose is not None and base.velocity is not None
     odom = g1.odometry(base.pose, base.velocity, 0.0)
-
     odom_pelvis = Transform.from_pose(g1.body_frame, odom.to_pose_stamped()).to_matrix()
     mount = np.eye(4)
     mount[:3, 3] = MOUNT_XYZ
@@ -139,29 +159,3 @@ def test_a_position_command_drives_its_joints_with_groot_s_gains_once_the_world_
             )
         ]
     ]
-
-
-def test_its_mount_holds_its_odom_and_nothing_static_holds_its_body(g1: G1BodySim) -> None:
-    static = {(t.frame_id, t.child_frame_id) for t in g1.static_transforms()}
-
-    assert (MOUNT, g1.attach_frame) in static
-    assert not any(child == g1.body_frame for _, child in static), sorted(static)
-    # Point-LIO puts its namespace in front of its frame_id itself.
-    assert g1.attach_frame == f"{MOUNT}/{G1_ODOM_TF['tf_frames_local']['odom']}"
-
-
-def test_the_odom_tf_beside_it_holds_its_body_in_its_odom(g1: G1BodySim) -> None:
-    odom_tf = OdomTf(instance_name=f"{MOUNT}/OdomTf", **G1_ODOM_TF)
-    try:
-        assert odom_tf.tf_edge_ids == {(g1.attach_frame, g1.body_frame)}
-    finally:
-        odom_tf.stop()
-
-
-def test_the_pelvis_imu_is_where_the_usd_puts_its_site_on_the_pelvis(g1: G1BodySim) -> None:
-    imu_in_body = g1._imu_in_body
-
-    # The site sits below the pelvis origin, unturned, as the vendored MJCF puts it.
-    assert np.allclose(imu_in_body[:3, :3], np.eye(3))
-    assert imu_in_body[2, 3] < 0
-    assert np.linalg.norm(imu_in_body[:3, 3]) < 0.2
