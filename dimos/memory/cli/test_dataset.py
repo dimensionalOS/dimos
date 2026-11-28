@@ -31,8 +31,8 @@ from dimos.memory.cli.dataset import (
     open_dataset,
     open_store,
     resolve_dataset,
+    resolve_db_path,
 )
-from dimos.memory.replay import resolve_db_path
 from dimos.memory.replay_module import dataset_path, stream_types_of
 from dimos.memory.store.mcap import McapStore
 from dimos.msgs.sensor_msgs.Imu import Imu
