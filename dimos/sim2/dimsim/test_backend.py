@@ -26,14 +26,18 @@ pytest.importorskip("pxr")
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
 from dimos.robot.assets.usd_utils.layers import usd_under_namespace
-from dimos.sim2.actions import JointCommand
 from dimos.sim2.dimsim.backend import WORLD_DIR, DimSimBackend
 from dimos.sim2.dimsim.room import ROOM
 from dimos.sim2.dimsim.sim import DimSimSim
 from dimos.sim2.scene import scene_usd
-from dimos.sim2.sim import compose_usds
-from dimos.sim2.spec import ODOM_FRAME, SimulatedRobot
-from dimos.sim2.world_observations import REFUSED, WorldMirror
+from dimos.sim2.sim import (
+    ODOM_FRAME,
+    REFUSED,
+    JointCommand,
+    SimulatedRobot,
+    WorldMirror,
+    compose_usds,
+)
 
 TIMESTEP = 0.02
 # The room's spawn point the bot mounts on, and so the bot's namespace and robot id.

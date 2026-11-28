@@ -29,11 +29,18 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.sim2.actions import Action, CborKeyValueCommand, JointCommand
 from dimos.sim2.dimsim.scene import PURPOSES, is_guide, stage_bodies
 from dimos.sim2.mujoco.names import resolve
-from dimos.sim2.spec import ODOM_FRAME, ROBOT, SimulatedRobot
-from dimos.sim2.world_observations import REFUSED, WorldWriter
+from dimos.sim2.sim import (
+    ODOM_FRAME,
+    REFUSED,
+    ROBOT,
+    Action,
+    CborKeyValueCommand,
+    JointCommand,
+    SimulatedRobot,
+    WorldWriter,
+)
 from dimos.utils.deno import ensure_deno
 
 if TYPE_CHECKING:

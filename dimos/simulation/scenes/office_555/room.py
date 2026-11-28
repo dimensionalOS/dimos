@@ -15,16 +15,14 @@
 
 """Office 555 as a scene: two floors of offices, a workshop, a kitchen and meeting rooms, with spawn points in every room."""
 
-from pathlib import Path
-
 from pydantic import Field
 
 from dimos.robot.assets.model import UsdModel
 from dimos.sim2.scene import SimScene, SimSceneConfig, SpawnMounts, scene_usd
+from dimos.utils.data import LfsPath
 
-# The layer and every mesh it references are Git LFS, so a checkout made with GIT_LFS_SKIP_SMUDGE=1
-# has pointer files here; scene_usd fetches them before anything opens a stage of it.
-SCENE = Path(__file__).parent / "scene.usda"
+# The layer and its meshes are one archive, data/.lfs/office_555_usd.tar.gz, fetched the first time it is read.
+SCENE = LfsPath("office_555_usd/scene.usda")
 
 
 class Office555Config(SimSceneConfig):
