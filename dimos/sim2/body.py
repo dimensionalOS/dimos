@@ -29,10 +29,12 @@ from scipy.spatial.transform import Rotation
 from dimos.core.core import rpc
 from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import UsdModel
@@ -138,7 +140,7 @@ class SimBody(HardwareModule):
     position_command: In[JointState]
     joint_state: Out[JointState]
     imu: Out[Imu]
-    odom: Out[PoseStamped]
+    odom: Out[Odometry]
     world_observations: In[WorldObservations]
     world_actions: Out[WorldAction]
 
@@ -316,27 +318,37 @@ class SimBody(HardwareModule):
         with world.lock:
             names, rows = world.joints(self.namespace)
             base = world.entity(self.namespace)
-            pose = None if base is None else base.pose
-        if pose is None:
+            state = None if base is None else (base.pose, base.velocity)
+        if state is None or state[0] is None or state[1] is None:
             return
         stamp = time.time()
-        self.odom.publish(self.odometry(pose, stamp))
+        self.odom.publish(self.odometry(state[0], state[1], stamp))
         positions = {joint: float(row[0]) for joint, row in zip(names, rows, strict=True)}
         transforms = self.moving_transforms(positions, ts=stamp)
         if transforms:
             self.tfbuffer.publish(*transforms)
 
-    def odometry(self, pose: Sequence[float] | NDArray[np.float64], stamp: float) -> PoseStamped:
-        """Its root link in its odom frame, given its world pose as x, y, z, qx, qy, qz, qw: the mount it started on is odom's origin."""
+    def odometry(
+        self,
+        pose: Sequence[float] | NDArray[np.float64],
+        velocity: Sequence[float] | NDArray[np.float64],
+        stamp: float,
+    ) -> Odometry:
+        """Its root link in its odom frame (the mount it started on is odom's origin) and its twist in its own frame, given its world pose (x, y, z, qx, qy, qz, qw) and velocity (linear then angular, world axes)."""
         here = Transform(
             translation=Vector3(*pose[:3]), rotation=Quaternion(*pose[3:7])
         ).to_matrix()
         if self._mount_inverse is None:
             self._mount_inverse = np.linalg.inv(here @ np.linalg.inv(self._body_on_mount))
         relative = Transform.from_matrix(self._mount_inverse @ here)
-        return PoseStamped(
+        body_from_world = here[:3, :3].T
+        linear, angular = (
+            body_from_world @ np.asarray(part) for part in (velocity[:3], velocity[3:6])
+        )
+        return Odometry(
             ts=stamp,
             frame_id=self.attach_frame,
-            position=relative.translation,
-            orientation=relative.rotation,
+            child_frame_id=self.body_frame,
+            pose=Pose(relative.translation, relative.rotation),
+            twist=Twist(Vector3(*linear), Vector3(*angular)),
         )

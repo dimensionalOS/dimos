@@ -95,9 +95,10 @@ def test_odom_is_from_the_mount_so_the_pelvis_stands_above_it(g1: G1BodySim) -> 
     g1._world.apply(backend.frame())
     base = g1._world.entity(g1.namespace)
     assert base is not None and base.pose is not None
-    odom = g1.odometry(base.pose, 0.0)
+    assert base.velocity is not None
+    odom = g1.odometry(base.pose, base.velocity, 0.0)
 
-    odom_pelvis = Transform.from_pose(g1.body_frame, odom).to_matrix()
+    odom_pelvis = Transform.from_pose(g1.body_frame, odom.to_pose_stamped()).to_matrix()
     mount = np.eye(4)
     mount[:3, 3] = MOUNT_XYZ
     c, s = math.cos(MOUNT_YAW), math.sin(MOUNT_YAW)
@@ -106,7 +107,7 @@ def test_odom_is_from_the_mount_so_the_pelvis_stands_above_it(g1: G1BodySim) -> 
     pelvis = backend.data.xpos[backend.model.body(f"{MOUNT}/{G1_BODY.rpartition('/')[2]}").id]
     # tf: the mount holds odom by identity, so mount @ odom is where the pelvis is.
     assert (mount @ odom_pelvis)[:3, 3] == pytest.approx(pelvis, abs=1e-4)
-    assert odom.position.z == pytest.approx(0.793, abs=1e-4)
+    assert odom.z == pytest.approx(0.793, abs=1e-4)
     assert odom.frame_id == g1.attach_frame
 
 
