@@ -52,7 +52,6 @@ OPENYAM_DESCRIPTION_SOURCE = RobotDescriptionSource(
 OPENYAM_PACKAGE = OPENYAM_DESCRIPTION_SOURCE / "openyam_single"
 OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "openyam_single.urdf"
 OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"openyam_single": OPENYAM_PACKAGE}
-#: One arm and its gripper as bare masses, with arm joints joint1 to joint6.
 OPENYAM_GRAVITY_MODEL = RobotModel.from_file(Path(__file__).parent / "openyam_gravity.urdf")
 #: Joint damping while an operator guides the arm by hand. Stiffness is zero
 #: and gravity is compensated, so the arm floats instead of holding a pose.
