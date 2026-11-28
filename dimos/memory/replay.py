@@ -22,6 +22,7 @@ offset from the first frame, and none is dropped.
 from __future__ import annotations
 
 from collections import deque
+from functools import cached_property
 import heapq
 from pathlib import Path
 import threading
@@ -33,6 +34,7 @@ from reactivex.subject import Subject
 
 from dimos.memory.cli.dataset import resolve_dataset
 from dimos.memory.store.base import Store, StreamAccessor
+from dimos.memory.utils.time_window import RecordingWindow
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.utils.logging_config import setup_logger
 
@@ -57,7 +59,6 @@ class ReplayConfig(BaseConfig):
     speed: float = 1.0
     seek: float | None = None
     duration: float | None = None
-    from_timestamp: float | None = None
     loop: bool = False
     # With ``loop``, recording seconds between the last frame of a pass and the first of the next.
     loop_gap: float = Field(default=0.0, ge=0.0)
@@ -90,7 +91,6 @@ class Replay(Configurable):
     def __init__(self, store: Store, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.store = store
-        self._first_ts: float | None = None
         self._streams: dict[str, ReplayStream[Any]] = {}
         self._subjects: dict[str, Subject[Any]] = {}
         self._stopped = threading.Event()
@@ -112,22 +112,10 @@ class Replay(Configurable):
     def stream(self, name: str, autocast: Callable[[Any], T] | None = None) -> ReplayStream[T]:
         return ReplayStream(replay=self, name=name, autocast=autocast)
 
-    def first_ts(self) -> float | None:
-        """Earliest source timestamp across non-empty streams in the underlying store.
-
-        Found once and reused. A replay reads a finished recording, and every
-        stream measures seek and duration from the same start.
-        """
-        if self._first_ts is None:
-            candidates: list[float] = []
-            for name in self.store.list_streams():
-                try:
-                    candidates.append(float(self.store.stream(name).order_by("ts").first().ts))
-                except (LookupError, ImportError, AttributeError):
-                    continue
-            if candidates:
-                self._first_ts = min(candidates)
-        return self._first_ts
+    @cached_property
+    def window(self) -> RecordingWindow:
+        """The seek/duration window every stream is cut to, found once."""
+        return RecordingWindow.from_store(self.store, self.config.seek or 0.0, self.config.duration)
 
     def add(self, stream: ReplayStream[T]) -> Observable[T]:
         """Put *stream* on the timeline. Its frames complete when it ends (never, with ``loop``)."""
@@ -318,38 +306,7 @@ class ReplayStream(Generic[T]):
 
     def rows(self) -> Stream[Any]:
         """The recorded observations inside the replay window, in ts order."""
-        cfg = self._replay.config
-        s: Stream[Any] = self._replay.store.stream(self._name)
-
-        start: float | None = None
-        if cfg.from_timestamp is not None:
-            start = cfg.from_timestamp
-        elif cfg.seek is not None:
-            recording_first = self._replay.first_ts()
-            if recording_first is None:
-                return s.order_by("ts")
-            start = recording_first + cfg.seek
-
-        end: float | None = None
-        if cfg.duration is not None:
-            if start is not None:
-                end = start + cfg.duration
-            else:
-                recording_first = self._replay.first_ts()
-                if recording_first is None:
-                    return s.order_by("ts")
-                end = recording_first + cfg.duration
-
-        if start is not None and end is not None:
-            bound = s.time_range(start, end)
-        elif start is not None:
-            bound = s.time_range(start, float("inf"))
-        elif end is not None:
-            bound = s.before(end)
-        else:
-            bound = s
-
-        return bound.order_by("ts")
+        return self._replay.window.apply(self._replay.store.stream(self._name)).order_by("ts")
 
     def first_ts(self) -> float | None:
         """First ts within the replay window (post seek/duration)."""

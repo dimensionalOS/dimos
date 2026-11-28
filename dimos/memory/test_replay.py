@@ -20,6 +20,7 @@ import pytest
 
 from dimos.memory.replay import ReplayStream
 from dimos.memory.store.base import StreamAccessor
+from dimos.memory.utils.time_window import recording_start
 
 if TYPE_CHECKING:
     from dimos.memory.store.sqlite import SqliteStore
@@ -45,16 +46,14 @@ def test_streams_accessor_equivalence(sqlite_store: SqliteStore) -> None:
     assert by_attr.name == by_method.name == "lidar"
 
 
-def test_first_ts_across_streams(sqlite_store: SqliteStore) -> None:
+def test_recording_start_across_streams(sqlite_store: SqliteStore) -> None:
     _populate(sqlite_store, "lidar", [10.0, 11.0])
     _populate(sqlite_store, "odom", [5.0, 6.0])
-    replay = sqlite_store.replay()
-    assert replay.first_ts() == 5.0
+    assert recording_start(sqlite_store) == 5.0
 
 
-def test_first_ts_empty_store(sqlite_store: SqliteStore) -> None:
-    replay = sqlite_store.replay()
-    assert replay.first_ts() is None
+def test_recording_start_empty_store(sqlite_store: SqliteStore) -> None:
+    assert recording_start(sqlite_store) is None
 
 
 def test_seek_filters_frames_before_offset(sqlite_store: SqliteStore) -> None:
@@ -71,12 +70,6 @@ def test_duration_bounds_window(sqlite_store: SqliteStore) -> None:
     replay = sqlite_store.replay(duration=0.12)
     # time_range is inclusive on both sides: 0.0, 0.05, 0.10 are in; 0.15 is past.
     assert [v for _, v in ((o.ts, o.data) for o in replay.streams.lidar.rows())] == [0, 1, 2]
-
-
-def test_from_timestamp_absolute(sqlite_store: SqliteStore) -> None:
-    _populate(sqlite_store, "lidar", [100.0, 100.1, 100.2, 100.3])
-    replay = sqlite_store.replay(from_timestamp=100.2)
-    assert [v for _, v in ((o.ts, o.data) for o in replay.streams.lidar.rows())] == [2, 3]
 
 
 def test_replay_stream_rows(sqlite_store: SqliteStore) -> None:

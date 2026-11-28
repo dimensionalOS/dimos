@@ -22,6 +22,7 @@ from dimos.memory.store.base import Store
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.utils.time_window import recording_start
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
@@ -73,8 +74,8 @@ def recording(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Store]
             yield store
 
 
-def test_first_ts_uses_earliest_source_timestamp(recording: Store) -> None:
-    assert recording.replay().first_ts() == 10.0
+def test_recording_start_is_the_earliest_source_timestamp(recording: Store) -> None:
+    assert recording_start(recording) == 10.0
 
 
 def test_seek_uses_earliest_source_timestamp(recording: Store) -> None:

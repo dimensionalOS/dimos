@@ -117,7 +117,6 @@ class Store(Configurable, CompositeResource):
         speed: float = 1.0,
         seek: float | None = None,
         duration: float | None = None,
-        from_timestamp: float | None = None,
         loop: bool = False,
         loop_gap: float = 0.0,
         buffer_size: int = 128,
@@ -125,8 +124,8 @@ class Store(Configurable, CompositeResource):
     ) -> Replay:
         """Open a time-bounded replay view over this store.
 
-        Play streams of the returned :class:`Replay` with :meth:`Replay.playback`,
-        which publishes them as one chronological timeline.
+        :meth:`Replay.add` streams to it and :meth:`Replay.play` publishes them as
+        one chronological timeline.
         """
         from dimos.memory.replay import Replay
 
@@ -135,7 +134,6 @@ class Store(Configurable, CompositeResource):
             speed=speed,
             seek=seek,
             duration=duration,
-            from_timestamp=from_timestamp,
             loop=loop,
             loop_gap=loop_gap,
             buffer_size=buffer_size,
