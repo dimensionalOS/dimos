@@ -45,6 +45,11 @@ def _world() -> MujocoBackend:
     return MujocoBackend(world, [SimulatedRobot(_SPOT, go2, free=False)])
 
 
+def _position(backend: MujocoBackend, servo: str) -> float:
+    joint = backend.model.joint(f"{_SPOT}/{servo}")
+    return float(backend.data.qpos[backend.model.jnt_qposadr[joint.id]])
+
+
 def _velocity(backend: MujocoBackend, servo: str) -> float:
     joint = backend.model.joint(f"{_SPOT}/{servo}")
     return float(backend.data.qvel[backend.model.jnt_dofadr[joint.id]])
@@ -67,6 +72,25 @@ def test_its_body_moves_at_the_velocity_its_servos_are_commanded_and_stays_up() 
     assert _velocity(backend, "x") == pytest.approx(0.4, abs=0.01)
     assert _velocity(backend, "yaw") == pytest.approx(0.5, abs=0.01)
     assert backend.data.xpos[base][2] == pytest.approx(height, abs=0.01), "its body fell or rose"
+
+
+def test_a_wall_stops_it() -> None:
+    """Driven at the logistics room's north wall, 5 m off, its body stops against the wall instead of passing through."""
+    backend = _world()
+    gains = tuple(usd_drives(go2_usd().usd, go2_usd().asset_root)[name][1] for name in SERVOS)
+    wall = backend.model.geom("/logistics/Geometry/north_wall")
+    face = backend.model.geom_pos[wall.id][1] - backend.model.geom_size[wall.id][1]
+    for _ in range(round(8.0 / backend.model.opt.timestep)):
+        backend.apply(
+            [JointCommand(_SPOT, SERVOS, velocity=(0.0, 1.0, 0.0), kp=(0.0,) * 3, kd=gains)]
+        )
+        backend._apply_pending()
+        mujoco.mj_step(backend.model, backend.data)
+
+    reached = _position(backend, "y")
+    assert face - 1.0 < reached < face, (
+        f"it stopped at y={reached:.2f}, the wall's face is at {face:.2f}"
+    )
 
 
 def test_its_frames_are_the_names_a_real_go2_gives_them_under_its_namespace() -> None:

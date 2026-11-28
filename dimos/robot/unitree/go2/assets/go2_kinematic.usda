@@ -1083,6 +1083,18 @@ def Xform "go2" (
                 }
             }
 
+            def Cube "collider" (
+                prepend apiSchemas = ["PhysicsCollisionAPI"]
+            )
+            {
+                custom int mjc:group = 3
+                uniform token purpose = "guide"
+                double size = 1
+                float3 xformOp:scale = (0.72050935, 0.324026, 0.418834)
+                double3 xformOp:translate = (-0.028296680277994535, 0, -0.12058299869298933)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
             def PhysicsRevoluteJoint "yaw" (
                 prepend apiSchemas = ["PhysicsDriveAPI:angular"]
             )
