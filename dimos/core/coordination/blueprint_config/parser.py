@@ -66,7 +66,6 @@ from dimos.core.coordination.blueprint_config.sources import (
     global_schema_defaults,
     merge_global_cli,
     merge_global_environment,
-    normalize_global_keys,
     read_config_file,
     reserved_global_short_names,
     validate_global_values,
@@ -74,6 +73,7 @@ from dimos.core.coordination.blueprint_config.sources import (
 from dimos.core.coordination.blueprint_config.values import (
     deep_merge,
     extract_shape,
+    normalize_global_keys,
     plain,
     plain_mapping,
     snapshot_mapping,
@@ -108,7 +108,6 @@ class BlueprintConfigParser:
 
     def __init__(self, blueprint: Blueprint) -> None:
         self.blueprint = blueprint
-        self._global_pins = normalize_global_keys(blueprint.global_config_overrides)
         self._schema: ParserSchema | None = None
 
     @classmethod
@@ -199,7 +198,7 @@ class BlueprintConfigParser:
         # overlaid just before validation. Equivalent to seeding the defaults
         # first because GlobalConfig is flat (no nested mappings for
         # deep_merge to recurse into).
-        global_values = plain_mapping(self._global_pins)
+        global_values = plain_mapping(self.blueprint.global_config_overrides)
         transport_values: dict[str, Any] = {}
         # The file and CLI merged a second time, alone, is what a hosted run sends its Hosts.
         file_cli_modules: dict[str, dict[str, Any]] = {m.atom.name: {} for m in schema.modules}
@@ -503,7 +502,7 @@ class BlueprintConfigParser:
 
     def _help_default(self, target: OptionTarget, schema: ParserSchema) -> Any:
         if target.section == "global":
-            values: Any = self._global_pins
+            values: Any = self.blueprint.global_config_overrides
             configured = nested_get(values, target.path)
             if configured is not PydanticUndefined:
                 return configured

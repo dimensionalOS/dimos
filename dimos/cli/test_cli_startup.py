@@ -207,6 +207,37 @@ main()
     assert "4 4GB" in result.stdout.splitlines()
 
 
+@pytest.mark.parametrize(("args", "expected"), [([], 2), (["--n-workers", "3"], 0)])
+def test_standalone_bridge_validates_project_environment(tmp_path: Path, args, expected) -> None:
+    (tmp_path / ".env").write_text("N_WORKERS=oops\n")
+    env = dict(os.environ)
+    env.pop("PYTEST_VERSION", None)
+    env.pop("N_WORKERS", None)
+    script = """
+from dimos.cli.entry import main
+from dimos.core.global_config import global_config
+from dimos.visualization.rerun import bridge
+bridge.run_bridge = lambda **options: print(f"bridge workers={global_config.n_workers}")
+main()
+"""
+    # A console script has a real __main__.__file__, unlike python -c.
+    launcher = tmp_path / "bridge_cli.py"
+    launcher.write_text(script)
+    result = subprocess.run(
+        [sys.executable, str(launcher), "rerun-bridge", *args],
+        env=env,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == expected, result.stderr
+    if expected:
+        assert "n_workers" in result.stderr and "Traceback" not in result.stderr
+    else:
+        assert "bridge workers=3" in result.stdout
+
+
 def test_graph_child_uses_effective_global_options(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

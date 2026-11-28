@@ -25,6 +25,7 @@ from typing import Any, cast
 from pydantic import BaseModel
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+from dimos.core.global_config import normalize_global_aliases
 
 
 def normalize_mapping_keys(values: Mapping[str, Any]) -> dict[str, Any]:
@@ -36,6 +37,11 @@ def normalize_mapping_keys(values: Mapping[str, Any]) -> dict[str, Any]:
         normalized_key = key.replace("-", "_")
         normalized[normalized_key] = plain(value)
     return normalized
+
+
+def normalize_global_keys(values: Mapping[str, Any]) -> dict[str, Any]:
+    """Merge global field names and their aliases under the same key at each source."""
+    return normalize_global_aliases(normalize_mapping_keys(values))
 
 
 def plain_mapping(values: Mapping[str, Any]) -> dict[str, Any]:

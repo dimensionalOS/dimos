@@ -32,11 +32,11 @@ from dimos.core.coordination.blueprint_config.schema import (
 )
 from dimos.core.coordination.blueprint_config.sources import (
     global_environment_names,
-    normalize_global_keys,
 )
 from dimos.core.coordination.blueprint_config.values import (
     deep_merge,
     deep_set,
+    normalize_global_keys,
     normalize_mapping_keys,
 )
 from dimos.core.coordination.blueprints import config_key

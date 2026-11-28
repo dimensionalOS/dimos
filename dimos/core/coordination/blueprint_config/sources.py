@@ -38,7 +38,6 @@ from dimos.core.coordination.blueprint_config.schema import (
 )
 from dimos.core.coordination.blueprint_config.values import (
     deep_set,
-    normalize_mapping_keys,
     plain_mapping,
 )
 from dimos.core.global_config import (
@@ -151,11 +150,6 @@ def configuration_environment(
             replacements={name: REMOVED_ENVIRONMENT_NAMES[name.upper()] for name in removed},
         )
     return environ
-
-
-def normalize_global_keys(values: Mapping[str, Any]) -> dict[str, Any]:
-    """Merge global field names and their aliases under the same key at each source."""
-    return normalize_global_aliases(normalize_mapping_keys(values))
 
 
 def validate_global_values(values: Mapping[str, Any]) -> dict[str, Any]:
