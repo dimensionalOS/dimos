@@ -1385,7 +1385,9 @@ def test_teleop_seq_guard_drops_stale_within_live_stream(teleop_bridge) -> None:
 def test_teleop_watchdog_deadline_and_high_water_survives_silence(teleop_bridge) -> None:
     module, clients, twists = teleop_bridge
     push(module, clients[0], wire_twist(0.5, 0.0, 0.0, seq=100))
-    assert wait_until(lambda: len(twists) == 1)
+    # At least, not exactly: the deadman zero lands one window later, so a
+    # late poll can already find two.
+    assert wait_until(lambda: len(twists) >= 1)
     started = time.monotonic()
     # Silence while driving: the deadman publishes exactly one zero, within
     # the watchdog window plus its poll granularity (margin covers the 10 ms
@@ -1405,7 +1407,7 @@ def test_teleop_watchdog_deadline_and_high_water_survives_silence(teleop_bridge)
     settle(module)
     assert len(twists) == 2
     push(module, clients[0], wire_twist(0.3, 0.0, 0.0, seq=101))
-    assert wait_until(lambda: len(twists) == 3)
+    assert wait_until(lambda: len(twists) >= 3)  # the deadman zeroes it again later
     assert twists[2].linear.x == 0.3
 
 
@@ -1679,11 +1681,14 @@ def test_teleop_watchdog_runs_during_replay_encode(monkeypatch) -> None:
         t0 = time.time()
         costmap_transport(module).publish(COSTMAP_GRID)  # cached; nobody watching
         t1 = time.time()
-        push(module, clients[0], wire_twist(0.5, 0.0, 0.0, seq=1))
-        assert wait_until(lambda: len(twists) == 1)
-        started = time.monotonic()
         push(module, clients[0], Subs(chs=["global_costmap"], n=1))
         assert encode_started.wait(timeout=5.0)
+        # Drive only once the encode is blocked, so everything below happens
+        # during it. The deadman zeroes each twist one window after it lands,
+        # so wait for at least n twists: a late poll can already find n + 1.
+        push(module, clients[0], wire_twist(0.5, 0.0, 0.0, seq=1))
+        assert wait_until(lambda: len(twists) >= 1)
+        started = time.monotonic()
         # Silence while driving, with the replay encode still blocked: the
         # deadman zero lands within the window (same bound as the plain
         # watchdog test) instead of after the encode.
@@ -1694,7 +1699,8 @@ def test_teleop_watchdog_runs_during_replay_encode(monkeypatch) -> None:
         deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + teleop._TELEOP_POLL_S + 0.5
         assert elapsed < deadline, f"deadman zero took {elapsed:.3f}s during a replay encode"
         push(module, clients[0], wire_twist(0.3, 0.0, 0.0, seq=2))
-        assert wait_until(lambda: len(twists) == 3)
+        assert wait_until(lambda: len(twists) >= 3)
+        assert twists[2].linear.x == 0.3
         assert offers == []
 
         release_encode.set()
