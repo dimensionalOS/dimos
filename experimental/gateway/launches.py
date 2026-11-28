@@ -78,10 +78,73 @@ class LaunchConfig:
     args: list[str] = field(default_factory=list)
     # POST /active/exec: exactly these args (a relaunch keeps it that way)
     exact: bool = False
+    # POST /active/launch-with-defaults: the saved layer under `modules` (None: a launch without one)
+    module_defaults: ModuleValues | None = None
 
     def normalized(self) -> LaunchConfig:
         """Normalize global overrides without changing raw exec requests or adding defaults."""
         return self if self.exact else replace(self, global_=normalize_global(self.global_))
+
+    def with_module_defaults(self, targets: ConfigTargets) -> LaunchConfig:
+        """Overlay at the served CLI's field boundaries, before argv, secrets and the remembered launch."""
+        if self.module_defaults is None:
+            return self
+        modules: ModuleValues = {}
+        names = {_option_name(name.replace("/", "_")): name for name in targets}
+        secret_fields = [
+            _secret_path(path, targets)
+            for path in [
+                *self.secrets,
+                *secret_paths({}, self.module_defaults, targets=targets),
+                *secret_paths({}, self.modules, targets=targets),
+            ]
+        ]
+        for saved, layer in ((True, self.module_defaults), (False, self.modules)):
+            seen: set[tuple[str, str]] = set()
+            for module, fields in layer.items():
+                root = names.get(_option_name(module.replace("/", "_")), module)
+                values = modules.setdefault(root, {})
+                leaves = targets.get(root, [])
+                edit_secrets = (
+                    None
+                    if saved
+                    else {
+                        _option_name(leaf)
+                        for leaf in leaves
+                        if is_secret_name(leaf)
+                        or (
+                            secret_fields
+                            and _contains_secret(
+                                _secret_path(f"{root}.{leaf}", targets), secret_fields
+                            )
+                        )
+                    }
+                )
+                for path, value in configured_fields(
+                    fields, leaves, edit_secrets=edit_secrets
+                ).items():
+                    key = _option_name(path)
+                    if (root, key) in seen:
+                        raise LaunchConfigError(f"conflicting spellings for {module}.{path}")
+                    seen.add((root, key))
+                    if edit_secrets is not None and key in edit_secrets and _is_hidden(value):
+                        continue
+                    if (
+                        edit_secrets is not None
+                        and key in edit_secrets
+                        and isinstance(value, (dict, list))
+                    ):
+                        value = _restore_collection_masks(
+                            value,
+                            values.get(key),
+                            _secret_path(f"{root}.{key}", targets),
+                            secret_fields,
+                        )
+                    if value is None:
+                        values.pop(key, None)
+                    else:
+                        values[key] = value
+        return replace(self, modules={m: f for m, f in modules.items() if f}, module_defaults=None)
 
     def secret_paths(self, targets: ConfigTargets | None = None) -> list[str]:
         return secret_paths(self.global_, self.modules, self.secrets, targets)
@@ -154,7 +217,7 @@ def secret_paths(
     explicit = [_secret_path(path, targets) for path in listed]
 
     def visit(value: Any, path: str, name: str) -> None:
-        comparable = _secret_path(path, targets)
+        comparable = _secret_path(path, targets) if explicit else path
         if is_secret_name(name) or any(_within(comparable, parent) for parent in explicit):
             paths.append(path)
         elif isinstance(value, dict):
@@ -278,18 +341,57 @@ def without_secrets(
 def redact(
     global_: dict[str, Any], modules: ModuleValues, paths: list[str]
 ) -> tuple[dict[str, Any], ModuleValues]:
-    def visit(value: Any, path: str) -> Any:
-        if value is not None and any(_within(path, secret) for secret in paths):
-            return HIDDEN
-        if isinstance(value, dict):
-            return {
-                key: visit(child, f"{path}.{key}" if path else key) for key, child in value.items()
-            }
-        if isinstance(value, list):
-            return [visit(child, f"{path}.{index}") for index, child in enumerate(value)]
-        return value
+    return _redact(global_, "", paths), {
+        module: _redact(fields, module, paths) for module, fields in modules.items()
+    }
 
-    return visit(global_, ""), {module: visit(fields, module) for module, fields in modules.items()}
+
+def _redact(value: Any, path: str, paths: list[str]) -> Any:
+    if value is not None and any(_within(path, secret) for secret in paths):
+        return HIDDEN
+    if isinstance(value, dict):
+        return {
+            key: _redact(child, f"{path}.{key}" if path else key, paths)
+            for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact(child, f"{path}.{index}", paths) for index, child in enumerate(value)]
+    return value
+
+
+def _restore_collection_masks(
+    edit: Any, saved: Any, path: str, secrets: list[str], *, ambiguous: bool = False
+) -> Any:
+    """Restore exact dictionary keys. A changed multi-entry list has no stable item identity."""
+    if _is_hidden(edit) and any(_within(path, secret) for secret in secrets):
+        if ambiguous:
+            raise LaunchConfigError(f"resubmit secret values for the edited list at {path}")
+        return saved
+    if isinstance(edit, dict):
+        previous = saved if isinstance(saved, dict) else {}
+        result = {}
+        for key, value in edit.items():
+            child = _restore_collection_masks(
+                value, previous.get(key), f"{path}.{key}", secrets, ambiguous=ambiguous
+            )
+            if child is not None or value is None:
+                result[key] = child
+        return result
+    if isinstance(edit, list):
+        original = saved if isinstance(saved, list) else []
+        if original and not (len(original) == len(edit) == 1):
+            ambiguous = ambiguous or edit != _redact(original, path, secrets)
+        return [
+            _restore_collection_masks(
+                value,
+                original[i] if i < len(original) else None,
+                f"{path}.{i}",
+                secrets,
+                ambiguous=ambiguous,
+            )
+            for i, value in enumerate(edit)
+        ]
+    return edit
 
 
 def flag_fields() -> set[str]:
@@ -334,11 +436,21 @@ def global_flags(values: dict[str, Any], explicit_bools: bool = False) -> list[s
     return flags
 
 
-def configured_fields(fields: dict[str, Any], targets: list[str] | None = None) -> dict[str, Any]:
+def _is_hidden(value: Any) -> bool:
+    return isinstance(value, str) and bool(value) and not value.strip("•")
+
+
+def configured_fields(
+    fields: dict[str, Any],
+    targets: list[str] | None = None,
+    *,
+    edit_secrets: set[str] | None = None,
+) -> dict[str, Any]:
     """Normalize dotted/object input at parser leaves, preserving collection data keys.
 
     Model fields become leaf options; dictionaries and lists stay atomic. Without a
-    schema, conservatively treat each top-level field as one atomic value.
+    schema, conservatively treat each top-level field as one atomic value. In an edit
+    layer, null clears a subtree and a mask can stand for a group of secret leaves.
     """
     out: dict[str, Any] = {}
     leaves = sorted(
@@ -360,7 +472,7 @@ def configured_fields(fields: dict[str, Any], targets: list[str] | None = None) 
 
     def visit(values: dict[str, Any], prefix: str = "") -> None:
         for name, value in sorted(values.items()):
-            if value is None:
+            if value is None and edit_secrets is None:
                 continue
             path = f"{prefix}.{name}" if prefix else name
             target = next(
@@ -378,6 +490,21 @@ def configured_fields(fields: dict[str, Any], targets: list[str] | None = None) 
                     for part in reversed(suffix.split(".")):
                         value = {part: value}
                 merge(out, leaf, value)
+            elif (
+                edit_secrets is not None
+                and (value is None or _is_hidden(value))
+                and (
+                    children := [
+                        leaf for leaf in leaves if _within(_option_name(leaf), _option_name(path))
+                    ]
+                )
+            ):
+                if value is not None and not all(
+                    _option_name(leaf) in edit_secrets for leaf in children
+                ):
+                    raise LaunchConfigError(f"not a settable module config field: {path}")
+                for leaf in children:
+                    merge(out, leaf, value)
             elif any(
                 _within(_option_name(leaf), _option_name(path)) for leaf in leaves
             ) and isinstance(value, dict):
@@ -712,13 +839,14 @@ def _prepare(
     if not program.exists():
         raise RunError(f"no dimos at {dimos_dir} (no {program})")
     targets = None
-    if launch.modules:
+    if launch.modules or launch.module_defaults:
         try:
             targets = asyncio.run(
                 introspect.run_child(dimos_dir, ["targets", blueprint], stdin=launch.global_)
             )
         except introspect.IntrospectError as error:
             raise LaunchConfigError(f"could not read launch config fields: {error}") from error
+        launch = launch.with_module_defaults(targets)
     paths = launch.secret_paths(targets)
     secret_vars = secret_env(launch.global_, launch.modules, paths, targets)
     shown_env = [f"{name}={HIDDEN}" for name in secret_vars]

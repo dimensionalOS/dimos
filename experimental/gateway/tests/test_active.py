@@ -313,6 +313,206 @@ def test_nested_launch_and_relaunch_keep_secrets_out_of_args_and_metadata(
     launch_targets.assert_any_await(checkout, ["targets", "demo"], stdin={})
 
 
+@pytest.mark.parametrize(
+    ("saved_camera", "asked_camera"),
+    [
+        ({"camera.gain": 1, "camera.exposure": 4}, {"camera": {"gain": 2}}),
+        ({"camera": {"gain": 1, "exposure": 4}}, {"camera.gain": 2}),
+        ({"camera": {"gain": 1, "exposure": 4}}, {"camera": {"gain": 2}}),
+    ],
+)
+def test_launch_applies_module_defaults_at_the_selected_parser_leaves(
+    client: TestClient,
+    checkout: Path,
+    launch_targets: AsyncMock,
+    mocker: MockerFixture,
+    saved_camera: dict[str, Any],
+    asked_camera: dict[str, Any],
+) -> None:
+    launch_targets.side_effect = None
+    launch_targets.return_value = {
+        "reader": ["camera.gain", "camera.exposure", "weights", "token", "channels"],
+    }
+    mocker.patch.object(launches, "launch_env_defaults", return_value={})
+    spawn = mocker.patch.object(launches, "_spawn", return_value=2_000_000_000)
+    saved = {
+        "reader": {
+            **saved_camera,
+            "weights": {"Old-Entry": 1},
+            "token": "saved-value",
+            "channels": [1, 2],
+        }
+    }
+    config = {
+        "global": {"replay": True},
+        "modules": {
+            "reader": {
+                **asked_camera,
+                "weights": {"New-Entry": 3},
+                "token": "•••",
+                "channels": None,
+            }
+        },
+    }
+    response = client.post(
+        "/active/launch-with-defaults",
+        json={"blueprint": "demo", "module_defaults": saved, "config": config},
+    )
+    assert response.status_code == 200, response.text
+    launch_targets.assert_awaited_once_with(checkout, ["targets", "demo"], stdin={"replay": True})
+    command, _, _, env = spawn.call_args.args
+    assert [arg for arg in command if arg.startswith("--reader.")] == [
+        "--reader.camera.exposure=4",
+        "--reader.camera.gain=2",
+        '--reader.weights={"New-Entry":3}',
+    ]
+    assert env["READER__TOKEN"] == "saved-value"
+    assert "saved-value" not in response.text
+    remembered = json.loads(launches.request_file().read_text())
+    assert remembered["modules"]["reader"]["weights"] == {"New-Entry": 3}
+    assert "module_defaults" not in remembered
+
+
+def test_layered_collection_masks_survive_edits_and_relaunch(
+    client: TestClient, launch_targets: AsyncMock, mocker: MockerFixture
+) -> None:
+    launch_targets.side_effect = None
+    launch_targets.return_value = {"reader": ["accounts", "providers"]}
+    mocker.patch.object(launches, "launch_env_defaults", return_value={})
+    spawn = mocker.patch.object(launches, "_spawn", return_value=2_000_000_000)
+    saved = {
+        "reader": {
+            "accounts": {
+                "Keep": {"token": "dummy-A", "label": "old"},
+                "keep": {"token": "dummy-B"},
+                "drop": {},
+            },
+            "providers": [{"token": "dummy-C", "label": "old"}],
+        }
+    }
+
+    def post(edits: dict[str, Any]) -> Any:
+        return client.post(
+            "/active/launch-with-defaults",
+            json={"blueprint": "demo", "module_defaults": saved, "config": {"modules": edits}},
+        )
+
+    edits = post({}).json()["config"]["modules"]
+    assert edits["reader"]["providers"][0]["token"] == launches.HIDDEN
+    edits["reader"]["providers"][0]["label"] = "new"
+    edits["reader"]["accounts"]["Keep"]["label"] = "•"
+    edits["reader"]["accounts"]["keep"]["token"] = "dummy-new"
+    edits["reader"]["accounts"].pop("drop")
+    edits["reader"]["accounts"]["added"] = {"token": launches.HIDDEN}
+    response = post(edits)
+    assert response.status_code == 200, response.text
+    for action in ("launch", "relaunch"):
+        if action == "relaunch":
+            assert client.post("/active/relaunch").status_code == 200
+        argv, _, _, env = spawn.call_args.args
+        assert not any("dummy-" in arg for arg in argv)
+        assert json.loads(env["READER__ACCOUNTS"]) == {
+            "Keep": {"token": "dummy-A", "label": "•"},
+            "keep": {"token": "dummy-new"},
+            "added": {},
+        }
+        assert json.loads(env["READER__PROVIDERS"]) == [{"token": "dummy-C", "label": "new"}]
+    new_entry = {"providers": [{"label": "first", "token": launches.HIDDEN}]}
+    assert launches.LaunchConfig(
+        modules={"reader": new_entry}, module_defaults={}
+    ).with_module_defaults({"reader": ["providers"]}).modules == {
+        "reader": {"providers": [{"label": "first"}]}
+    }
+    # The masked second entry moves to a position whose original entry had no token.
+    del saved["reader"]["providers"][0]["token"]
+    saved["reader"]["providers"].append({"token": "dummy-D", "label": "second"})
+    edits = post({}).json()["config"]["modules"]
+    edits["reader"]["providers"].reverse()
+    spawn.reset_mock()
+    assert post(edits).status_code == 400
+    spawn.assert_not_called()
+
+
+def test_layered_launch_keeps_bullet_text_and_only_preserves_masked_secrets(
+    client: TestClient, launch_targets: AsyncMock, mocker: MockerFixture
+) -> None:
+    launch_targets.side_effect = None
+    launch_targets.return_value = {
+        "reader": ["label", "token", "auth.code", "group.key", "group.note"]
+    }
+    mocker.patch.object(launches, "launch_env_defaults", return_value={})
+    spawn = mocker.patch.object(launches, "_spawn", return_value=2_000_000_000)
+    response = client.post(
+        "/active/launch-with-defaults",
+        json={
+            "blueprint": "demo",
+            "module_defaults": {
+                "reader": {
+                    "label": "old",
+                    "token": "saved",
+                    "auth.code": "private",
+                    "group.key": "clear",
+                    "group.note": "clear",
+                }
+            },
+            "config": {
+                "modules": {"reader": {"label": "•", "token": "•••", "auth": "•••", "group": None}},
+                "secrets": ["READER.Auth"],
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    command, _, _, env = spawn.call_args.args
+    assert "--reader.label=•" in command
+    assert env["READER__TOKEN"] == "saved" and env["READER__AUTH__CODE"] == "private"
+    assert "READER__GROUP__KEY" not in env and not any(
+        arg.startswith("--reader.group.") for arg in command
+    )
+
+
+@pytest.mark.parametrize(
+    ("layer", "asked", "token"),
+    [
+        ({"module_defaults": {"reader": {"token": "saved-value"}}}, "•••", "saved-value"),
+        ({"module_defaults": {"reader": {"token": "saved-value"}}}, "typed-value", "typed-value"),
+        ({"module_defaults": {}}, "•••", None),
+        # POST /active/launch has no saved layer: its config is launched as sent
+        (None, "•••", "•••"),
+    ],
+    ids=["saved", "explicit", "empty", "unlayered"],
+)
+def test_a_mask_stands_for_a_saved_secret_only_on_the_layered_route(
+    client: TestClient,
+    launch_targets: AsyncMock,
+    mocker: MockerFixture,
+    layer: dict[str, Any] | None,
+    asked: str,
+    token: str | None,
+) -> None:
+    launch_targets.side_effect = None
+    launch_targets.return_value = {"reader": ["token"]}
+    mocker.patch.object(launches, "launch_env_defaults", return_value={})
+    spawn = mocker.patch.object(launches, "_spawn", return_value=2_000_000_000)
+    response = client.post(
+        "/active/launch" if layer is None else "/active/launch-with-defaults",
+        json={
+            "blueprint": "demo",
+            "config": {"modules": {"reader": {"token": asked}}},
+            **(layer or {}),
+        },
+    )
+    assert response.status_code == 200, response.text
+    command, _, _, env = spawn.call_args.args
+    assert env.get("READER__TOKEN") == token
+    assert not any("reader" in arg for arg in command)
+    remembered = json.loads(launches.request_file().read_text())
+    assert remembered["modules"] == ({"reader": {"token": token}} if token else {})
+    assert response.json()["config"]["modules"] == ({"reader": {"token": "•••"}} if token else {})
+    # the remembered launch is what a relaunch repeats
+    assert client.post("/active/relaunch").status_code == 200
+    assert spawn.call_args.args[3].get("READER__TOKEN") == token
+
+
 def test_launch_introspection_receives_global_mode_settings(
     client: TestClient, checkout: Path, launch_targets: AsyncMock
 ) -> None:

@@ -16,6 +16,14 @@ The catalog reads blueprints from the checkout it serves. It uses the default op
    When supplied, `global` and `modules` must be objects and `secrets` must be a list of field paths.
    Packaged paths appear under their asset names. Omit an unchanged path to keep its lazy lookup, or supply a local file
    to replace it. A collection containing packaged paths is a read-only preview (`json_compatible: false`).
+   When saved and explicit module settings overlap, send the same body to `POST /active/launch-with-defaults`
+   with a separate `module_defaults` object. The explicit value wins for each CLI field. Nested model fields
+   keep untouched siblings. Dictionary and list fields are replaced as a whole. A null clears the saved field.
+   Bullet-only text is literal in ordinary fields; for a secret field it stands for the saved value, and
+   sets nothing when none is saved (an empty `module_defaults` included). Within a dictionary the exact key identifies
+   the saved secret. When editing a list with multiple entries, supply its secret values again so a mask cannot
+   restore a different entry’s value. `POST /active/launch` has no
+   saved layer and launches its config as sent.
 4. **Secrets** (keys like `*_key`, `*token*`) reach dimos through the environment, never its command line, and come
    back as `•••`.
 5. **One blueprint runs at a time.** `/active` routes answer 409 when nothing runs; `POST /active/launch` answers 409

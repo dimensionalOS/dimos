@@ -46,6 +46,17 @@ class LaunchRequest(BaseModel):
         return name, launches.parse(self.config)
 
 
+class LayeredLaunchRequest(LaunchRequest):
+    """Module defaults below config.modules, resolved against this launch's CLI fields."""
+
+    module_defaults: dict[str, dict[str, JsonValue]]
+
+    def prepared(self) -> tuple[str, LaunchConfig]:
+        name, config = super().prepared()
+        config.module_defaults = self.module_defaults
+        return name, config
+
+
 class ExecRequest(BaseModel):
     args: list[str]
 
@@ -121,6 +132,13 @@ async def active_log(
 
 @router.post("/launch", response_model=responses.Launch)
 async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
+    return await started(state, *request.prepared())
+
+
+@router.post("/launch-with-defaults", response_model=responses.Launch)
+async def launch_with_defaults(
+    state: GatewayState, request: LayeredLaunchRequest
+) -> dict[str, Any]:
     return await started(state, *request.prepared())
 
 
