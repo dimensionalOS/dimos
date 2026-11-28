@@ -200,7 +200,9 @@ class Live:
         name: str,
         args: list[Any],
         kwargs: dict[str, Any],
+        raw: bool = False,
     ) -> dict[str, Any]:
+        """The RPC's result as JSON, or with `raw` the object itself (for a CBOR reply)."""
         module = self.module(scanned, module_id)
         # every RPC the instance has, including the base-class ones (get_config, ...) that modules() leaves out of its list
         callable_rpcs = sorted(
@@ -219,6 +221,8 @@ class Live:
             raise ApiError(500, f"{module_id}/{name} didn't answer in time")
         except Exception as error:
             return {"ok": False, "result": None, "error": f"{type(error).__name__}: {error}"}
+        if raw:
+            return {"ok": True, "result": result, "error": None}
         try:
             encoded = jsonable_encoder(result)
         except ValueError:  # jsonable_encoder's error for a value with no fields it can read (no __dict__, not iterable)

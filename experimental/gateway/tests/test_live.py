@@ -346,6 +346,50 @@ def test_connect_uses_the_active_runs_transport_not_the_last_launchs(
     assert live.connect_dimos() == "lcm"
 
 
+def test_a_cbor_call_carries_dimos_objects_both_ways(
+    client: TestClient, dimos: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dimos.msgs.sensor_msgs.JointState import JointState
+    from dimos.protocol.encode import cbor
+
+    def get_module(self: FakeDimos, name: str) -> Any:
+        fake = self
+
+        class Handle:
+            def __getattr__(self, rpc: str) -> Any:
+                def call(*args: Any, **kwargs: Any) -> Any:
+                    fake.calls.append((f"{name}/{rpc}", args, kwargs))
+                    return kwargs["targets"]["arm"]
+
+                return call
+
+        return Handle()
+
+    monkeypatch.setattr(FakeDimos, "get_module", get_module)
+    joints = JointState(name=["j1", "j2"], position=[0.1, 0.2])
+    body = cbor.encode(((), {"targets": {"arm": joints}, "speed_scale": 0.5}))
+    # the body is dimos's own RPC payload: the module gets the JointState itself
+    answer = client.post(
+        "/active/modules/robot0:speaker/rpcs/speak",
+        content=body,
+        headers={"content-type": "application/cbor"},
+    )
+    assert answer.headers["content-type"] == "application/cbor"
+    ((_, args, kwargs),) = dimos["apps"][-1].calls
+    assert args == () and kwargs["speed_scale"] == 0.5
+    assert isinstance(kwargs["targets"]["arm"], JointState)
+    # and the reply is CBOR too: the result as dimos encodes it, the JointState again
+    reply = cbor.decode(answer.content)
+    assert reply["ok"] and isinstance(reply["result"], JointState)
+    assert reply["result"].name == ["j1", "j2"] and list(reply["result"].position) == [0.1, 0.2]
+    bad = client.post(
+        "/active/modules/robot0:speaker/rpcs/speak",
+        content=b"not cbor",
+        headers={"content-type": "application/cbor"},
+    )
+    assert bad.status_code == 400
+
+
 def test_config_leaves_out_infrastructure_and_marks_unencodable_readonly(
     client: TestClient, dimos: dict[str, Any]
 ) -> None:

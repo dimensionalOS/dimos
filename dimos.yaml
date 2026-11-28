@@ -12,7 +12,7 @@ provides:
     title: dimos gateway
     # the gateway API's version (Desktop's contract; its implementation and metadata stay experimental): what
     # Desktop's `requires: dimos` range and the desktop-gateway-v tags go by. `version:` above is dimos's own.
-    version: 9.4.0
+    version: 9.5.0
     description: >-
       The stable API for building apps on top of dimos: the catalog of blueprints, modules, RPCs, robots and config schemas; the running blueprint (launch,
       stop, its module instances, RPCs and streams); past runs (logs, recordings); and recording uploads to the Dimensional cloud. It saves no config: each launch
@@ -242,8 +242,12 @@ provides:
       post:
         description: >-
           Call the RPC with {args?, kwargs?}: {ok, result, error}. Any RPC the instance has, including the base-class
-          ones (get_config, ...) its listing leaves out. For buttons: called directly, not through MCP, so skills'
-          capability holds don't apply; agents use the python API.
+          ones (get_config, ...) its listing leaves out. With content-type application/cbor the body is dimos's own RPC
+          payload, cbor((args, kwargs)) as dimos.protocol.encode.cbor writes it, and the answer is cbor({ok, result,
+          error}): messages, dataclasses and enums travel as themselves (the caller encodes and decodes). Either way an
+          RPC that raised answers ok false with the error; a call the gateway can't make answers its HTTP status with
+          JSON {error}. For buttons: called directly, not through MCP, so skills' capability holds don't apply; agents
+          use the python API.
         parameters:
           - name: id
             in: path
