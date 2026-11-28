@@ -180,9 +180,9 @@ class SimBody(HardwareModule):
         odom = self.config.odom_frame
         return f"{self.namespace}/{odom}" if self.namespace else odom
 
-    @property
+    @cached_property
     def body_frame(self) -> str:
-        """Its root link's tf frame, which its odometry holds."""
+        """Its root link's tf frame, which its odometry holds; worked out once, as reading the root link opens its USD."""
         return self.tf_frames[self.config.usd.root_link]
 
     @cached_property
