@@ -114,8 +114,9 @@ def _run(seconds: float, speed: float) -> dict[str, Any]:
     dog = autoconnect(
         _Dog.blueprint(attached_to=Logistics.mounts.go2.name),
         # A mount namespaces its sensor's streams; these take them back out to _Readings.
+        # One view: its default four render processes slow the other sensors here below their rates (load-dependent).
         SimCamera.attach(
-            _Dog.mounts.eye, width=64, height=48, rate_hz=RATES["color_image"]
+            _Dog.mounts.eye, width=64, height=48, views=1, rate_hz=RATES["color_image"]
         ).remappings([(SimCamera, "color_image", "color_image")]),
         SimImu.attach(_Dog.mounts.imu, rate_hz=RATES["imu"]).remappings([(SimImu, "imu", "imu")]),
         LivoxSim.attach(
