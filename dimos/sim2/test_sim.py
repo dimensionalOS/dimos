@@ -129,11 +129,11 @@ def test_on_mount_shares_the_sim_streams_its_blueprint_has_and_namespaces_the_re
     from dimos.sim2.assets.logistics import Logistics
     from dimos.sim2.sim import _stream_names, on_mount
 
-    mounted = on_mount(autoconnect(Logistics.blueprint()), Mount("room/spot")).solidify()
+    mounted = on_mount(autoconnect(Logistics.blueprint()), Mount("room/spot", "spot")).solidify()
 
     assert _stream_names(mounted) == {
-        "room/spot/hardware_file_request",
-        "room/spot/hardware_file_response",
+        "spot/hardware_file_request",
+        "spot/hardware_file_response",
         "tf",
         "tf_static",
         "world_observations",

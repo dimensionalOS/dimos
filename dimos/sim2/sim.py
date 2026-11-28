@@ -162,13 +162,10 @@ SIM_STREAMS = frozenset({"world_observations", "world_actions", "tf_static"})
 
 
 def on_mount(blueprint: BlueprintT, mount: Mount, shared: Iterable[str] = ()) -> BlueprintT:
-    """``blueprint`` (a robot attached to ``mount`` and the hardware on it) under the namespace of the mount's frame, as attach() puts one module, with whichever SIM_STREAMS it has shared."""
+    """``blueprint`` (a robot attached to ``mount`` and the hardware on it) under the mount's name, as attach() puts one module, with whichever SIM_STREAMS it has shared."""
     names = _stream_names(cast("Blueprint | MetaBlueprint | ChoiceAtom", blueprint))
     shared = SIM_STREAMS.intersection(names).union(shared)
-    # namespace() puts its prefix in front, so the last segment goes on first.
-    for segment in reversed(mount.frame.split("/")):
-        blueprint = blueprint.namespace(segment, shared=shared)
-    return blueprint
+    return blueprint.namespace(mount.name, shared=shared)
 
 
 def _stream_names(blueprint: Blueprint | MetaBlueprint | ChoiceAtom) -> set[str]:
@@ -213,8 +210,9 @@ def fetched_usd(namespace: str) -> str:
 
 
 def compose_usds(described: Sequence[tuple[str, str | None]]) -> UsdModel:
-    """Overlay each (namespaced USD, mount frame) onto the one USD that is mounted on nothing, refusing one too big for the spawn point it is on."""
-    from dimos.robot.assets.usd_utils.frames import usd_frame_names
+    """Overlay each (namespaced USD, its mount's tf frame) onto the one USD that is mounted on nothing, each moved under its mount's prim, refusing one too big for the spawn point it is on."""
+    from dimos.robot.assets.usd_utils.frames import usd_world_frame_prims
+    from dimos.robot.assets.usd_utils.layers import usd_moved_under
     from dimos.robot.assets.usd_utils.lfs import pull_usd_assets
     from dimos.sim2.overlay import overlay_usds
     from dimos.sim2.spawn import check_spawn_fits
@@ -227,19 +225,22 @@ def compose_usds(described: Sequence[tuple[str, str | None]]) -> UsdModel:
         )
     # Before any stage is opened on them: a stage opens every layer they reference, such as a scene's hulls.
     pull_usd_assets(usd for usd, _ in described)
-    mounted = [(usd, attached_to) for usd, attached_to in described if attached_to is not None]
-    # A mounted USD holds its mount's path itself, so a mount frame is real only if some other part offers it.
-    offered = usd_frame_names(roots[0]).union(
-        *(usd_frame_names(usd) - _path_to(frame) for usd, frame in mounted)
-    )
-    unplaced = sorted(frame for _, frame in mounted if frame not in offered)
-    if unplaced:
-        raise ValueError(f"no hardware in the world has the mount frames {unplaced}")
+    # A part's namespace is its mount's tf frame, which some part already placed has, so parents go first.
+    prims = usd_world_frame_prims(roots[0])
+    waiting = [(usd, frame) for usd, frame in described if frame is not None]
+    mounted: list[tuple[str, str]] = []
+    while waiting:
+        ready = [(usd, frame) for usd, frame in waiting if frame in prims]
+        if not ready:
+            unplaced = sorted(frame for _, frame in waiting)
+            raise ValueError(
+                f"no hardware in the world has the mount frames {unplaced}; is each namespaced "
+                f"under the hardware it mounts on (.attach(Robot.mounts.<name>))?"
+            )
+        for usd, frame in ready:
+            moved = usd_moved_under(usd, frame, prims[frame])
+            prims.update(usd_world_frame_prims(moved))
+            mounted.append((moved, prims[frame]))
+            waiting.remove((usd, frame))
     check_spawn_fits(roots[0], mounted)
     return UsdModel.from_layer(overlay_usds(roots[0], mounted))
-
-
-def _path_to(frame: str) -> set[str]:
-    """The frame and every frame above it: the namespace prims a USD mounted on it holds."""
-    segments = frame.split("/")
-    return {"/".join(segments[:depth]) for depth in range(1, len(segments) + 1)}

@@ -102,14 +102,14 @@ def test_a_scene_publishes_only_the_path_to_its_mounts(room: type[SimScene]) -> 
     finally:
         scene.stop()
 
-    # Each spawn point is welded to the rigid body it is under, so that is its tf parent.
-    assert edges == {("room", "room/aisle/spot"), ("room", "room/aisle/shelf")}
+    # Each spawn point is welded to the rigid body it is under, so that is its tf parent, and is called by its name.
+    assert edges == {("room", "spot"), ("room", "shelf")}
 
 
 def test_a_spawn_point_is_a_frame_where_its_prim_stands(room: type[SimScene]) -> None:
     scene = room()
     try:
-        spot = next(t for t in scene.static_transforms() if t.child_frame_id == "room/aisle/spot")
+        spot = next(t for t in scene.static_transforms() if t.child_frame_id == "spot")
     finally:
         scene.stop()
 
