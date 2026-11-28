@@ -89,3 +89,57 @@ def test_replay_logs_source_duration_and_completion(tmp_path, mocker):
         )
         scheduler.advance_by(5)
         assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=str(path))]
+
+
+@pytest.mark.parametrize("backend", ["zenoh", "lcm"])
+def test_trajectory_script_uses_coordinator_channels(
+    backend: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from collections.abc import Callable
+    import json
+    import runpy
+    import sys
+    from unittest.mock import Mock
+
+    from dimos.constants import DIMOS_PROJECT_ROOT
+    from dimos.core.global_config import global_config
+    from dimos.core.transport import LCMTransport, PubSubTransport, ZenohTransport
+    from dimos.core.transport_factory import make_transport
+    from dimos.msgs.sensor_msgs.JointState import JointState
+
+    script = runpy.run_path(str(DIMOS_PROJECT_ROOT / "scripts/g1_replay.py"))
+    monkeypatch.setattr(global_config, "transport", backend)
+    monkeypatch.setattr(global_config, "zenoh_domain", "replay-test")
+    sample = [0.0] * script["NUM_DOF"]
+    path = tmp_path / "sample.json"
+    path.write_text(
+        json.dumps(
+            {
+                "joint_names": script["CANONICAL_JOINTS"],
+                "samples": [{"position": sample, "ts": 0.0}],
+            }
+        )
+    )
+    monkeypatch.setattr(sys, "argv", ["g1_replay", "--file", str(path), "--ramp", "0"])
+    state = make_transport("/g1/joints", JointState)
+    command = make_transport("/g1/joint_command", JointState)
+    received: list[list[float]] = []
+
+    def subscribe(
+        endpoint: PubSubTransport[JointState], callback: Callable[[JointState], None]
+    ) -> Callable[[], None]:
+        assert endpoint.channel == state.channel and type(endpoint) is type(state)
+        callback(script["make_joint_state"](sample))
+        return lambda: None
+
+    def publish(endpoint: PubSubTransport[JointState], message: JointState) -> None:
+        assert endpoint.channel == command.channel and type(endpoint) is type(command)
+        received.append(list(message.position))
+
+    for transport in (LCMTransport, ZenohTransport):
+        monkeypatch.setattr(transport, "subscribe", subscribe)
+        monkeypatch.setattr(transport, "publish", publish)
+        monkeypatch.setattr(transport, "stop", Mock())
+
+    script["main"]()
+    assert received == [sample, sample]  # Initial pose, then the single trajectory sample.

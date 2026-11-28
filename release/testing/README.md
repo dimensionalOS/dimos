@@ -86,7 +86,6 @@ git log -1 --format='%H %s'
 - [ ] [9.10 Go2 rage mode](09_hardware.md#910-go2-rage-mode)
 - [ ] [9.11 Go2 drive and record](09_hardware.md#911-go2-drive-and-record)
 - [ ] [9.12 RealSense camera](09_hardware.md#912-realsense-camera)
-- [ ] [10.1 G1 agent in simulation](10_robots.md#101-g1-agent-in-simulation)
 - [ ] [10.2 G1 whole-body control in MuJoCo](10_robots.md#102-g1-whole-body-control-in-mujoco)
 - [ ] [10.3 G1 navigation and arm teleop on hardware](10_robots.md#103-g1-navigation-and-arm-teleop-on-hardware)
 - [ ] [10.4 Multiple Go2s](10_robots.md#104-multiple-go2s)

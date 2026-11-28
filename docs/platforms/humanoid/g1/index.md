@@ -134,7 +134,7 @@ In the ssh terminal `ssh -L 3030:localhost:3030 unitree@192.168.123.164`
 
 ```sh skip
 source .venv/bin/activate
-uv run dimos run unitree-g1-nav-simple --rerunbridgemodule.host 0.0.0.0 --rerunwebsocketserver.host 0.0.0.0
+uv run dimos run unitree-g1 --rerunbridgemodule.host 0.0.0.0 --rerunwebsocketserver.host 0.0.0.0
 # should print out something like:
 # ============================================================
 # Rerun gRPC server running (no viewer opened)
@@ -229,7 +229,7 @@ This usually means port `3030` wasn't forwarded. The `3030:localhost:3030` in th
 #### Viewer Crashing
 
 If the viewer keeps crashing for you, there are two options for now:
-1. On the G1 (ssh connection) change `_MAX_HZ` (inside `dimos/robot/unitree/g1/blueprints/primitive/unitree_g1_vis.py`) to a lower number, like 20 or 15
+1. On the G1 (ssh connection) change `_MAX_HZ` (inside `dimos/robot/unitree/g1/blueprints/basic/unitree_g1_vis.py`) to a lower number, like 20 or 15
 2. Get more RAM
 
 

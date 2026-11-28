@@ -22,8 +22,8 @@ dimos --replay run unitree-go2-agentic          # + LLM agent (gpt-5.6-luna) + s
 dimos run unitree-go2-agentic --robot-ip 192.168.123.161  # real Go2 hardware
 
 # --- G1 humanoid ---
-dimos --simulation run unitree-g1-agentic-sim   # G1 in MuJoCo sim + agent + skills
-dimos run unitree-g1-agentic --robot-ip 192.168.123.161   # real G1 hardware
+dimos --simulation run unitree-g1   # G1 in MuJoCo sim (GR00T whole-body control)
+dimos run unitree-g1                # real G1 hardware (on the G1, needs unitree-dds extra)
 
 # --- Inspect & control ---
 dimos status
@@ -40,7 +40,7 @@ dimos restart          # stop + re-run with same original args
 | Blueprint | Robot | Hardware | Agent | MCP server | Notes |
 |-----------|-------|----------|-------|------------|-------|
 | `unitree-go2-agentic` | Go2 | real | via Agent | ✓ | McpServer live |
-| `unitree-g1-agentic-sim` | G1 | sim | gpt-5.6-luna (G1 prompt) | ✓ | Full agentic sim, no real robot needed |
+| `unitree-g1` | G1 | real / sim | — | — | Onboard DDS + nav on G1; GR00T whole-body control with `--simulation` |
 | `xarm-grasp-agent` | xArm | real | gpt-5.6-luna | ✓ | Manipulation + perception + agent |
 | `xarm-perception-sim-agent` | xArm | sim | gpt-5.6-luna | ✓ | Manipulation + perception + agent, sim |
 | `xarm7-planner-coordinator` | xArm7 | real | — | — | Trajectory planner coordinator |
