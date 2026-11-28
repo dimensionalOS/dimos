@@ -26,6 +26,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic.errors import PydanticInvalidForJsonSchema, PydanticSchemaGenerationError
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
+from typing_extensions import is_typeddict
 
 from dimos.core.coordination.blueprint_config.errors import (
     BlueprintConfigError,
@@ -159,6 +160,25 @@ def _is_cli_settable(annotation: Any) -> bool:
     return any(_json_schema(member) is not None for member in scalar_annotation_types(annotation))
 
 
+def child_annotations(annotations: tuple[Any, ...], name: str) -> tuple[Any, ...]:
+    """Resolve a sparse environment key below a structured option."""
+    children = []
+    for annotation in annotations:
+        for member in scalar_annotation_types(annotation):
+            if is_typeddict(member) or (is_dataclass(member) and isinstance(member, type)):
+                hints = get_type_hints(member)
+                if name in hints:
+                    children.append(hints[name])
+            elif isinstance(member, type) and issubclass(member, BaseModel):
+                if name in member.model_fields:
+                    children.append(member.model_fields[name].annotation)
+            elif get_origin(member) in (dict, Mapping):
+                args = get_args(member)
+                if len(args) == 2:
+                    children.append(args[1])
+    return tuple(children) or (Any,)
+
+
 def takes_json(member: Any) -> bool:
     """Whether a union member may be written as a JSON array or object.
 
@@ -167,7 +187,11 @@ def takes_json(member: Any) -> bool:
     """
     scalars = ("string", "integer", "number", "boolean")
     schema = _json_schema(member)
-    return schema is not None and schema.get("type") not in scalars
+    if schema is None or schema.get("type") in scalars:
+        return False
+    if "enum" in schema:
+        return any(isinstance(value, (list, dict)) for value in schema["enum"])
+    return "const" not in schema or isinstance(schema["const"], (list, dict))
 
 
 def _json_schema(member: Any) -> dict[str, Any] | None:

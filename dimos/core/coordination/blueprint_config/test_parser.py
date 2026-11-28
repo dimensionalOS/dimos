@@ -19,6 +19,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 import pytest
+from typing_extensions import TypedDict
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import (
@@ -633,3 +634,37 @@ def test_module_secret_defaults_are_hidden_in_help() -> None:
     assert "private-api-key" not in help_text
     assert "private-aes-key" not in help_text
     assert parser.parse(environ={}).module_kwargs("secretmodule")["api_key"] == "private-api-key"
+
+
+def test_sparse_environment_uses_declared_structured_field_types() -> None:
+    @dataclass
+    class Location:
+        path: Path
+
+    class FileOptions(TypedDict):
+        label: str
+
+    class FileConfig(ModuleConfig):
+        location: Location
+        options: FileOptions
+
+    class Files(Module):
+        config: FileConfig
+
+    parsed = BlueprintConfigParser(Files.blueprint()).parse(
+        environ={"FILES__LOCATION__PATH": "[west] office.db", "FILES__OPTIONS__LABEL": "{draft}"}
+    )
+    kwargs = parsed.module_kwargs("files")
+    assert kwargs["location"]["path"] == Path("[west] office.db")
+    assert kwargs["options"] == {"label": "{draft}"}
+
+
+def test_mixed_scalar_literal_accepts_bracketed_choice() -> None:
+    class ChoiceConfig(ModuleConfig):
+        kind: Literal["[auto]", 0] = 0
+
+    class Choice(Module):
+        config: ChoiceConfig
+
+    parsed = BlueprintConfigParser(Choice.blueprint()).parse(["--kind", "[auto]"], environ={})
+    assert parsed.module_kwargs("choice")["kind"] == "[auto]"
