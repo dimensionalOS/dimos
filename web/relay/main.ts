@@ -9,6 +9,7 @@ import { CERT_KEY_PAIR_ERROR, startRelay } from "./server.ts";
 
 const args = parseArgs(Deno.args, {
   string: [
+    "port",
     "host",
     "cockpit-dir",
     "sdk-dir",
@@ -24,7 +25,7 @@ const args = parseArgs(Deno.args, {
   // --open-topics gives every viewer every topic source; it is implied
   // without --auth-file (see RelayOptions.openTopics).
   boolean: ["unsafe-non-loopback", "exit-on-stdin-eof", "open-topics"],
-  default: { port: 7780, host: "127.0.0.1" },
+  default: { port: "7780", host: "127.0.0.1" },
 });
 
 if ((args.cert === undefined) !== (args.key === undefined)) {
@@ -51,7 +52,7 @@ if (host !== "127.0.0.1" && host !== "localhost" && !tls) {
 }
 
 const relay = await startRelay({
-  port: Number(args.port),
+  port: args.port.trim() === "" ? NaN : Number(args.port),
   host,
   cockpitDir: args["cockpit-dir"],
   sdkDir: args["sdk-dir"],

@@ -59,7 +59,7 @@ deno task dev --cockpit-dir cockpit/dist --sdk-dir sdk/dist
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--port` | 7780 | HTTP port. With `--cert` it is the QUIC port too. |
+| `--port` | 7780 | HTTP port (0–65535). Use 0 to let the OS choose a free port. With `--cert` it is the QUIC port too. |
 | `--host` | 127.0.0.1 | Bind address. Anything else needs the TLS and auth flags, or `--unsafe-non-loopback`. |
 | `--cockpit-dir` | none | The built cockpit, served at `/`. Without it, the relay answers `/api/*` only. |
 | `--sdk-dir` | none | The built SDK, served at `/sdk.js`. |

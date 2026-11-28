@@ -18,10 +18,13 @@ robot identity and the availability-driven default manifest."""
 from __future__ import annotations
 
 from collections.abc import Collection
+import json
+from pathlib import Path
 import socket
+import ssl
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 
 from dimos.core.module import ModuleConfig
 
@@ -38,6 +41,7 @@ from dimos.web.cockpit import (
     build_manifest_data,
 )
 from dimos.web.relay_bridge.channels import BUILTIN_CHANNELS, TX_CHANNELS, RuntimeChannelSpec
+from dimos.web.relay_bridge.locate import find_web_dir
 from dimos.web.relay_bridge.protocol import RobotInfo
 
 
@@ -58,22 +62,32 @@ class RelayBridgeConfig(ModuleConfig):
     through the relay's Cloudflare SFU when the relay advertises it and
     aiortc (the webrtc extra) is installed; False keeps JPEG frames through
     the relay."""
-    rtc_file: str | None = None
-    """Cloudflare configuration for the spawned local relay (its --rtc-file:
-    {"appId", "appSecret", "turnKeyId"?, "turnToken"?}). Local relay only:
-    an external relay (relay_url) carries its own."""
-    local_port: int = 7780
-    """HTTP port of the spawned local relay; 0 picks an ephemeral port (tests)."""
+    rtc_file: str | None = Field(
+        default=None,
+        description=(
+            "Existing Cloudflare configuration file for the spawned local relay "
+            "(appId, appSecret and optional turnKeyId and turnToken)."
+        ),
+    )
+    local_port: int = Field(
+        default=7780,
+        ge=0,
+        le=65535,
+        description="HTTP port of the spawned local relay (0 to 65535). Use 0 to pick a free port.",
+    )
     open_browser: bool = True
     """Open the local relay's page once it is up (local mode only)."""
     web_build: bool = True
     """Build the web dists (SDK bundle + Cockpit) before spawning the local
     relay when they are missing or stale (checkouts only; wheels ship them
     pre-built)."""
-    serve_dir: str | None = None
-    """Directory the spawned local relay serves at / instead of the Cockpit
-    (index.html for /); /api/* and /sdk.js keep precedence over it. Local
-    relay only: rejected when relay_url attaches to an existing relay."""
+    serve_dir: str | None = Field(
+        default=None,
+        description=(
+            "Existing directory the spawned local relay serves at / in place of the cockpit "
+            "(index.html for /). The /api/* and /sdk.js routes keep precedence."
+        ),
+    )
     robot_id: str = ""
     """Relay identity; empty falls back to the hostname."""
     robot_name: str = ""
@@ -99,6 +113,54 @@ class RelayBridgeConfig(ModuleConfig):
     """Compiled rx runtime specs, set by cockpit() alongside `manifest` (they
     are authored together and cross-checked at start). None: encoders resolve
     from the manifest against BUILTIN_CHANNELS."""
+
+    @field_validator("local_port", mode="before")
+    @classmethod
+    def reject_boolean_port(cls, value: Any) -> Any:
+        if isinstance(value, bool):
+            raise ValueError("local_port must be an integer")
+        return value
+
+    @property
+    def effective_relay_url(self) -> str | None:
+        return self.relay_url or self.g.relay_url
+
+    @model_validator(mode="after")
+    def validate_local_paths(self) -> RelayBridgeConfig:
+        if self.serve_dir is not None:
+            if self.effective_relay_url is not None:
+                raise ValueError("serve_dir requires the spawned local relay (--local-relay)")
+            if not self.serve_dir or not Path(self.serve_dir).is_dir():
+                raise ValueError(f"serve_dir must be an existing directory: {self.serve_dir!r}")
+        if self.rtc_file is not None:
+            if self.effective_relay_url is not None:
+                raise ValueError("rtc_file requires the spawned local relay (--local-relay)")
+            if not Path(self.rtc_file).is_file():
+                raise ValueError(f"rtc_file must be an existing file: {self.rtc_file!r}")
+            _validate_rtc_file(Path(self.rtc_file))
+        # read only for a relay started elsewhere: with a local relay it is not used
+        if self.relay_ca is not None and self.effective_relay_url is not None:
+            if not Path(self.relay_ca).is_file():
+                raise ValueError(f"relay_ca must be an existing file: {self.relay_ca!r}")
+            try:
+                ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_verify_locations(cafile=self.relay_ca)
+            except OSError as exc:
+                raise ValueError("relay_ca must contain a readable PEM CA bundle") from exc
+        return self
+
+
+def _validate_rtc_file(path: Path) -> None:
+    """Use the field groups shipped with the selected relay. Never echo file values."""
+    try:
+        fields = json.loads((find_web_dir() / "relay" / "rtc-fields.json").read_text())
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise ValueError("rtc_file could not be read or parsed") from exc
+    required, paired = set(fields["required"]), set(fields["paired"])
+    if not isinstance(data, dict) or set(data) not in (required, required | paired):
+        raise ValueError("rtc_file must contain the required fields and any paired fields together")
+    if not all(isinstance(value, str) and value for value in data.values()):
+        raise ValueError("rtc_file fields must be non-empty strings")
 
 
 def default_manifest(config: RelayBridgeConfig, available: Collection[str]) -> dict[str, Any]:

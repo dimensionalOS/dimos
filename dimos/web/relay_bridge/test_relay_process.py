@@ -127,6 +127,16 @@ def test_relay_process_reports_unpaired_tls_flag_before_reading_pem(tmp_path: Pa
         process.stop()
 
 
+@pytest.mark.parametrize("port", [-1, 65536])
+def test_relay_process_reports_invalid_port(port: int) -> None:
+    process = RelayProcess(port=port)
+    try:
+        with pytest.raises(RuntimeError, match="--port must be an integer"):
+            process.start()
+    finally:
+        process.stop()
+
+
 def test_relay_serves_cockpit_dist(tmp_path: Path) -> None:
     dist = _make_fake_dist(tmp_path)
     with RelayProcess(port=0, cockpit_dir=dist) as info:

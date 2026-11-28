@@ -24,10 +24,12 @@ import time
 from typing import Any
 
 import numpy as np
+from pydantic import ValidationError
 import pytest
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.web.relay_bridge import relay_bridge_module
+from dimos.web.relay_bridge.config import RelayBridgeConfig
 from dimos.web.relay_bridge.e2e_support import stop_module
 from dimos.web.relay_bridge.manifest import TRACK_ENCODING
 from dimos.web.relay_bridge.module_test_support import (
@@ -51,7 +53,6 @@ from dimos.web.relay_bridge.protocol import (
     RtcTrack,
     Subs,
 )
-from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
 
 
 def _rtc_bridge(monkeypatch, **kwargs):
@@ -244,16 +245,25 @@ def test_rtc_peer_loss_after_connect_is_torn_down_and_reoffered(monkeypatch) -> 
         stop_module(module)
 
 
-def test_rtc_file_rejected_with_relay_url_and_when_missing(tmp_path: Path) -> None:
-    module = RelayBridgeModule(
-        relay_url="http://127.0.0.1:1", rtc_file=str(tmp_path / "rtc.json"), open_browser=False
+@pytest.mark.parametrize("missing", [True, False])
+def test_rtc_file_requires_local_file(tmp_path: Path, missing: bool) -> None:
+    path = tmp_path / "missing.json" if missing else tmp_path
+    with pytest.raises(ValidationError, match="rtc_file"):
+        RelayBridgeConfig(rtc_file=str(path))
+
+
+def test_rtc_file_content_fails_before_startup(tmp_path: Path) -> None:
+    path = tmp_path / "rtc.json"
+    for invalid in (
+        "{}",
+        "not JSON",
+        '{"appId":"dummy", "appSecret":"dummy", "turnToken":"dummy"}',
+    ):
+        path.write_text(invalid)
+        with pytest.raises(ValidationError, match="rtc_file") as exc:
+            RelayBridgeConfig(rtc_file=str(path))
+        assert "dummy" not in str(exc.value)
+    path.write_text(
+        '{"appId":"dummy", "appSecret":"dummy", "turnKeyId":"dummy", "turnToken":"dummy"}'
     )
-    with pytest.raises(RuntimeError, match="rtc_file requires"):
-        module.start()
-    stop_module(module)
-    module = RelayBridgeModule(
-        local_port=0, open_browser=False, rtc_file=str(tmp_path / "nope.json"), robot_id="unit-bot"
-    )
-    with pytest.raises(RuntimeError, match="rtc_file does not exist"):
-        module.start()
-    stop_module(module)
+    assert RelayBridgeConfig(rtc_file=str(path)).rtc_file == str(path)

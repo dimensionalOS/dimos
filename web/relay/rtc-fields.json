@@ -1,0 +1,4 @@
+{
+  "required": ["appId", "appSecret"],
+  "paired": ["turnKeyId", "turnToken"]
+}
