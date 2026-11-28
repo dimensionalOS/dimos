@@ -919,6 +919,7 @@ def test_joint_velocity_limits_compose_with_loaded_renamed_views(tmp_path: Path)
 
 
 def test_an_added_frame_is_a_joint_of_the_description_too(tmp_path: Path) -> None:
+    pytest.importorskip("pxr")
     """with_frames welds the frame into the layer, so joints and frame_names have to say so."""
     source = tmp_path / "arm.urdf"
     source.write_text('<robot name="arm"><link name="base_link"/></robot>')
