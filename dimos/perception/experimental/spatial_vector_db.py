@@ -56,11 +56,11 @@ class SpatialVectorDB:
         """
         self.collection_name = collection_name
 
-        # Here to prevent unwanted imports in the file.
-        import chromadb
+        if chroma_client is None:
+            import chromadb
 
-        # Use provided client or create in-memory client
-        self.client = chroma_client if chroma_client is not None else chromadb.Client()
+            chroma_client = chromadb.Client()
+        self.client = chroma_client
 
         # Get or create the collection
         self.image_collection = self.client.get_or_create_collection(

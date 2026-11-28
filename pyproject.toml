@@ -331,6 +331,7 @@ cuda = [
     "onnxruntime-gpu>=1.21; platform_machine == 'x86_64'",  # >=1.21 for onnxruntime.preload_dlls()
     # MeshModule's marching cubes
     "warp-lang>=1.13",
+    "torch>=2.1,<2.8",
 ]
 
 sim = [

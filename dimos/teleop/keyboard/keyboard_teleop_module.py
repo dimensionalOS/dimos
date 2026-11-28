@@ -39,8 +39,12 @@ from typing import TYPE_CHECKING, Any
 
 try:
     import pygame
-except ImportError:
+except ImportError as exc:
+    _pygame_error: ImportError | None = exc
     pygame = None  # type: ignore[assignment]
+
+else:
+    _pygame_error = None
 
 if TYPE_CHECKING:
     from pygame.key import _ScancodeWrapper
@@ -117,6 +121,12 @@ class KeyboardTeleopModule(Module):
     _window: subprocess.Popen[str] | None = None
     _gripper_opening: float | None = None
 
+    @classmethod
+    def check_dependencies(cls, **kwargs: Any) -> None:
+        super().check_dependencies(**kwargs)
+        if _pygame_error is not None:
+            raise ImportError(f"Cannot load pygame: {_pygame_error}") from _pygame_error
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._stop_event = threading.Event()
@@ -124,10 +134,7 @@ class KeyboardTeleopModule(Module):
 
     @rpc
     def start(self) -> None:
-        if pygame is None:
-            raise ImportError(
-                "pygame is required for keyboard teleop. Install it with: pip install pygame"
-            )
+        self.check_dependencies()
         super().start()
         self._stop_event.clear()
         if sys.platform == "darwin":

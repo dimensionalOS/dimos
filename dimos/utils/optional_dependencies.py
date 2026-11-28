@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from importlib.metadata import PackageNotFoundError, distribution, packages_distributions
 from importlib.util import find_spec
 import re
+import shlex
 import sys
 
 from packaging.requirements import Requirement
@@ -84,7 +85,8 @@ def explain_missing_extra() -> Iterator[None]:
         hint = f"Install {choices}"
         if (DIMOS_PROJECT_ROOT / ".git").exists():
             commands = " or ".join(
-                f"`uv sync --extra {extra} --inexact`" for extra in sorted(extras)
+                f"`uv sync --project {shlex.quote(str(DIMOS_PROJECT_ROOT))} --extra {extra} --inexact`"
+                for extra in sorted(extras)
             )
             hint += f" with {commands}"
         raise MissingExtraError(f"Missing {module!r}. {hint}.") from error

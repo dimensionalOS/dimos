@@ -37,6 +37,7 @@ from dimos.perception.experimental.spatial_vector_db import SpatialVectorDB
 from dimos.perception.experimental.visual_memory import VisualMemory
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.optional_dependencies import check_imports
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -80,6 +81,12 @@ class SpatialMemory(Module):
     # LCM inputs
     color_image: In[Image]
     tf: In[TFMessage]
+
+    @classmethod
+    def check_dependencies(cls, **kwargs: Any) -> None:
+        if kwargs.get("chroma_client") is None:
+            check_imports("chromadb")
+        check_imports("onnxruntime")
 
     def __init__(self, **kwargs: Any) -> None:
         """
