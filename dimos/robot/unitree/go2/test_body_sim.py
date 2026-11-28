@@ -28,12 +28,10 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
 from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 from dimos.robot.unitree.go2.body_sim import GO2_BODY, GO2_JOINT_NAMES, Go2BodySim
-from dimos.sim2.actions import read_actions
-from dimos.sim2.assets.logistics import LOGISTICS
 from dimos.sim2.body import is_site
 from dimos.sim2.mujoco.backend import MujocoBackend
-from dimos.sim2.scene import scene_usd
-from dimos.sim2.sim import compose_usds
+from dimos.sim2.scene import LOGISTICS, scene_usd
+from dimos.sim2.sim import compose_usds, read_actions
 
 _SPOT = "logistics/spawns/go2"
 

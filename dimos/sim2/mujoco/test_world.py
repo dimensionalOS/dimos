@@ -20,10 +20,8 @@ pytest.importorskip("pxr")
 
 
 def test_a_spawn_points_volume_neither_collides_nor_renders() -> None:
-    from dimos.sim2.assets.logistics import LOGISTICS
     from dimos.sim2.mujoco.world import compile_world
-    from dimos.sim2.scene import scene_usd
-    from dimos.sim2.usd_layer import layer_file
+    from dimos.sim2.scene import LOGISTICS, layer_file, scene_usd
 
     model = compile_world(layer_file(scene_usd(LOGISTICS).usd, "logistics"), ids=()).compile()
     names = [model.geom(geom).name for geom in range(model.ngeom)]

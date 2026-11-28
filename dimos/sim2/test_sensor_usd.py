@@ -68,7 +68,7 @@ def _streams(module: type, *, direction: type) -> dict[str, type]:
 def test_a_livox_is_hardware_sending_what_a_real_mid360_sends() -> None:
     from dimos.hardware.sensors.lidar.livox.module import Mid360
     from dimos.sim2.livox import LivoxSim
-    from dimos.sim2.sensor import SimSensor
+    from dimos.sim2.sim import SimSensor
 
     assert issubclass(LivoxSim, HardwareModule)
     assert _streams(LivoxSim, direction=Out) == {
@@ -82,7 +82,7 @@ def test_a_livox_is_hardware_sending_what_a_real_mid360_sends() -> None:
 def test_a_camera_is_hardware_sending_what_a_real_camera_sends() -> None:
     from dimos.hardware.sensors.camera.module import WebcamModule
     from dimos.sim2.camera import SimCamera
-    from dimos.sim2.sensor import SimSensor
+    from dimos.sim2.sim import SimSensor
 
     assert issubclass(SimCamera, HardwareModule)
     real = {

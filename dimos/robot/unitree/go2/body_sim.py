@@ -15,8 +15,6 @@
 
 """A simulated Go2 body: its 12 joints driven by joint commands, its joint states and IMU read off the world, and mounts for a lidar and a camera."""
 
-from pathlib import Path
-
 from pydantic import Field
 
 from dimos.core.hardware_module import Mounts
@@ -27,6 +25,7 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     MID360_XYZ,
 )
 from dimos.sim2.body import SimBody, SimBodyConfig, with_sites
+from dimos.utils.data import get_data
 
 # Its root link: the prim the real Go2's base_link is.
 GO2_BODY = "go2/Geometry/base_link"
@@ -42,7 +41,7 @@ GO2_JOINT_NAMES = tuple(
 
 def go2_body_usd() -> UsdModel:
     """The articulated Go2, with its lidar and camera mounts (each x forward) and its IMU marked as Isaac Sim sites."""
-    framed = UsdModel.from_file(Path(__file__).parent / "assets" / "go2.usda").with_frames(
+    framed = UsdModel.from_file(get_data("go2_sim_usd") / "go2.usda").with_frames(
         {
             "camera": (GO2_BODY, CAMERA_XYZ, (0.0, 0.0, 0.0)),
             "lidar": (GO2_CAMERA, MID360_XYZ, (0.0, MID360_PITCH_DOWN, 0.0)),
