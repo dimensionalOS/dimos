@@ -46,6 +46,7 @@ from dimos.robot.manipulators.common.blueprints import manipulation_mapping
 from dimos.robot.manipulators.xarm.blueprints.basic import xarm_coordinator
 from dimos.robot.manipulators.xarm.config import (
     XARM_ARMS,
+    XARM_GRIPPER_MAP_CUT,
     XARM_HEURISTIC_AIM,
     XArmType,
     make_xarm7_sim_module_kwargs,
@@ -182,6 +183,7 @@ def _grasp_modules(arm: XArmType, simulated: bool) -> tuple[Blueprint | MetaBlue
             self_filter_model=xarm_model(arm, robot="arm"),
             voxel_size=XARM_GRASP_VOXEL_SIZE,
             workspace_radius_m=XARM_GRASP_WORKSPACE_RADIUS,
+            riding_boxes=[XARM_GRIPPER_MAP_CUT],
         ),
         RerunBridgeModule.blueprint(),
         control,
