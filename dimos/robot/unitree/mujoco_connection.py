@@ -58,13 +58,13 @@ from dimos.simulation.mujoco.constants import (
     VIDEO_HEIGHT,
     VIDEO_WIDTH,
 )
-from dimos.simulation.mujoco.menagerie import SIM_INSTALL_HINT, ensure_menagerie
 from dimos.simulation.mujoco.shared_memory import ShmWriter
 from dimos.utils.data import get_data
 from dimos.utils.executable import find_executable
 from dimos.utils.logging_config import setup_logger
 
 ODOM_FREQUENCY = 50
+SIM_INSTALL_HINT = "Simulation dependencies are not installed. Run `uv sync --extra sim --inexact` to install them."
 
 # DimOS console output is uncolored when the child writes to our pipe.
 _SUBPROCESS_LOG_LINE = re.compile(
@@ -92,12 +92,9 @@ class MujocoConnection:
         except ImportError as exc:
             raise ImportError(SIM_INSTALL_HINT) from exc
 
-        # Pre-download the mujoco_sim data.
+        # Fetch the robot data before starting the simulator subprocess.
         get_data("mujoco_sim")
-
-        # Clone the mujoco_menagerie here rather than in the mujoco process,
-        # where the download can time out.
-        ensure_menagerie()
+        get_data("mujoco_menagerie")
 
         self.config = config
         self.robot_model = robot_model
