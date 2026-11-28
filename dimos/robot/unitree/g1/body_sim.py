@@ -32,14 +32,13 @@ from dimos.robot.unitree.g1.g1_tf_publisher import (
     MID360_PITCH,
     G1TfPublisherConfig,
 )
-from dimos.robot.unitree.go2.go2_mid360_static_transforms import OPTICAL_RPY
 from dimos.sim2.body import SimBody, SimBodyConfig, with_sites
 
 # Its root link, the pelvis; named here so building a blueprint needs no USD read.
 G1_BODY = "g1_29dof_rev_1_0/Geometry/pelvis"
 G1_TORSO = f"{G1_BODY}/waist_yaw_link/waist_roll_link/torso_link"
-# Its head camera's housing, the D435 the real G1 has on its torso.
-G1_D435 = f"{G1_TORSO}/d435_link"
+# Its head camera's mount (x forward), where the real G1 has its D435.
+G1_CAMERA = f"{G1_TORSO}/camera"
 # The pelvis IMU, a site on its root link.
 G1_IMU = f"{G1_BODY}/imu_in_pelvis"
 
@@ -53,20 +52,19 @@ G1_ODOM_TF: dict[str, dict[str, str]] = {
 
 
 def g1_body_usd() -> UsdModel:
-    """The G1, with its Mid-360 and D435 mounts (the camera's an optical frame) and its pelvis IMU marked as Isaac Sim sites."""
+    """The G1, with its Mid-360 and D435 mounts (each x forward) and its pelvis IMU marked as Isaac Sim sites."""
     framed = UsdModel.from_file(Path(__file__).parent / "assets" / "g1.usda").with_frames(
         {
             # The real Mid-360 hangs upside down under the head.
             "lidar": (G1_TORSO, _TORSO_MID360_XYZ, (math.pi, MID360_PITCH, 0.0)),
-            "d435_link": (G1_TORSO, _TORSO_D435_XYZ, (0.0, D435_PITCH, 0.0)),
-            "camera": (G1_D435, (0.0, 0.0, 0.0), OPTICAL_RPY),
+            "camera": (G1_TORSO, _TORSO_D435_XYZ, (0.0, D435_PITCH, 0.0)),
         }
     )
     return with_sites(
         framed,
         {
             f"{G1_TORSO}/lidar": ("lidar mount", "X"),
-            f"{G1_D435}/camera": ("head camera mount, an optical frame", "Z"),
+            G1_CAMERA: ("head camera mount", "X"),
             G1_IMU: ("pelvis IMU", "X"),
         },
     )
@@ -89,4 +87,4 @@ class G1BodySim(SimBody):
     """A G1 body in a simulated world, held at its USD's pose until a joint command comes; no policy keeps it up."""
 
     config: G1BodySimConfig
-    mounts = Mounts(f"{G1_TORSO}/lidar", f"{G1_D435}/camera")
+    mounts = Mounts(f"{G1_TORSO}/lidar", G1_CAMERA)
