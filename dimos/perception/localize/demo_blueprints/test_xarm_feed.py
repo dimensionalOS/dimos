@@ -13,13 +13,9 @@
 # limitations under the License.
 
 
-import threading
-
 import numpy as np
-from reactivex import merge
 
 from dimos.constants import HUNG_TEST_TIMEOUT
-from dimos.memory.replay import Replay
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -37,8 +33,7 @@ def test_feed_logs_source_duration_and_completion(tmp_path, mocker):
                 )
             store.stream("camera_info", CameraInfo).append(CameraInfo(), ts=ts)
             store.stream("tf", TFMessage).append(TFMessage(), ts=ts)
-    log = mocker.patch("dimos.memory.replay_progress.logger")
-    add = mocker.spy(Replay, "add")
+    log = mocker.patch("dimos.memory.replay_module.logger")
     with DepthCameraFeed(dataset=str(path)) as feed:
         log.info.assert_called_once_with(
             "Replay started",
@@ -48,8 +43,6 @@ def test_feed_logs_source_duration_and_completion(tmp_path, mocker):
             speed=1.0,
             loop=False,
         )
-        finished = threading.Event()
-        merge(*add.spy_return_list).subscribe(on_completed=finished.set)
         feed.on_system_modules_ready([])
-        assert finished.wait(HUNG_TEST_TIMEOUT)
+        assert feed.replay_done.wait(HUNG_TEST_TIMEOUT)
         assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=str(path))]

@@ -23,7 +23,6 @@ import select
 import signal
 import socket
 import subprocess
-import threading
 import time
 from typing import cast
 import uuid
@@ -31,7 +30,6 @@ import uuid
 from mcap.reader import make_reader
 import numpy as np
 import pytest
-from reactivex import merge
 from typer.testing import CliRunner
 
 from dimos.constants import DIMOS_PROJECT_ROOT, HUNG_TEST_TIMEOUT
@@ -54,7 +52,6 @@ from dimos.imitation.dataprep.core import extract_episodes
 from dimos.imitation.dataprep.schema import EpisodeExtractor, FeatureSpec, RecordingSchema
 from dimos.memory.cli.app import mem_app
 from dimos.memory.cli.dataset import open_dataset
-from dimos.memory.replay import Replay
 from dimos.memory.replay_module import ReplayModule
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
@@ -620,7 +617,6 @@ def test_native_json_events_replay_to_the_live_quest_hud(
 ):
     artifact = _capture_native_artifact(tmp_path, rust_recorder_executable, store_kind, monkeypatch)
     received = []
-    add = mocker.spy(Replay, "add")
     with ExitStack() as cleanup:
         hud = WebXRTeleopModule()
         cleanup.callback(hud.stop)
@@ -634,10 +630,8 @@ def test_native_json_events_replay_to_the_live_quest_hud(
         subscription = replay.outputs["status"].subscribe(hud._on_episode_status)
         cleanup.callback(subscription)
         replay.start()
-        finished = threading.Event()
-        merge(*add.spy_return_list).subscribe(on_completed=finished.set)
         replay.on_system_modules_ready([])
-        assert finished.wait(HUNG_TEST_TIMEOUT)
+        assert replay.replay_done.wait(HUNG_TEST_TIMEOUT)
         assert [(p["ts"], p["last_event"]) for p in received] == [(12.0, "start"), (13.0, "save")]
         assert received[-1]["type"] == "episode_status"
         assert received[-1]["episodes_saved"] == 1

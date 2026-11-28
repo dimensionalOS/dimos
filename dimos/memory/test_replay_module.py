@@ -20,15 +20,16 @@ from unittest import mock
 
 import pytest
 from pytest_mock import MockerFixture
-from reactivex import interval, merge
+from reactivex import interval
 from reactivex.disposable import Disposable
 from reactivex.testing import TestScheduler
 
 from dimos.constants import HUNG_TEST_TIMEOUT
 from dimos.core.stream import Out
-from dimos.memory.replay import Replay, ReplayStream
 from dimos.memory.replay_module import replay_module
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.type.observation import Observation
+from dimos.memory.utils.time_window import RecordingWindow
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
@@ -78,19 +79,19 @@ def test_stop_waits_for_in_flight_decode(recording: str, mocker: MockerFixture) 
     decoded = threading.Event()
     decoded_at_dispose: list[bool] = []
     reader: list[threading.Thread] = []
-    decode = ReplayStream._decode
+    decode = Observation.data.fget
     join = threading.Thread.join
     calls = 0
 
-    def held_decode(self: ReplayStream[Any], obs: Any) -> Any:
+    def held_decode(obs: Observation[Any]) -> Any:
         nonlocal calls
         calls += 1
         if calls == 1:  # the frame start() buffers
-            return decode(self, obs)
+            return decode(obs)
         reader.append(threading.current_thread())
         entered.set()
         assert stop_waiting.wait(HUNG_TEST_TIMEOUT), "stop did not wait for the decode"
-        data = decode(self, obs)
+        data = decode(obs)
         decoded.set()
         return data
 
@@ -99,7 +100,7 @@ def test_stop_waits_for_in_flight_decode(recording: str, mocker: MockerFixture) 
             stop_waiting.set()
         join(thread, timeout)
 
-    mocker.patch.object(ReplayStream, "_decode", held_decode)
+    mocker.patch.object(Observation, "data", property(held_decode))
     mocker.patch.object(threading.Thread, "join", tracked_join)
     module = replay_module(recording, topics="odom")(
         dataset=recording, topics="odom", buffer_size=1
@@ -202,16 +203,14 @@ def test_single_timestamp_stream_is_republished_and_not_the_anchor(tmp_path: Pat
 def test_slow_decode_delays_later_frames_but_drops_none(
     recording: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dimos.memory import replay as replay_mod
+    real = Observation.data.fget
 
-    real = replay_mod.ReplayStream._decode
-
-    def slow(self: Any, obs: Any) -> Any:
+    def slow(obs: Observation[Any]) -> Any:
         if obs.ts == 1.05:  # the goal frame, before the last two odom frames
             time.sleep(0.2)
-        return real(self, obs)
+        return real(obs)
 
-    monkeypatch.setattr(replay_mod.ReplayStream, "_decode", slow)
+    monkeypatch.setattr(Observation, "data", property(slow))
     module = replay_module(recording)(dataset=recording)
     got: dict[str, list[float]] = {"odom": [], "goal": []}
     module.outputs["odom"].subscribe(lambda m: got["odom"].append(m.ts))
@@ -227,14 +226,14 @@ def test_slow_decode_delays_later_frames_but_drops_none(
 
 def test_slow_stream_setup_does_not_skip_the_first_frames(recording: str) -> None:
     """Setup slower than the recording's first frames loses none of them."""
-    real = ReplayStream.rows
+    real = RecordingWindow.apply
 
-    def slow(self: Any) -> Any:
+    def slow(self: RecordingWindow, stream: Any) -> Any:
         time.sleep(0.1)  # longer than the recording, on every query
-        return real(self)
+        return real(self, stream)
 
     got: dict[str, list[float]] = {"odom": [], "goal": []}
-    with mock.patch("dimos.memory.replay.ReplayStream.rows", slow):
+    with mock.patch.object(RecordingWindow, "apply", slow):
         module = replay_module(recording)(dataset=recording)
         module.outputs["odom"].subscribe(lambda m: got["odom"].append(m.ts))
         module.outputs["goal"].subscribe(lambda m: got["goal"].append(m.ts))
@@ -276,16 +275,13 @@ def test_exit_on_end_shuts_the_run_down_after_the_last_frame(recording, mocker, 
     )
     shutdown = threading.Event()
     client.stop.side_effect = shutdown.set
-    add = mocker.spy(Replay, "add")
     module = replay_module(recording)(
         dataset=recording, exit_on_end=exit_on_end, rpc_name="replay-under-test"
     )
-    finished = threading.Event()
     try:
         module.start()
-        merge(*add.spy_return_list).subscribe(on_completed=finished.set)
         module.on_system_modules_ready([])
-        assert finished.wait(HUNG_TEST_TIMEOUT)
+        assert module.replay_done.wait(HUNG_TEST_TIMEOUT)
         if exit_on_end:
             assert shutdown.wait(HUNG_TEST_TIMEOUT)
     finally:
@@ -304,9 +300,8 @@ def test_replay_logs_source_and_finishes_after_all_timed_streams(recording, mock
             info = store.stream("camera_info", PoseStamped)
             for _ in range(2):
                 info.append(PoseStamped(ts=0.0), ts=0.0)
-    log = mocker.patch("dimos.memory.replay_progress.logger")
+    log = mocker.patch("dimos.memory.replay_module.logger")
     module = replay_module(recording)(dataset=recording)
-    add = mocker.spy(Replay, "add")
     odom: list[float] = []
     module.outputs["odom"].subscribe(lambda m: odom.append(m.ts))
     try:
@@ -319,10 +314,8 @@ def test_replay_logs_source_and_finishes_after_all_timed_streams(recording, mock
             speed=1.0,
             loop=False,
         )
-        finished = threading.Event()
-        merge(*add.spy_return_list).subscribe(on_completed=finished.set)
         module.on_system_modules_ready([])
-        assert finished.wait(HUNG_TEST_TIMEOUT)
+        assert module.replay_done.wait(HUNG_TEST_TIMEOUT)
         assert len(odom) == 3  # goal ended first, with odom frames still to come
         assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=recording)]
     finally:
@@ -338,7 +331,7 @@ def test_replay_with_only_static_metadata_reports_completion(recording, mocker):
         "dimos.memory.replay_module.interval",
         side_effect=lambda period: interval(period, scheduler=scheduler),
     )
-    log = mocker.patch("dimos.memory.replay_progress.logger")
+    log = mocker.patch("dimos.memory.replay_module.logger")
     module = replay_module(recording, topics="camera_info")(dataset=recording, topics="camera_info")
     received = []
     with Disposable(module.outputs["camera_info"].subscribe(received.append)), module:

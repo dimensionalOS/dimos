@@ -22,10 +22,14 @@ class still ends up with the same ports.
 
 from __future__ import annotations
 
+from collections import deque
 from functools import partial
+import heapq
+from math import inf
 from pathlib import Path
 import sys
-from threading import Thread
+from threading import Condition, Event, Thread, current_thread
+import time
 from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
@@ -37,16 +41,16 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import Out
 from dimos.memory.cli.dataset import open_dataset, open_store, resolve_dataset, stream_payload_types
-from dimos.memory.replay import Replay
-from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.base import Store
 from dimos.memory.tap import check_topics, matching
+from dimos.memory.utils.time_window import RecordingWindow
 from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.memory.replay import ReplayStream
-    from dimos.msgs.protocol import DimosMsg
+    from collections.abc import Generator
+
+    from dimos.memory.stream import Stream
 
 logger = setup_logger()
 
@@ -117,7 +121,6 @@ class ReplayModule(Module):
     stream_types: dict[str, type] = {}  # set by replay_module()
     topics: str = "*"  # set by replay_module(); carried to workers via the blueprint kwargs
     _store: Store | None = None
-    _replay: Replay | None = None
     _static: list[tuple[Out[Any], Any]] = []
 
     @classproperty
@@ -128,6 +131,14 @@ class ReplayModule(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._rows: dict[str, Stream[Any]] = {}
+        self._stopped = Event()
+        self._buffer = _Buffer(self.config.buffer_size, self._stopped)
+        self._reader: Thread | None = None
+        self._read_done = Event()
+        self._publisher: Thread | None = None
+        self._error: Exception | None = None
+        self.replay_done = Event()  # set once the last frame is published, or the replay failed
         if self.config.dataset and not self.outputs:
             try:
                 self._add_ports()
@@ -149,47 +160,150 @@ class ReplayModule(Module):
         store: Store = open_store(path)
         store.start()
         self._store = store
-        config = self.config
-        replay = store.replay(
-            speed=config.speed,
-            loop=config.loop,
-            loop_gap=config.loop_gap,
-            seek=config.seek,
-            duration=config.duration,
-            buffer_size=config.buffer_size,
-            lag_warning=config.lag_warning,
-        )
-        available = set(replay.list_streams())
+        window = RecordingWindow.from_store(store, self.config.seek or 0.0, self.config.duration)
+        available = set(store.list_streams())
         missing = sorted(set(self.outputs) - available)
         if missing:
             logger.warning("Recording has no stream for these ports", path=str(path), ports=missing)
-        streams: dict[str, ReplayStream[DimosMsg]] = {
-            name: replay.stream(name) for name in self.outputs if name in available
+        rows: dict[str, Stream[Any]] = {
+            n: window.apply(store.stream(n)).order_by("ts") for n in self.outputs if n in available
         }
+        bounds = {n: (r.first().ts, r.last().ts) for n, r in rows.items() if r.count()}
         # A stream whose rows all carry one timestamp (camera_info recorded from a
         # constant stamped at import, often long before the run) is republished at
         # 1 Hz instead of replayed, and does not start the timeline: otherwise the
         # replay would spend that lead time emitting nothing.
-        static = {n for n, s in streams.items() if s.count() > 1 and s.first_ts() == s.last_ts()}
-        timed = {n: s for n, s in streams.items() if n not in static}
-        progress = ReplayProgress(str(path), on_complete=self._replay_finished)
-        progress.start(replay, timed.values())
-        self._replay = replay
-        self._static = [(self.outputs[n], streams[n].first()) for n in static]
-        for name, stream in timed.items():
-            port = self.outputs[name]
-            logger.info("Replaying %s -> %s", name, port)
-            self.register_disposable(progress.track(replay.add(stream)).subscribe(port.publish))
-        progress.seal()
-        replay.load()
+        static = {n for n, (first, last) in bounds.items() if first == last and rows[n].count() > 1}
+        self._static = [(self.outputs[n], rows[n].first().data) for n in static]
+        self._rows = {n: r for n, r in rows.items() if n not in static}
+        timed = [bounds[n] for n in self._rows if n in bounds]
+        logger.info(
+            "Replay started",
+            source=self.config.dataset,
+            path=str(path),
+            duration_s=max(b for _, b in timed) - min(a for a, _ in timed) if timed else 0.0,
+            speed=self.config.speed,
+            loop=self.config.loop,
+        )
+        for name in self._rows:
+            logger.debug("Replaying %s -> %s", name, self.outputs[name])
+        # Pay the first reads and decodes here, before the clock starts.
+        self._reader = Thread(target=self._read, name="replay-reader", daemon=True)
+        self._reader.start()
+        self._buffer.wait_full(self._read_done)
 
-    def _replay_finished(self) -> None:
-        if self.config.exit_on_end:
-            logger.info("Requesting coordinator shutdown after replay", source=self.config.dataset)
-            # Keep the RPC round trip off the replay thread.
-            Thread(target=self._request_shutdown, daemon=True).start()
+    @rpc
+    def on_system_modules_ready(self, _modules: list[RPCClient]) -> None:
+        # Every module has started, so every subscriber is listening for the first frame.
+        for port, msg in self._static:
+            self.register_disposable(interval(1.0).subscribe(partial(_republish, port, msg)))
+        self._static = []
+        if self._reader is not None and self._publisher is None and not self._stopped.is_set():
+            self._publisher = Thread(
+                target=self._publish, args=(time.monotonic(),), name="replay-publisher", daemon=True
+            )
+            self._publisher.start()
+
+    @rpc
+    def stop(self) -> None:
+        # Stop reading and publishing before the recording closes.
+        self._stopped.set()
+        self._buffer.wake()
+        for thread in (self._reader, self._publisher):
+            if thread is not None and thread is not current_thread():
+                thread.join()
+        super().stop()
+        if self._store is not None:
+            self._store.stop()
+            self._store = None
+
+    def _read(self) -> None:
+        try:
+            if self._read_passes():
+                self._buffer.put((inf, "", _END))
+        finally:
+            self._read_done.set()
+            self._buffer.wake()
+
+    def _read_passes(self) -> bool:
+        """Buffer every pass of the recording. False once stopped or failed."""
+        offset = 0.0
+        while True:
+            rows = [self._rows_of(name) for name in self._rows]
+            first = last = None
+            try:
+                for ts, name, obs in heapq.merge(*rows, key=lambda row: row[0]):
+                    if obs is _FAILED:
+                        self._buffer.put((ts, name, _FAILED))
+                        return False
+                    first = ts if first is None else first
+                    last = ts
+                    try:
+                        value = obs.data
+                    except Exception as error:
+                        self._error = error
+                        self._buffer.put((ts, name, _FAILED))
+                        return False
+                    if not self._buffer.put((ts + offset, name, value)):
+                        return False
+            finally:
+                for stream_rows in rows:
+                    stream_rows.close()
+            if not self.config.loop or first is None or last is None:
+                return True
+            offset += last - first + self.config.loop_gap
+
+    def _rows_of(self, name: str) -> Generator[tuple[float, str, Any], None, None]:
+        """*name*'s rows in ts order; a read error ends it at once."""
+        try:
+            rows = iter(self._rows[name])
+            try:
+                for obs in rows:
+                    yield float(obs.ts), name, obs
+            finally:
+                close = getattr(rows, "close", None)
+                if close is not None:
+                    close()
+        except Exception as error:
+            self._error = error
+            yield -inf, name, _FAILED
+
+    def _publish(self, wall_t0: float) -> None:
+        first_ts: float | None = None
+        behind = False
+        while (item := self._buffer.get()) is not None:
+            ts, name, value = item
+            if value is _END:
+                logger.info("Replay finished", source=self.config.dataset)
+                self.replay_done.set()
+                if self.config.exit_on_end:
+                    # Keep the RPC round trip off the publisher thread.
+                    Thread(target=self._request_shutdown, daemon=True).start()
+                return
+            if value is _FAILED:
+                logger.error(
+                    "Replay stopped: recording could not be read", stream=name, exc_info=self._error
+                )
+                self.replay_done.set()
+                return
+            if first_ts is None:
+                first_ts = ts
+            early = wall_t0 + (ts - first_ts) / self.config.speed - time.monotonic()
+            if early > 0:
+                behind = False  # back on schedule
+                if self._stopped.wait(early):
+                    return
+            elif -early > self.config.lag_warning and not behind:
+                behind = True
+                logger.warning("Replay is behind schedule", lag_s=round(-early, 3), stream=name)
+            try:
+                self.outputs[name].publish(value)
+            except Exception:
+                # A subscriber's bug is logged, not allowed to stop the replay for the others.
+                logger.exception("Replay subscriber failed", stream=name)
 
     def _request_shutdown(self) -> None:
+        logger.info("Requesting coordinator shutdown after replay", source=self.config.dataset)
         from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 
         try:
@@ -201,23 +315,52 @@ class ReplayModule(Module):
         except Exception:
             logger.error("Failed to request coordinator shutdown", exc_info=True)
 
-    @rpc
-    def on_system_modules_ready(self, _modules: list[RPCClient]) -> None:
-        # Every module has started, so every subscriber is listening for the first frame.
-        for port, msg in self._static:
-            self.register_disposable(interval(1.0).subscribe(partial(_republish, port, msg)))
-        self._static = []
-        if self._replay is not None:
-            self._replay.play()
 
-    @rpc
-    def stop(self) -> None:
-        if self._replay is not None:
-            self._replay.stop()
-        super().stop()
-        if self._store is not None:
-            self._store.stop()
-            self._store = None
+# A buffered item is (ts, port, value): ts is recording seconds plus the loop passes before
+# it, and value is a decoded frame or one of these.
+_END = object()  # the recording has no more frames
+_FAILED = object()  # a stream could not be read or decoded; ReplayModule._error says why
+
+
+class _Buffer:
+    """Bounded FIFO between the reader and the publisher that a stop wakes up."""
+
+    def __init__(self, size: int, stopped: Event) -> None:
+        self._size = size
+        self._items: deque[tuple[float, str, Any]] = deque()
+        self._stopped = stopped
+        self._changed = Condition()
+
+    def put(self, item: tuple[float, str, Any]) -> bool:
+        """False once stopped, without adding *item*."""
+        with self._changed:
+            self._changed.wait_for(lambda: len(self._items) < self._size or self._stopped.is_set())
+            if self._stopped.is_set():
+                return False
+            self._items.append(item)
+            self._changed.notify_all()
+            return True
+
+    def get(self) -> tuple[float, str, Any] | None:
+        """None once stopped."""
+        with self._changed:
+            self._changed.wait_for(lambda: self._items or self._stopped.is_set())
+            if self._stopped.is_set():
+                return None
+            item = self._items.popleft()
+            self._changed.notify_all()
+            return item
+
+    def wait_full(self, done: Event) -> None:
+        """Until full, *done* is set, or stopped."""
+        with self._changed:
+            self._changed.wait_for(
+                lambda: len(self._items) >= self._size or done.is_set() or self._stopped.is_set()
+            )
+
+    def wake(self) -> None:
+        with self._changed:
+            self._changed.notify_all()
 
 
 def recording_path(dataset: str) -> Path:

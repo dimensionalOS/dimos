@@ -14,15 +14,15 @@
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
-from pytest_mock import MockerFixture
 
 from dimos.memory.store.base import Store
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.utils.time_window import recording_start
+from dimos.memory.utils.time_window import RecordingWindow, recording_start
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
@@ -78,38 +78,20 @@ def test_recording_start_is_the_earliest_source_timestamp(recording: Store) -> N
     assert recording_start(recording) == 10.0
 
 
-def test_seek_uses_earliest_source_timestamp(recording: Store) -> None:
-    replay = recording.replay(seek=0.005)
+def _window(recording: Store, name: str, seek: float, duration: float | None) -> list[Any]:
+    window = RecordingWindow.from_store(recording, seek, duration)
+    return list(window.apply(recording.stream(name)).order_by("ts"))
 
-    assert [
-        (ts, pose.frame_id) for ts, pose in ((o.ts, o.data) for o in replay.stream("odom").rows())
-    ] == [
-        (10.01, "2"),
-        (10.02, "0"),
-    ]
+
+def test_seek_uses_earliest_source_timestamp(recording: Store) -> None:
+    rows = _window(recording, "odom", 0.005, None)
+    assert [(o.ts, o.data.frame_id) for o in rows] == [(10.01, "2"), (10.02, "0")]
 
 
 def test_seek_uses_shared_recording_start(recording: Store) -> None:
-    replay = recording.replay(seek=0.005)
-
-    assert [ts for ts, _ in ((o.ts, o.data) for o in replay.stream("camera").rows())] == [
-        10.006,
-        10.014,
-        10.025,
-    ]
-
-
-def test_recording_start_is_found_once(recording: Store, mocker: MockerFixture) -> None:
-    replay = recording.replay(seek=0.005, duration=0.015)
-    list_streams = mocker.spy(recording, "list_streams")
-
-    for name in ("odom", "camera"):
-        list((o.ts, o.data) for o in replay.stream(name).rows())
-
-    assert list_streams.call_count == 1
+    rows = _window(recording, "camera", 0.005, None)
+    assert [o.ts for o in rows] == [10.006, 10.014, 10.025]
 
 
 def test_duration_uses_earliest_source_timestamp(recording: Store) -> None:
-    replay = recording.replay(duration=0.015)
-
-    assert [ts for ts, _ in ((o.ts, o.data) for o in replay.stream("odom").rows())] == [10.0, 10.01]
+    assert [o.ts for o in _window(recording, "odom", 0.0, 0.015)] == [10.0, 10.01]

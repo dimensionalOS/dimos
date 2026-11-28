@@ -29,7 +29,7 @@ from unittest.mock import MagicMock
 from mcap.writer import Writer
 import pytest
 from pytest_mock import MockerFixture
-from reactivex import Subject, empty, merge, timer
+from reactivex import Subject, empty, timer
 from reactivex.disposable import Disposable
 from reactivex.testing import TestScheduler
 
@@ -38,7 +38,6 @@ from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.memory.replay import Replay
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -603,20 +602,17 @@ def test_go2_replay_publishes_the_window_and_derives_tf(
     if dataset_kind == "named-sqlite":
         monkeypatch.chdir(tmp_path)
         dataset = "recording"
-    add = mocker.spy(Replay, "add")
     module = Go2Replay(g=GlobalConfig(replay=True), dataset=dataset, seek=1.0, duration=0.25)
     odom: list[PoseStamped] = []
     tf: list[TFMessage] = []
-    finished = threading.Event()
     try:
         with (
             Disposable(module.odom.subscribe(odom.append)),
             Disposable(module.tf.subscribe(tf.append)),
         ):
             module.start()
-            merge(*add.spy_return_list).subscribe(on_completed=finished.set)
             module.on_system_modules_ready([])
-            assert finished.wait(HUNG_TEST_TIMEOUT)
+            assert module.replay_done.wait(HUNG_TEST_TIMEOUT)
     finally:
         module.stop()
     assert [value.lcm_encode() for value in odom] == [values[1].lcm_encode()]
