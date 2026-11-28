@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 import hashlib
 import itertools
 from pathlib import Path
@@ -44,12 +44,14 @@ def resolve_usd_assets(usd: str, root: str) -> str:
     return str(layer.ExportToString()) if rename_assets(pxr, layer, anchored) else usd
 
 
-def publish_usd_assets(usd: str, root: Path | str | None = None) -> tuple[str, dict[str, str]]:
-    """The layer with each file it needs renamed `<prim path>/<file>`, relative so no host path leaves, and name -> path."""
+def publish_usd_assets(
+    usd: str, root: Path | str | None = None, reserved: Iterable[str] = ()
+) -> tuple[str, dict[str, str]]:
+    """The layer with each file it needs renamed `<prim path>/<file>` (never one of ``reserved``), relative so no host path leaves, and name -> path."""
     pxr = load_pxr()
     layer = layer_from(pxr, usd, "a scene", root)
     public: dict[str, str] = {}
-    taken: set[str] = set()
+    taken: set[str] = set(reserved)
     for real, where in _required_assets(pxr, layer):
         if real not in public:
             public[real] = _public_asset_path(where, real, taken)
