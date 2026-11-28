@@ -19,7 +19,13 @@ import pytest
 
 from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
 from dimos.robot.assets.usd_utils.layers import usd_under_namespace
-from dimos.robot.unitree.go2.webrtc_sim import BODY, SERVOS, Go2WebRtcSim, go2_usd
+from dimos.robot.unitree.go2.webrtc_sim import (
+    BODY,
+    SERVOS,
+    Go2WebRtcSim,
+    Go2WebRtcSimConfig,
+    go2_usd,
+)
 from dimos.sim2.actions import JointCommand
 from dimos.sim2.assets.logistics import LOGISTICS
 from dimos.sim2.mujoco.backend import MujocoBackend
@@ -90,6 +96,30 @@ def test_a_wall_stops_it() -> None:
     reached = _position(backend, "y")
     assert face - 1.0 < reached < face, (
         f"it stopped at y={reached:.2f}, the wall's face is at {face:.2f}"
+    )
+
+
+def test_driven_nose_first_at_a_wall_its_camera_never_sees_through_it() -> None:
+    """Facing the logistics room's north wall and driven into it, its camera stays further from the wall than the nearest its camera draws."""
+    backend = _world()
+    gains = tuple(usd_drives(go2_usd().usd, go2_usd().asset_root)[name][1] for name in SERVOS)
+    wall = backend.model.geom("/logistics/Geometry/north_wall")
+    face = backend.model.geom_pos[wall.id][1] - backend.model.geom_size[wall.id][1]
+    yaw = backend.model.joint(f"{_SPOT}/yaw")
+    backend.data.qpos[backend.model.jnt_qposadr[yaw.id]] = math.pi / 2
+    camera = backend.model.body(f"{_SPOT}/camera_link").id
+    near = Go2WebRtcSimConfig().render.near
+    closest = math.inf
+    for _ in range(round(8.0 / backend.model.opt.timestep)):
+        backend.apply(
+            [JointCommand(_SPOT, SERVOS, velocity=(0.0, 1.0, 0.0), kp=(0.0,) * 3, kd=gains)]
+        )
+        backend._apply_pending()
+        mujoco.mj_step(backend.model, backend.data)
+        closest = min(closest, face - float(backend.data.xpos[camera][1]))
+
+    assert closest > near, (
+        f"its camera got {closest * 100:.1f} cm from the wall, its near plane is {near * 100:.1f} cm"
     )
 
 
