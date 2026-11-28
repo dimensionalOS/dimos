@@ -14,14 +14,15 @@
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
-from pytest_mock import MockerFixture
 
 from dimos.memory.store.base import Store
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.utils.time_window import RecordingWindow, recording_start
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
@@ -73,45 +74,24 @@ def recording(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Store]
             yield store
 
 
-def test_first_ts_uses_earliest_source_timestamp(recording: Store) -> None:
-    assert recording.replay().first_ts() == 10.0
+def test_recording_start_is_the_earliest_source_timestamp(recording: Store) -> None:
+    assert recording_start(recording) == 10.0
+
+
+def _window(recording: Store, name: str, seek: float, duration: float | None) -> list[Any]:
+    window = RecordingWindow.from_store(recording, seek, duration)
+    return list(window.apply(recording.stream(name)).order_by("ts"))
 
 
 def test_seek_uses_earliest_source_timestamp(recording: Store) -> None:
-    replay = recording.replay(seek=0.005)
-
-    assert [(ts, pose.frame_id) for ts, pose in replay.stream("odom").iterate_ts()] == [
-        (10.01, "2"),
-        (10.02, "0"),
-    ]
+    rows = _window(recording, "odom", 0.005, None)
+    assert [(o.ts, o.data.frame_id) for o in rows] == [(10.01, "2"), (10.02, "0")]
 
 
 def test_seek_uses_shared_recording_start(recording: Store) -> None:
-    replay = recording.replay(seek=0.005)
-
-    assert [ts for ts, _ in replay.stream("camera").iterate_ts()] == [10.006, 10.014, 10.025]
-
-
-def test_recording_start_is_found_once(recording: Store, mocker: MockerFixture) -> None:
-    replay = recording.replay(seek=0.005, duration=0.015)
-    list_streams = mocker.spy(recording, "list_streams")
-
-    for name in ("odom", "camera"):
-        list(replay.stream(name).iterate_ts())
-
-    assert list_streams.call_count == 1
+    rows = _window(recording, "camera", 0.005, None)
+    assert [o.ts for o in rows] == [10.006, 10.014, 10.025]
 
 
 def test_duration_uses_earliest_source_timestamp(recording: Store) -> None:
-    replay = recording.replay(duration=0.015)
-
-    assert [ts for ts, _ in replay.stream("odom").iterate_ts()] == [10.0, 10.01]
-
-
-def test_pin_anchor_uses_earliest_source_timestamp(recording: Store) -> None:
-    replay = recording.replay()
-
-    replay.pin_anchor()
-
-    assert replay._anchor is not None
-    assert replay._anchor[1] == 10.0
+    assert [o.ts for o in _window(recording, "odom", 0.0, 0.015)] == [10.0, 10.01]

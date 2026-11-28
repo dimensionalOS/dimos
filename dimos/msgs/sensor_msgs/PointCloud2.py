@@ -307,18 +307,10 @@ class PointCloud2(Timestamped):
         """
         import open3d as o3d  # type: ignore[import-untyped]
 
-        # Get color as RGB numpy array
-        color_data = color_image.to_rgb().data
-        if hasattr(color_data, "get"):  # CuPy array
-            color_data = color_data.get()
-        color_data = np.ascontiguousarray(color_data)
-
-        # Get depth numpy array
-        depth_data = depth_image.data
-        if hasattr(depth_data, "get"):  # CuPy array
-            depth_data = depth_data.get()
+        color_data = np.ascontiguousarray(color_image.to_rgb().data)
 
         # Convert depth to float32 meters if needed
+        depth_data = depth_image.data
         if depth_data.dtype == np.uint16:
             depth_data = depth_data.astype(np.float32) * depth_scale
         elif depth_data.dtype != np.float32:

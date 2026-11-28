@@ -209,6 +209,20 @@ surface, since a part the camera has not seen is left out; `clear_surface` remov
 print(localize.add_surface(start=-30.0, duration=30.0))
 ```
 
+Picking with the arm directly, without `PickAndPlaceModule`, three skills keep the object
+out of the planner's voxel map. The gripper itself never enters it (`XARM_GRIPPER_MAP_CUT`):
+
+```python skip
+localize.ignore_object("<object_id>")   # before the approach
+# ... plan to the grasp, close the gripper ...
+localize.hold_object("<object_id>")     # it now rides on link_tcp, out of the map
+# ... move, place, open the gripper, move up off it ...
+localize.release_object()               # the camera maps it where it now is
+```
+
+Release after moving up off the object. A grasp generator sees only what the camera saw,
+from above mostly the top face, so check a grasp's height against the surface it stands on.
+
 `pick_object` generates the grasps itself, so there is no separate grasp call.
 It opens the gripper, plans to the pregrasp, servos in, closes, verifies, and
 retreats; with a learned provider it walks the ranked candidates until one is
