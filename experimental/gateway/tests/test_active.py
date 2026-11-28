@@ -727,10 +727,11 @@ def camera_module(checkout: Path) -> Path:
     """The file of a module the served checkout runs as `demo`, with one setting."""
     robot = checkout / "dimos" / "robot"
     robot.mkdir(parents=True)
-    for package in (robot, robot.parent):
-        (package / "__init__.py").write_text(
-            "from pkgutil import extend_path\n__path__ = extend_path(__path__, __name__)\n"
-        )
+    extend = "from pkgutil import extend_path\n__path__ = extend_path(__path__, __name__)\n"
+    (robot / "__init__.py").write_text(extend)
+    # dimos.constants imports names from dimos/__init__.py, so the stand-in keeps the real one.
+    real = (DIMOS_PROJECT_ROOT / "dimos" / "__init__.py").read_text()
+    (robot.parent / "__init__.py").write_text(real + extend)
     (robot / "all_blueprints.py").write_text(
         'all_blueprints = {}\nall_modules = {"demo": "dimos.robot.camera.Camera"}\n'
     )

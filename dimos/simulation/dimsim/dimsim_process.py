@@ -21,7 +21,7 @@ import time
 from typing import IO
 
 from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.simulation.dimsim.config import DimSimConfig
+from dimos.simulation.dimsim.config import DIMSIM_DIR, DimSimConfig
 from dimos.simulation.dimsim.deno_utils import ensure_playwright_chromium
 from dimos.utils.deno import ensure_deno
 from dimos.utils.logging_config import setup_logger
@@ -30,7 +30,6 @@ logger = setup_logger()
 
 _VIDEO_RATE = 50
 _LIDAR_RATE = 100
-_DIMSIM_DIR = DIMOS_PROJECT_ROOT / "misc" / "DimSim"
 # Printed by the bridge (cli/bridge/server.ts) once the browser has delivered
 # the scene snapshot and server-side physics and lidar are running. Odom only
 # flows, and scene commands only reach a browser, from this point on.
@@ -48,7 +47,7 @@ class DimSimProcess:
         _check_lfs_stubs(scene)
 
         deno_path = ensure_deno()
-        base_cmd = _deno_cmd(deno_path, _DIMSIM_DIR)
+        base_cmd = _deno_cmd(deno_path, DIMSIM_DIR)
 
         port = self.config.port
         headless = self.config.headless
@@ -171,7 +170,7 @@ def prepare() -> None:
     every job with a cold checkout.
     """
     deno_path = ensure_deno()
-    subprocess.run([*_deno_cmd(deno_path, _DIMSIM_DIR), "build"], check=True)
+    subprocess.run([*_deno_cmd(deno_path, DIMSIM_DIR), "build"], check=True)
     ensure_playwright_chromium(deno_path)
 
 
@@ -186,7 +185,7 @@ _LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
 def _check_lfs_stubs(scene: str) -> None:
     """Fail fast when DimSim assets are un-fetched Git LFS pointer stubs."""
     stubs = []
-    for asset_dir in (_DIMSIM_DIR / "scenes" / scene, _DIMSIM_DIR / "public" / "embodiment"):
+    for asset_dir in (DIMSIM_DIR / "scenes" / scene, DIMSIM_DIR / "public" / "embodiment"):
         for pattern in ("*.glb", "*.gltf"):
             for path in sorted(asset_dir.rglob(pattern)):
                 with open(path, "rb") as f:

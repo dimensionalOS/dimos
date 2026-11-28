@@ -13,9 +13,13 @@
 # limitations under the License.
 
 import fcntl
+import os
 from pathlib import Path
 import threading
 
+from dimos.agents.harness.runtime.load import mcp_server_url
+from dimos.cli import environment
+from dimos.cli.commands import agent
 from dimos.cli.commands.agent import _build
 
 
@@ -51,3 +55,48 @@ def test_build_waits_out_another_build_before_using_the_tree(tmp_path: Path, moc
         holder.join(timeout=5)
     assert not waiter.is_alive()
     assert not holder.is_alive()
+
+
+def test_node_environment_drops_what_either_env_file_loaded(
+    tmp_path: Path, monkeypatch, mocker
+) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / ".env").write_text("CHECKOUT_KEY=a\nWORKDIR_KEY\nROBOT_IP=10.0.0.1\n")
+    (tmp_path / ".env").write_text("WORKDIR_KEY=b\nEXPORTED_KEY=kept\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(environment, "IS_CHECKOUT", True)
+    monkeypatch.setattr(environment, "DIMOS_PROJECT_ROOT", checkout)
+    # Isolate mutations made by python-dotenv, including the second CLI startup.
+    monkeypatch.setattr(os, "environ", {"EXPORTED_KEY": "kept"})
+    mocker.patch("dimos.agents.harness.runtime.load.mcp_server_url", return_value="http://mcp")
+
+    environment.load_cli_dotenv()
+    assert os.environ["WORKDIR_KEY"] == "b"
+    environment.load_cli_dotenv()
+    child = agent._node_environment()
+
+    assert "CHECKOUT_KEY" not in child
+    assert "WORKDIR_KEY" not in child
+    assert environment.DOTENV_KEYS_ENV not in child
+    assert child["ROBOT_IP"] == "10.0.0.1"
+    assert child["EXPORTED_KEY"] == "kept"
+
+
+def test_node_environment_keeps_mcp_settings_from_the_working_directory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / ".env").write_text("MCPSERVER__PORT=9000\nOPENAI_API_KEY=secret\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(environment, "IS_CHECKOUT", False)
+    monkeypatch.setattr(os, "environ", {})
+    environment.load_cli_dotenv()
+
+    child = agent._node_environment()
+
+    assert child["DIMOS_MCP_URL"].endswith(":9000/mcp")
+    assert "OPENAI_API_KEY" not in child
+    # The gateway starts `dimos agent load` in the checkout, where this .env is not read
+    # again. The loader has to dial the same endpoint as the gateway.
+    monkeypatch.setattr(os, "environ", child)
+    assert mcp_server_url() == child["DIMOS_MCP_URL"]

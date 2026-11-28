@@ -136,7 +136,7 @@ def resolve_dataset(dataset: str | Path, *, suffix: str | None = None) -> Path:
     if matches:
         return matches[0]
     raise FileNotFoundError(
-        f"Dataset {name!r} not found. Searched {Path.cwd()}, {constants.DIMOS_PROJECT_ROOT}, "
+        f"Dataset {name!r} not found. Searched {Path.cwd()}, {constants.WRITE_ROOT}, "
         f"{data.get_data_dir()} (including LFS), {constants.RECORDINGS_DIR}, "
         f"and {constants.DOWNLOADS_DIR}."
     )

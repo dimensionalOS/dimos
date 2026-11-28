@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.protocol.service.spec import BaseConfig
 
 DIMSIM_PORT = 8090
+# Only in a source checkout. An installed package does not include DimSim.
+DIMSIM_DIR = DIMOS_PROJECT_ROOT / "misc" / "DimSim"
 
 
 class DimSimConfig(BaseConfig):

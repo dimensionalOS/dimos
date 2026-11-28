@@ -34,3 +34,7 @@ def rerun_bridge() -> None:
     """Run the standalone bridge through the shared CLI."""
     sys.argv = ["dimos", "rerun-bridge", *sys.argv[1:]]
     main()
+
+
+if __name__ == "__main__":
+    main()

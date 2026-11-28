@@ -20,8 +20,11 @@ To start a Host at boot: `dimos host install --start --config listen=iface/<name
 
 ## Settings
 
-`dimos host config key=value` writes `HOST__<KEY>` to the checkout's `.env`, which the Host
-reads; `dimos host config` alone shows them. Run `dimos host restart` after changing them.
+`dimos host config key=value` writes `HOST__<KEY>` to the checkout's `.env`. An installed package
+stores these settings in `$XDG_CONFIG_HOME/dimos/host.env` (default
+`~/.config/dimos/host.env`). Use `dimos host config` to see the effective settings. Run `dimos host restart` after changing them.
+If an older installation saved host settings in `site-packages/.env`, copy the
+`HOST__` entries to `host.env` when upgrading.
 
 | Setting | Default | |
 |---|---|---|

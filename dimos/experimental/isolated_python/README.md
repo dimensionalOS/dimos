@@ -78,6 +78,9 @@ installs dimOS from that checkout with `--with-editable`; its revision may diffe
 from the host's. Existing clones are not updated automatically. The checkout must
 contain the declared project. Restart running modules after editing sources.
 
+An installed host without git, or without access to GitHub, cannot clone. The
+build then fails with an error that says the repository is needed.
+
 The project's `.python-version` and `requires-python` select its Python
 version. Environments are stored under the dimOS cache directory in
 `isolated-python/<project-path-hash>/.venv`, so projects do not share environments.

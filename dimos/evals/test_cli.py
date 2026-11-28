@@ -314,3 +314,45 @@ def test_run_cli_exit_status(
     assert [line.split()[0] for line in lines[: len(statuses)]] == statuses
     assert lines[-1].endswith(str(run_dir)), "the summary is printed before the exit status"
     assert json.loads((run_dir / "summary.json").read_text())["n"] == len(statuses)
+
+
+def test_docker_says_it_needs_a_checkout_and_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: Any
+) -> None:
+    # An installed package: there is no docker/evals/compose.yaml next to the code.
+    monkeypatch.delenv("COMPOSE_FILE", raising=False)
+    monkeypatch.setattr("dimos.constants.DIMOS_PROJECT_ROOT", tmp_path)
+    docker = mocker.patch.object(cli.subprocess, "run")
+
+    result = CliRunner().invoke(
+        app, ["evals", "run", SUITE_MODULE, "--agent", AGENT_MODULE, "--docker"]
+    )
+
+    assert result.exit_code == 2
+    assert "needs a DimOS source checkout" in result.output
+    assert list(tmp_path.iterdir()) == []
+    docker.assert_not_called()
+
+
+def test_docker_uses_the_first_explicit_compose_file_as_its_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: Any
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("dimos.constants.DIMOS_PROJECT_ROOT", tmp_path / "install")
+    project = tmp_path / "worker"
+    project.mkdir()
+    (project / "compose.yaml").write_text("services: {worker: {image: worker}}")
+    (project / "gpu.yaml").write_text("services: {}")
+    monkeypatch.setenv("COMPOSE_PATH_SEPARATOR", ",")
+    monkeypatch.setenv("COMPOSE_FILE", "worker/compose.yaml,worker/gpu.yaml")
+    monkeypatch.setenv("EVAL_RUNS_DIR", "./results")
+    docker = mocker.patch.object(cli.subprocess, "run")
+
+    result = CliRunner().invoke(
+        app, ["evals", "run", SUITE_MODULE, "--agent", AGENT_MODULE, "--docker"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert docker.call_args.args[0][:3] == ["docker", "compose", "run"]
+    assert (project / "results" / "dimos" / "runs").is_dir()
+    assert not (tmp_path / "install").exists()

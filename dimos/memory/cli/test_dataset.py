@@ -236,11 +236,11 @@ def dataset_dirs(tmp_path, monkeypatch):
     downloads.mkdir()
     recordings.mkdir()
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(data, "DIMOS_PROJECT_ROOT", project)
+    monkeypatch.setattr(data, "WRITE_ROOT", project)
     monkeypatch.setattr(data, "get_project_root", lambda: project)
     monkeypatch.setattr(data, "get_data_dir", lambda: data_dir)
     monkeypatch.setattr(data, "_get_lfs_dir", lambda: data_dir / ".lfs")
-    monkeypatch.setattr(constants, "DIMOS_PROJECT_ROOT", project)
+    monkeypatch.setattr(constants, "WRITE_ROOT", project)
     monkeypatch.setattr(constants, "DOWNLOADS_DIR", downloads)
     monkeypatch.setattr(constants, "RECORDINGS_DIR", recordings)
     return recordings, downloads
@@ -309,7 +309,7 @@ def test_resolve_dataset_preserves_dotted_stem_extension(dataset_dirs):
 @pytest.mark.parametrize("name", ["session", "session.v1"])
 @pytest.mark.parametrize("location", ["cwd", "project"])
 def test_resolve_exact_input_before_suffixed_candidate(dataset_dirs, resolver, name, location):
-    roots = {"cwd": Path.cwd(), "project": data.DIMOS_PROJECT_ROOT}
+    roots = {"cwd": Path.cwd(), "project": data.WRITE_ROOT}
     exact = roots[location] / name
     exact.touch()
     (Path.cwd() / f"{name}.db").touch()
@@ -327,7 +327,7 @@ def test_resolve_existing_locations_before_recordings_and_downloads(
     run.parent.mkdir()
     run.touch()
     (downloads / f"{_tag({'id': 'abcdef1234567890'})}memory.db").touch()
-    roots = [Path.cwd(), data.DIMOS_PROJECT_ROOT, data.get_data_dir()]
+    roots = [Path.cwd(), data.WRITE_ROOT, data.get_data_dir()]
     for root in roots[location_index:]:
         (root / "memory.db").touch()
 

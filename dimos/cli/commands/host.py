@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 import typer
 
+from dimos.constants import IS_CHECKOUT
 from dimos.hosted.machine import load_host_id
 from dimos.hosted.tags import format_tags
 from dimos.utils.logging_config import setup_logger
@@ -243,7 +244,8 @@ def start(
         host_id=load_host_id(),
         revision=machine.code_revision(),
         tags=auto_tags(),
-        sync_checkout=machine.sync_checkout,
+        # An installed package has no checkout to sync. It is updated by a new install.
+        sync_checkout=machine.sync_checkout if IS_CHECKOUT else None,
     )
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -319,7 +321,7 @@ def _write_settings(settings: list[str]) -> None:
 def config_command(
     settings: list[str] = typer.Argument(None, help="key=value to set, key= to remove"),
 ) -> None:
-    """Show this Host's settings, or set them in the checkout's .env."""
+    """Show this Host's settings, or save them for the next start."""
     from dimos.hosted.config import HostConfig
 
     if settings:

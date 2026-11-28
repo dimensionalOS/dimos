@@ -17,7 +17,6 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 import inspect
-import os
 from pathlib import Path
 import sqlite3
 import time
@@ -27,7 +26,7 @@ from pydantic import Field, field_validator
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
 
-from dimos.constants import DIMOS_PROJECT_ROOT, RECORDINGS_DIR
+from dimos.constants import RECORDINGS_DIR, WRITE_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
@@ -173,16 +172,13 @@ class StreamModule(Module, Generic[TIn, TOut]):
         super().stop()
 
 
-class MemoryModuleConfig(ModuleConfig):
+class MemoryModuleConfig(ModuleConfig, validate_default=True):
     db_path: str | Path = "recording.db"
 
     @field_validator("db_path", mode="before")
     @classmethod
     def _resolve_path(cls, v: str | Path) -> Path:
-        p = Path(os.fspath(v))
-        if not p.is_absolute():
-            p = DIMOS_PROJECT_ROOT / p
-        return p
+        return WRITE_ROOT / v
 
 
 class MemoryModule(Module):
@@ -213,7 +209,6 @@ class RecorderConfig(MemoryModuleConfig):
     root_frame: str = "world"
     default_frame_id: str = "base_link"
     tf_tolerance: float = 0.5
-    db_path: str | Path = "recording.db"
     # Also record the live tf stream (under "tf") alongside the In ports.
     record_tf: bool = True
     # Rename recorded streams: {port_name: db_stream_name}. Conceptually this is

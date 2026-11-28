@@ -87,8 +87,12 @@ fn main() {{
 """
 
 
+# The crate every generated host depends on. Only a source checkout has it.
+RUNTIME_CRATE = "native/rust/dimos-module"
+
+
 def _dimos_module_dep(root: Path) -> str:
-    return f'dimos-module = {{ path = "{root / "native/rust/dimos-module"}" }}'
+    return f'dimos-module = {{ path = "{root / RUNTIME_CRATE}" }}'
 
 
 def crate_dir(host: str, root: Path | None = None) -> Path:

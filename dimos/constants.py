@@ -16,6 +16,8 @@ import os
 from pathlib import Path
 import sys
 
+from dimos import DIMOS_PROJECT_ROOT as DIMOS_PROJECT_ROOT, IS_CHECKOUT as IS_CHECKOUT
+
 try:
     # Not a dependency, just the best way to get config path if available.
     from gi.repository import GLib  # type: ignore[import-untyped,import-not-found]
@@ -40,8 +42,6 @@ elif _USER_RUN is not None and _USER_RUN.is_dir():
 else:
     RUNTIME_DIR = STATE_DIR
 
-DIMOS_PROJECT_ROOT = Path(__file__).parent.parent
-
 # Python modules saved at runtime, e.g. by an agent. The coordinator and its workers
 # import from here, so a running system can load a module saved after it started.
 RUNTIME_MODULES_DIR = STATE_DIR / "modules"
@@ -49,16 +49,13 @@ RUNTIME_MODULES_DIR = STATE_DIR / "modules"
 # The on-robot agent's runtime state: agent module metadata and exports.
 HARNESS_STATE_DIR = STATE_DIR / "harness"
 
-if (DIMOS_PROJECT_ROOT / ".git").exists():
-    # Running from Git repository
-    LOG_DIR = DIMOS_PROJECT_ROOT / "logs"
-    RECORDINGS_DIR = DIMOS_PROJECT_ROOT / "recordings"
-    DOWNLOADS_DIR = DIMOS_PROJECT_ROOT / "downloads"
-else:
-    # Running from an installed package - use XDG_STATE_HOME
-    LOG_DIR = STATE_DIR / "logs"
-    RECORDINGS_DIR = STATE_DIR / "recordings"
-    DOWNLOADS_DIR = STATE_DIR / "downloads"
+# Where DimOS writes its working files, and where a relative output path goes. A
+# checkout uses its own folder. An installed package cannot write next to its code.
+WRITE_ROOT = DIMOS_PROJECT_ROOT if IS_CHECKOUT else STATE_DIR
+
+LOG_DIR = WRITE_ROOT / "logs"
+RECORDINGS_DIR = WRITE_ROOT / "recordings"
+DOWNLOADS_DIR = WRITE_ROOT / "downloads"
 
 CREDENTIALS_PATH = CONFIG_DIR / "credentials"
 

@@ -22,6 +22,7 @@ import importlib
 import inspect
 import json
 import os
+from pathlib import Path
 import re
 import secrets
 import subprocess
@@ -208,8 +209,19 @@ def _run_in_docker(
     stamp = time.strftime("%Y%m%d-%H%M%S")
     name = f"evals-{stamp}-{secrets.token_hex(2)}-{suite.rsplit('.', 1)[-1]}"
     # COMPOSE_FILE set in the environment (e.g. to add compose.gpu.yaml) wins.
-    compose = DIMOS_PROJECT_ROOT / "docker" / "evals" / "compose.yaml"
-    files = [] if os.environ.get("COMPOSE_FILE") else ["-f", str(compose)]
+    override = os.environ.get("COMPOSE_FILE")
+    if override:
+        separator = os.environ.get("COMPOSE_PATH_SEPARATOR") or os.pathsep
+        compose = Path(override.split(separator, 1)[0]).absolute()
+    else:
+        compose = DIMOS_PROJECT_ROOT / "docker" / "evals" / "compose.yaml"
+        if not compose.is_file():
+            raise typer.BadParameter(
+                f"the default worker needs a DimOS source checkout ({compose} is missing). "
+                "Set COMPOSE_FILE to use your own worker.",
+                param_hint="--docker",
+            )
+    files = [] if override else ["-f", str(compose)]
     command = ["docker", "compose", *files, "run", "--rm", "-d", "--name", name, "worker"]
     command += ["dimos", "evals", "run", *argv]
     runs = compose.parent / (os.environ.get("EVAL_RUNS_DIR") or "eval-runs")

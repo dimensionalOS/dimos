@@ -22,7 +22,7 @@ from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.constants import WRITE_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -72,7 +72,7 @@ class RustStoreConfig(BaseModel):
     def _resolve_path(cls, value: str | os.PathLike[str]) -> str:
         path = Path(os.fspath(value))
         if not path.is_absolute():
-            path = DIMOS_PROJECT_ROOT / path
+            path = WRITE_ROOT / path
         return str(path)
 
 
@@ -100,7 +100,7 @@ class RustMcapStoreConfig(RustStoreConfig):
     """Write storage-encoded observations to an indexed, compressed MCAP artifact.
 
     ``attachments`` optionally embeds source files as-is under the supplied names
-    and media types. Relative source paths are resolved against the project root.
+    and media types. Relative source paths are resolved like the artifact path.
     A missing or unreadable source file prevents the native writer from opening
     the MCAP.
     """

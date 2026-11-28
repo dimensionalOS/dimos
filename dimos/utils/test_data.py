@@ -297,13 +297,18 @@ def test_resolve_named_path_without_must_exist_says_where_a_new_file_goes(
     assert resolve_named_path(tmp_path / "house", ".map.db", must_exist=False) == (
         tmp_path / "house.map.db"
     )
-    assert resolve_named_path("no_such_house", ".map.db", must_exist=False) == (
-        data.DIMOS_PROJECT_ROOT / "no_such_house.map.db"
-    )
+    write_root = tmp_path / "write_root"
+    write_root.mkdir()
+    mocker.patch.object(data, "WRITE_ROOT", write_root)
+    created = resolve_named_path("no_such_house", ".map.db", must_exist=False)
+    assert created == write_root / "no_such_house.map.db"
     assert resolve_named_path("maps/no_such_house", ".map.db", must_exist=False) == Path(
         "maps/no_such_house.map.db"
     )
     get_data.assert_not_called()
+    # and the next run finds by name what this one saved there
+    created.touch()
+    assert resolve_named_path("no_such_house", ".map.db") == created
 
 
 def test_resolve_named_path_keeps_a_nested_lfs_name(mocker: MockerFixture) -> None:
@@ -784,6 +789,27 @@ def test_project_root_serializes_concurrent_clone(tmp_path, mocker):
         results = list(pool.map(lambda _: data.get_project_root.__wrapped__(), range(4)))
     assert results == [data_dir / "repo"] * 4
     run.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        (FileNotFoundError(2, "No such file or directory", "git"), "git is not installed"),
+        (
+            subprocess.CalledProcessError(128, ["git"], stderr="fatal: unable to access\n"),
+            "fatal: unable to access",
+        ),
+    ],
+)
+def test_project_root_says_an_install_needs_the_repository_when_it_cannot_clone(
+    tmp_path: Path, mocker: MockerFixture, failure: Exception, reason: str
+) -> None:
+    mocker.patch.object(data, "DIMOS_PROJECT_ROOT", tmp_path / "installed")
+    mocker.patch.object(data, "_get_user_data_dir", return_value=tmp_path / "data")
+    mocker.patch.object(data.subprocess, "run", side_effect=failure)
+
+    with pytest.raises(RuntimeError, match=f"needs the DimOS repository.*{reason}"):
+        data.get_project_root.__wrapped__()
 
 
 def test_project_root_clones_again_after_unfinished_clone(

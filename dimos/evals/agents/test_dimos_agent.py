@@ -21,6 +21,7 @@ import subprocess
 import pytest
 
 from dimos.agents.llm_trace import request_path, response_path
+from dimos.cli.environment import DOTENV_KEYS_ENV
 from dimos.evals.agents import pi
 from dimos.evals.agents.dimos_agent import DimosAgentAdapter
 from dimos.evals.agents.lib.pi_config import RunPaths
@@ -69,6 +70,7 @@ def test_run_records_tool_results_and_reports_unanswered_cases(
     mocker, monkeypatch, tmp_path, outcome
 ):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv(DOTENV_KEYS_ENV, json.dumps(["OPENAI_API_KEY", "XDG_CONFIG_HOME"]))
     mocker.patch.object(pi, "model_trace_proxy", return_value=nullcontext("http://trace.test"))
     mocker.patch.object(pi, "kill_run_processes")
     listing = mocker.patch.object(pi, "tool_listing")
@@ -143,6 +145,7 @@ def test_run_records_tool_results_and_reports_unanswered_cases(
         (tmp_path / "system-prompt.txt").read_text() + "\n\nRead facts.txt",
     ]
     process_env = spawn.call_args.kwargs["env"]
+    assert json.loads(process_env[DOTENV_KEYS_ENV]) == ["OPENAI_API_KEY"]
     assert {
         name: process_env[name]
         for name in ("MCPSERVER__HOST", "MCPSERVER__PORT", "DIMOS_EVAL_API_KEY")

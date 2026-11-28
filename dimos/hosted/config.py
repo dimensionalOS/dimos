@@ -24,11 +24,12 @@ from dotenv import set_key, unset_key
 from pydantic import Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.constants import CONFIG_DIR, DIMOS_PROJECT_ROOT, IS_CHECKOUT
 from dimos.core.global_config import ENV_FILE
 
-# The checkout's .env, wherever the command runs; the daemon itself runs in the checkout.
-HOST_ENV_FILE = None if ENV_FILE is None else DIMOS_PROJECT_ROOT / ENV_FILE
+HOST_ENV_FILE = None
+if ENV_FILE is not None:
+    HOST_ENV_FILE = DIMOS_PROJECT_ROOT / ENV_FILE if IS_CHECKOUT else CONFIG_DIR / "host.env"
 # The daemon is its machine's zenoh router, on zenoh's own port, reachable from this machine
 # only until opened up with `dimos host config listen=iface/<name>`.
 DEFAULT_PORT = 7447
@@ -94,6 +95,7 @@ def write_settings(values: Mapping[str, str], env_file: Path | None = HOST_ENV_F
         HostConfig.model_validate({k: v for k, v in fields.items() if v})
     except ValidationError as exc:
         raise ValueError(str(exc)) from None
+    env_file.parent.mkdir(parents=True, exist_ok=True)
     env_file.touch()
     for key, value in fields.items():
         if value:

@@ -537,8 +537,18 @@ def restart(
         typer.echo("Cannot restart: run entry missing original command", err=True)
         raise typer.Exit(1)
 
-    # Save argv and pid before stopping (stop removes the entry)
-    argv = entry.original_argv
+    # Reuse the running console script, including user installs outside the venv.
+    # Switching a console script to python -m would let cwd shadow its package.
+    script = Path(sys.argv[0]).absolute()
+    if script.name == "dimos":
+        if not script.is_file():
+            typer.echo(f"Cannot restart: current CLI script is missing: {script}", err=True)
+            raise typer.Exit(1)
+        command = [sys.executable, str(script)]
+    else:
+        # A CLI started with python -m already uses module lookup.
+        command = [sys.executable, "-m", "dimos.cli.entry"]
+    argv = [*command, *entry.original_argv[1:]]
     old_pid = entry.pid
 
     typer.echo(f"Restarting {entry.run_id} ({entry.blueprint})...")
@@ -553,7 +563,7 @@ def restart(
 
     typer.echo(f"  Running: {' '.join(argv)}")
     try:
-        os.execvp(argv[0], argv)
+        os.execv(argv[0], argv)
     except OSError as exc:
         typer.echo(f"Error: failed to restart — {exc}", err=True)
         raise typer.Exit(1)

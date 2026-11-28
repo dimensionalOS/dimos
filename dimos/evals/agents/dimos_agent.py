@@ -30,6 +30,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
 from pydantic.alias_generators import to_camel
 
+from dimos.cli.environment import DOTENV_KEYS_ENV, dotenv_keys
 from dimos.evals.agents.lib.pi_config import RunPaths
 from dimos.evals.agents.pi import PiAdapter, PiAdapterConfig, read_pi_events
 from dimos.evals.environments.base import Environment
@@ -178,8 +179,8 @@ class DimosAgentAdapter(PiAdapter):
         ]  # fmt: skip
 
     def _build_process_env(self, paths: RunPaths) -> dict[str, str]:
-        return {
-            **super()._build_process_env(paths),
+        inherited = super()._build_process_env(paths)
+        overrides = {
             **self._mcp_env,
             "XDG_CONFIG_HOME": str(paths.config),
             "XDG_DATA_HOME": str(paths.workspace / "agent-data"),
@@ -188,6 +189,12 @@ class DimosAgentAdapter(PiAdapter):
             # `dimos agent` drops variables whose value it loaded from .env, the provider key included.
             "DIMOS_EVAL_API_KEY": os.environ[self._key_env],
         }
+        # This adapter builds a fresh environment. Preserve the origin of inherited
+        # settings so the child CLI can filter them before starting the gateway.
+        loaded = dotenv_keys().intersection(inherited).difference(overrides)
+        if loaded:
+            inherited[DOTENV_KEYS_ENV] = json.dumps(sorted(loaded))
+        return inherited | overrides
 
     def _process_events(
         self, proc: subprocess.Popen[bytes], paths: RunPaths, deadline: float

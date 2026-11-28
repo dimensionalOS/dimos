@@ -22,6 +22,7 @@ import pytest
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import In
+from dimos.experimental.memory import rust_recorder
 from dimos.experimental.memory.rust_recorder import (
     RustMcapStoreConfig,
     RustRecorder,
@@ -219,11 +220,14 @@ def test_encoding_threads_must_be_positive(encoding_threads: int) -> None:
         RustRecorderConfig(encoding_threads=encoding_threads)
 
 
-def test_default_store_path_is_resolved_from_the_project_root() -> None:
-    config = RustRecorderConfig()
+def test_relative_store_path_is_resolved_from_the_write_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(rust_recorder, "WRITE_ROOT", tmp_path)
 
-    assert Path(config.store.path).is_absolute()
-    assert Path(config.store.path).name == "recording.db"
+    assert RustRecorderConfig().store.path == str(tmp_path / "recording.db")
+    assert RustMcapStoreConfig(path="runs/a.mcap").path == str(tmp_path / "runs/a.mcap")
+    assert RustSqliteStoreConfig(path="/abs/a.db").path == "/abs/a.db"
 
 
 def test_native_recorder_is_built_and_run_from_the_nix_package() -> None:
