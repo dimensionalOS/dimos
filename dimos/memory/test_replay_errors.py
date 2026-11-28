@@ -102,7 +102,7 @@ def test_corrupt_payload_reports_one_error(
 ) -> None:
     replay = corrupt_recording.replay(loop=loop, speed=10.0)
     stream = replay.stream("pose")
-    base = stream._base_stream
+    base = stream.rows
     closed = threading.Event()
 
     def rows() -> Iterator[Observation[PoseStamped]]:
@@ -111,7 +111,7 @@ def test_corrupt_payload_reports_one_error(
         finally:
             closed.set()
 
-    mocker.patch.object(stream, "_base_stream", side_effect=rows)
+    mocker.patch.object(stream, "rows", side_effect=rows)
     received, errors, completed = _play_until_terminal(replay, stream)
 
     assert [pose.ts for pose in received] == [1.0]
@@ -154,7 +154,7 @@ def test_read_or_autocast_failure_reports_one_error(
     with MemoryStore() as store:
         replay = store.replay(loop=True)
         stream = replay.stream("pose", autocast=autocast)
-        mocker.patch.object(stream, "_base_stream", side_effect=rows)
+        mocker.patch.object(stream, "rows", side_effect=rows)
         received, errors, completed = _play_until_terminal(replay, stream)
 
     assert received == list(range(fail_at))
@@ -171,7 +171,7 @@ def test_a_failed_stream_stops_the_whole_replay(mocker: MockerFixture) -> None:
                 recorded.append(value, ts=1.0 + value * 0.01)
         replay = store.replay()
         broken = replay.stream("broken")
-        mocker.patch.object(broken, "_base_stream", side_effect=OSError("recording read failed"))
+        mocker.patch.object(broken, "rows", side_effect=OSError("recording read failed"))
         playback = replay.playback()
         errors: dict[str, Exception] = {}
         both = threading.Event()

@@ -147,12 +147,14 @@ def test_loop_replays_in_order_after_the_gap(store: SqliteStore) -> None:
             enough.set()
 
     playback.add(replay.stream("odom")).subscribe(on_frame)
+    started = time.monotonic()
     playback.play()
     assert enough.wait(HUNG_TEST_TIMEOUT)
     playback.stop()
 
     assert published[:6] == [*_RECORDING["odom"], *_RECORDING["odom"]]
-    assert arrivals[3] - arrivals[2] >= 0.3
+    # The pass's last frame is due 0.04 s in and the next pass 0.3 s after it. Timers only wake late.
+    assert arrivals[3] - started >= 0.04 + 0.3
 
 
 def test_stop_from_a_callback_allows_closing_the_store(store: SqliteStore) -> None:

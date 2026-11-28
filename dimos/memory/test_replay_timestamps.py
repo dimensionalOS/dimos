@@ -80,7 +80,9 @@ def test_first_ts_uses_earliest_source_timestamp(recording: Store) -> None:
 def test_seek_uses_earliest_source_timestamp(recording: Store) -> None:
     replay = recording.replay(seek=0.005)
 
-    assert [(ts, pose.frame_id) for ts, pose in replay.stream("odom").iterate_ts()] == [
+    assert [
+        (ts, pose.frame_id) for ts, pose in ((o.ts, o.data) for o in replay.stream("odom").rows())
+    ] == [
         (10.01, "2"),
         (10.02, "0"),
     ]
@@ -89,7 +91,11 @@ def test_seek_uses_earliest_source_timestamp(recording: Store) -> None:
 def test_seek_uses_shared_recording_start(recording: Store) -> None:
     replay = recording.replay(seek=0.005)
 
-    assert [ts for ts, _ in replay.stream("camera").iterate_ts()] == [10.006, 10.014, 10.025]
+    assert [ts for ts, _ in ((o.ts, o.data) for o in replay.stream("camera").rows())] == [
+        10.006,
+        10.014,
+        10.025,
+    ]
 
 
 def test_recording_start_is_found_once(recording: Store, mocker: MockerFixture) -> None:
@@ -97,7 +103,7 @@ def test_recording_start_is_found_once(recording: Store, mocker: MockerFixture) 
     list_streams = mocker.spy(recording, "list_streams")
 
     for name in ("odom", "camera"):
-        list(replay.stream(name).iterate_ts())
+        list((o.ts, o.data) for o in replay.stream(name).rows())
 
     assert list_streams.call_count == 1
 
@@ -105,4 +111,4 @@ def test_recording_start_is_found_once(recording: Store, mocker: MockerFixture) 
 def test_duration_uses_earliest_source_timestamp(recording: Store) -> None:
     replay = recording.replay(duration=0.015)
 
-    assert [ts for ts, _ in replay.stream("odom").iterate_ts()] == [10.0, 10.01]
+    assert [ts for ts, _ in ((o.ts, o.data) for o in replay.stream("odom").rows())] == [10.0, 10.01]

@@ -37,7 +37,7 @@ from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterator
+    from collections.abc import Callable, Generator
 
     from reactivex.observable import Observable
 
@@ -138,8 +138,8 @@ class ReplayStream(Generic[T]):
             data = self._autocast(data)
         return cast("T", data)
 
-    def _base_stream(self) -> Stream[Any]:
-        """Memory Stream bounded by the replay window, ordered by ts."""
+    def rows(self) -> Stream[Any]:
+        """The recorded observations inside the replay window, in ts order."""
         cfg = self._replay.config
         s: Stream[Any] = self._replay.store.stream(self._name)
 
@@ -176,47 +176,24 @@ class ReplayStream(Generic[T]):
     def first_ts(self) -> float | None:
         """First ts within the replay window (post seek/duration)."""
         try:
-            return float(self._base_stream().first().ts)
+            return float(self.rows().first().ts)
         except LookupError:
             return None
 
     def last_ts(self) -> float | None:
         try:
-            return float(self._base_stream().last().ts)
+            return float(self.rows().last().ts)
         except LookupError:
             return None
 
     def count(self) -> int:
-        return int(self._base_stream().count())
-
-    def iterate_ts(self) -> Iterator[tuple[float, T]]:
-        """Yield ``(ts, data)`` within the replay window. Honors ``loop``."""
-        while True:
-            emitted = False
-            obs: Any
-            for obs in self._base_stream():
-                emitted = True
-                yield (obs.ts, self._decode(obs))
-            if not self._replay.config.loop or not emitted:
-                break
-
-    def iterate(self) -> Iterator[T]:
-        for _, data in self.iterate_ts():
-            yield data
+        return int(self.rows().count())
 
     def first(self) -> T | None:
         try:
-            return self._decode(self._base_stream().first())
+            return self._decode(self.rows().first())
         except LookupError:
             return None
-
-    def find_closest(self, timestamp: float, tolerance: float = 1.0) -> T | None:
-        s: Stream[Any] = self._replay.store.stream(self._name)
-        try:
-            obs: Any = s.at(timestamp, tolerance).first()
-        except LookupError:
-            return None
-        return self._decode(obs)
 
 
 # A buffered item is (ts, stream name, value): ts is recording seconds plus the loop passes
@@ -395,7 +372,7 @@ class Playback:
     ) -> Generator[tuple[float, str, Any], None, None]:
         """*name*'s rows in ts order, then _END unless looping; a read error ends it at once."""
         try:
-            rows = iter(stream._base_stream())
+            rows = iter(stream.rows())
             try:
                 ts = float("-inf")
                 for obs in rows:

@@ -227,14 +227,14 @@ def test_slow_decode_delays_later_frames_but_drops_none(
 
 def test_slow_stream_setup_does_not_skip_the_first_frames(recording: str) -> None:
     """Setup slower than the recording's first frames loses none of them."""
-    real = ReplayStream._base_stream
+    real = ReplayStream.rows
 
     def slow(self: Any) -> Any:
         time.sleep(0.1)  # longer than the recording, on every query
         return real(self)
 
     got: dict[str, list[float]] = {"odom": [], "goal": []}
-    with mock.patch("dimos.memory.replay.ReplayStream._base_stream", slow):
+    with mock.patch("dimos.memory.replay.ReplayStream.rows", slow):
         module = replay_module(recording)(dataset=recording)
         module.outputs["odom"].subscribe(lambda m: got["odom"].append(m.ts))
         module.outputs["goal"].subscribe(lambda m: got["goal"].append(m.ts))

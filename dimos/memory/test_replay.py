@@ -61,7 +61,7 @@ def test_seek_filters_frames_before_offset(sqlite_store: SqliteStore) -> None:
     _populate(sqlite_store, "lidar", [100.0, 100.1, 100.2, 100.3])
     replay = sqlite_store.replay(seek=0.2)
     # seek=0.2 from first_ts=100.0 → window starts at 100.2 inclusive.
-    pairs = list(replay.streams.lidar.iterate_ts())
+    pairs = list((o.ts, o.data) for o in replay.streams.lidar.rows())
     assert [v for _, v in pairs] == [2, 3]
     assert [ts for ts, _ in pairs] == pytest.approx([100.2, 100.3], abs=1e-6)
 
@@ -70,19 +70,19 @@ def test_duration_bounds_window(sqlite_store: SqliteStore) -> None:
     _populate(sqlite_store, "lidar", [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3])
     replay = sqlite_store.replay(duration=0.12)
     # time_range is inclusive on both sides: 0.0, 0.05, 0.10 are in; 0.15 is past.
-    assert [v for _, v in replay.streams.lidar.iterate_ts()] == [0, 1, 2]
+    assert [v for _, v in ((o.ts, o.data) for o in replay.streams.lidar.rows())] == [0, 1, 2]
 
 
 def test_from_timestamp_absolute(sqlite_store: SqliteStore) -> None:
     _populate(sqlite_store, "lidar", [100.0, 100.1, 100.2, 100.3])
     replay = sqlite_store.replay(from_timestamp=100.2)
-    assert [v for _, v in replay.streams.lidar.iterate_ts()] == [2, 3]
+    assert [v for _, v in ((o.ts, o.data) for o in replay.streams.lidar.rows())] == [2, 3]
 
 
-def test_replay_stream_iterate_ts(sqlite_store: SqliteStore) -> None:
+def test_replay_stream_rows(sqlite_store: SqliteStore) -> None:
     _populate(sqlite_store, "lidar", [10.0, 10.5, 11.0])
     replay = sqlite_store.replay()
-    pairs = list(replay.streams.lidar.iterate_ts())
+    pairs = list((o.ts, o.data) for o in replay.streams.lidar.rows())
     assert pairs == [(10.0, 0), (10.5, 1), (11.0, 2)]
 
 
