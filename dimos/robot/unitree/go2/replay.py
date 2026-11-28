@@ -25,7 +25,6 @@ from reactivex import interval
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
-from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
 from dimos.memory.replay_module import ReplayModule, ReplayModuleConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -54,7 +53,8 @@ class Go2ReplayConfig(ConnectionConfig, ReplayModuleConfig):
 class Go2Replay(ReplayModule):
     """Replays a Go2 recording's lidar, odom and camera, and derives tf, odometry and camera_info.
 
-    The recording's streams must be named lidar, odom and color_image.
+    Reads streams lidar, odom and color_image; mid360 recordings name the first two
+    go2_lidar and go2_odom.
 
     ``GO2Connection.blueprint()`` returns this under ``--replay``, under GO2Connection's name.
     """
@@ -83,14 +83,17 @@ class Go2Replay(ReplayModule):
         self._odom_lock = Lock()
         self._previous_odom: PoseStamped | None = None
 
+    def _stream_name(self, port: str, available: set[str]) -> str | None:
+        if port not in ("lidar", "odom", "color_image"):
+            return None  # derived here, not replayed
+        recorded = f"go2_{port}"
+        return recorded if recorded in available else port
+
     @rpc
     def start(self) -> None:
         super().start()
         # GO2Connection's own method: this class has the ports and config it uses.
         self.register_disposable(Disposable(self.odom.subscribe(self._publish_from_odom)))  # type: ignore[misc]
-
-    @rpc
-    def on_system_modules_ready(self, modules: list[RPCClient]) -> None:
         if self.config.camera:
             info = GO2Connection.camera_info_static
             self.register_disposable(
@@ -98,7 +101,6 @@ class Go2Replay(ReplayModule):
                     lambda _: self.camera_info.publish(info.with_ts(time.time()))
                 )
             )
-        super().on_system_modules_ready(modules)
 
     @rpc
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[str, Any]:

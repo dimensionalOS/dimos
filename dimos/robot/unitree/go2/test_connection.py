@@ -617,3 +617,20 @@ def test_go2_replay_publishes_the_window_and_derives_tf(
         module.stop()
     assert [value.lcm_encode() for value in odom] == [values[1].lcm_encode()]
     assert len(tf) == 1
+
+
+@pytest.mark.parametrize(
+    "available, expected",
+    [
+        ({"lidar", "odom", "color_image", "tf"}, ("lidar", "odom", "color_image", None)),
+        (
+            {"go2_lidar", "go2_odom", "color_image", "tf"},
+            ("go2_lidar", "go2_odom", "color_image", None),
+        ),
+    ],
+)
+def test_go2_replay_reads_mid360_stream_names_and_derives_tf(
+    available: set[str], expected: tuple[str | None, ...]
+) -> None:
+    ports = ("lidar", "odom", "color_image", "tf")
+    assert tuple(Go2Replay._stream_name(None, p, available) for p in ports) == expected  # type: ignore[arg-type]

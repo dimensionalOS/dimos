@@ -162,11 +162,18 @@ class ReplayModule(Module):
         self._store = store
         window = RecordingWindow.from_store(store, self.config.seek or 0.0, self.config.duration)
         available = set(store.list_streams())
-        missing = sorted(set(self.outputs) - available)
+        sources = {
+            n: source
+            for n in self.outputs
+            if (source := self._stream_name(n, available)) is not None
+        }
+        missing = sorted(n for n, source in sources.items() if source not in available)
         if missing:
             logger.warning("Recording has no stream for these ports", path=str(path), ports=missing)
         rows: dict[str, Stream[Any]] = {
-            n: window.apply(store.stream(n)).order_by("ts") for n in self.outputs if n in available
+            n: window.apply(store.stream(source)).order_by("ts")
+            for n, source in sources.items()
+            if source in available
         }
         bounds = {n: (r.first().ts, r.last().ts) for n, r in rows.items() if r.count()}
         # A stream whose rows all carry one timestamp (camera_info recorded from a
@@ -191,6 +198,10 @@ class ReplayModule(Module):
         self._reader = Thread(target=self._read, name="replay-reader", daemon=True)
         self._reader.start()
         self._buffer.wait_full(self._read_done)
+
+    def _stream_name(self, port: str, available: set[str]) -> str | None:
+        """The recorded stream that feeds *port* (the one of the same name), or None to not replay it."""
+        return port
 
     @rpc
     def on_system_modules_ready(self, _modules: list[RPCClient]) -> None:
