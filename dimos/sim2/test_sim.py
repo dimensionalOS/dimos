@@ -12,10 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
+from collections.abc import Sequence
 import subprocess
 import sys
+import time
 
+import numpy as np
 import pytest
+
+from dimos.sim2.sim import WorldMirror, WorldWriter
 
 # Before importing the sim, whose spawn points register a USD schema on import.
 pytest.importorskip("pxr")
@@ -25,10 +31,16 @@ from dimos.core.hardware_module import HardwareSpec
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.frames import usd_frame_names
 from dimos.robot.assets.usd_utils.layers import usd_under_namespace
-from dimos.sim2.assets.logistics import LOGISTICS
-from dimos.sim2.assets.toy import toy_robot
-from dimos.sim2.sim import SimulatedRobotSpec, SimWorld, compose_usds, meeting, sim
-from dimos.sim2.spec import SimulatedRobot, validate
+from dimos.sim2.scene import LOGISTICS, toy_robot
+from dimos.sim2.sim import (
+    SimulatedRobot,
+    SimulatedRobotSpec,
+    SimWorld,
+    compose_usds,
+    meeting,
+    sim,
+    validate,
+)
 
 
 def _room() -> str:
@@ -127,7 +139,7 @@ def test_the_sim_protocol_imports_no_engine() -> None:
 def test_on_mount_shares_the_sim_streams_its_blueprint_has_and_namespaces_the_rest() -> None:
     from dimos.core.coordination.blueprints import autoconnect
     from dimos.core.hardware_module import Mount
-    from dimos.sim2.assets.logistics import Logistics
+    from dimos.sim2.scene import Logistics
     from dimos.sim2.sim import _stream_names, on_mount
 
     mounted = on_mount(autoconnect(Logistics.blueprint()), Mount("room/spot", "spot")).solidify()
@@ -139,3 +151,94 @@ def test_on_mount_shares_the_sim_streams_its_blueprint_has_and_namespaces_the_re
         "tf_static",
         "world_observations",
     }
+
+
+PERIOD = 0.05
+# How late the event loop may wake a sleeping tick.
+SLACK = 0.01
+
+
+async def _tick_times(work: Sequence[float]) -> list[float]:
+    """When a sensor ticks whose work on each tick takes ``work[i]`` wall seconds, once the world has a frame."""
+    mirror, writer = WorldMirror(), WorldWriter()
+    writer.add("world")
+    mirror.apply(writer.end_frame(0.0))
+    ticks: list[float] = []
+    async for tick in mirror.ticks(1 / PERIOD):
+        ticks.append(tick)
+        if len(ticks) > len(work):
+            break
+        await asyncio.sleep(work[len(ticks) - 1])
+    return ticks
+
+
+@pytest.mark.parametrize(
+    "work",
+    [[0.0] * 8, [1.5 * PERIOD] + [0.0] * 7, [1.9 * PERIOD] + [0.0] * 7, [3.0 * PERIOD] + [0.0] * 7],
+    ids=["idle", "one_slow_tick", "one_nearly_two_periods", "one_very_slow_tick"],
+)
+def test_a_sensor_never_ticks_within_a_period_of_its_last_tick(work: list[float]) -> None:
+    gaps = np.diff(asyncio.run(_tick_times(work)))
+    assert gaps.min() >= PERIOD - SLACK, gaps
+    # Once caught up it is back on its rate, not drifting slower.
+    assert gaps[-1] == pytest.approx(PERIOD, abs=SLACK), gaps
+
+
+def test_a_sensor_slower_than_its_rate_ticks_as_often_as_its_work_allows() -> None:
+    work = 1.4 * PERIOD
+    gaps = np.diff(asyncio.run(_tick_times([work] * 6)))
+    # The next tick comes once the work is done, not a further period after it.
+    assert np.all((gaps >= work) & (gaps < work + PERIOD)), gaps
+
+
+def test_a_sensor_always_behind_its_rate_still_lets_the_loop_s_other_tasks_run() -> None:
+    """Work that never yields, at a rate it can never keep up with: an input's handler on the same loop still runs."""
+
+    async def behind() -> int:
+        mirror, writer = WorldMirror(), WorldWriter()
+        writer.add("world")
+        mirror.apply(writer.end_frame(0.0))
+        handled = 0
+
+        async def handler() -> None:
+            nonlocal handled
+            while True:
+                await asyncio.sleep(0)
+                handled += 1
+
+        handling = asyncio.ensure_future(handler())
+        ticks = 0
+        async for _ in mirror.ticks(10_000):
+            time.sleep(2 * PERIOD / 10)
+            ticks += 1
+            if ticks == 10:
+                break
+        handling.cancel()
+        return handled
+
+    assert asyncio.run(behind()) >= 5
+
+
+def test_ticks_wait_for_the_world_s_first_frame_and_are_wall_times() -> None:
+    mirror, writer = WorldMirror(), WorldWriter()
+    writer.add("world")
+
+    async def first_tick() -> float:
+        ticking = asyncio.ensure_future(anext(aiter(mirror.ticks(1 / PERIOD))))
+        await asyncio.sleep(2 * PERIOD)
+        assert not ticking.done(), "it ticked before the world had a frame"
+        mirror.apply(writer.end_frame(0.0))
+        return await ticking
+
+    before = time.time()
+    tick = asyncio.run(first_tick())
+    assert before <= tick <= time.time()
+
+
+def test_a_world_rebased_after_falling_behind_stamps_its_next_frame_with_wall_time() -> None:
+    writer = WorldWriter()
+    writer.add("world")
+    writer.start_ns = time.time_ns() - round(60 * 1e9)
+    writer.rebase(1.0)
+    frame = writer.end_frame(1.0 + PERIOD)
+    assert frame.ts / 1e9 == pytest.approx(time.time() + PERIOD, abs=SLACK)
