@@ -45,9 +45,8 @@ from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 T = TypeVar("T")
 
 
-# Shared SqliteStore per .db path — ReplayConnection opens three adapters
-# (lidar, odom, color_image) for the same dataset, so sharing a connection
-# avoids redundant opens.
+# Shared SqliteStore per .db path: several adapters often open the same
+# dataset, so sharing a connection avoids redundant opens.
 _stores: dict[str, SqliteStore] = {}
 
 
