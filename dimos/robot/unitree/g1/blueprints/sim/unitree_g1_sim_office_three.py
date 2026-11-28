@@ -37,8 +37,8 @@ from dimos.sim2.sim import on_mount, sim
 from dimos.sim2.spawn import spawn_frames_in_file
 from dimos.simulation.scenes.office_555.room import SCENE, Office555, Office555Config
 
-# A room camera (x forward) behind the three spots, looking along +y and 25 degrees down at them.
-WATCHING = ((-0.1, -10.5, 2.2), (0.0, math.radians(25), math.pi / 2))
+# A room camera (x forward) off the spots' corner, turned to see all three apart and 22 degrees down at their waists.
+WATCHING = ((-3.5, -10.0, 2.4), (0.0, math.radians(22), math.radians(42)))
 
 
 class Office555WatchedConfig(Office555Config):
