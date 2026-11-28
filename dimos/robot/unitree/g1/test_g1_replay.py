@@ -20,7 +20,7 @@ import pytest
 from reactivex import merge
 
 from dimos.constants import HUNG_TEST_TIMEOUT
-from dimos.memory.replay import Playback
+from dimos.memory.replay import Replay
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.unitree.g1.g1_replay import G1Replay
@@ -79,7 +79,7 @@ def test_replay_logs_source_duration_and_completion(tmp_path, mocker):
         for ts in (1.0, 2.0):
             odom.append(Odometry(ts=ts), ts=ts)
     log = mocker.patch("dimos.memory.replay_progress.logger")
-    add = mocker.spy(Playback, "add")
+    add = mocker.spy(Replay, "add")
     with G1Replay(dataset=str(path)) as replay:
         log.info.assert_called_once_with(
             "Replay started",

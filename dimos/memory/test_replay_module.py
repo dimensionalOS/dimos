@@ -26,7 +26,7 @@ from reactivex.testing import TestScheduler
 
 from dimos.constants import HUNG_TEST_TIMEOUT
 from dimos.core.stream import Out
-from dimos.memory.replay import Playback, ReplayStream
+from dimos.memory.replay import Replay, ReplayStream
 from dimos.memory.replay_module import replay_module
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -278,7 +278,7 @@ def test_replay_logs_source_and_finishes_after_all_timed_streams(recording, mock
                 info.append(PoseStamped(ts=0.0), ts=0.0)
     log = mocker.patch("dimos.memory.replay_progress.logger")
     module = replay_module(recording)(dataset=recording)
-    add = mocker.spy(Playback, "add")
+    add = mocker.spy(Replay, "add")
     odom: list[float] = []
     module.outputs["odom"].subscribe(lambda m: odom.append(m.ts))
     try:

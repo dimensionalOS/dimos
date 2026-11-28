@@ -40,7 +40,7 @@ from dimos.core.resource import CompositeResource
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
 from dimos.memory.cli.dataset import open_store, resolve_dataset
-from dimos.memory.replay import Playback, Replay, ReplayStream
+from dimos.memory.replay import Replay, ReplayStream
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -286,7 +286,7 @@ class ReplayConnection(CompositeResource):
         self._progress = ReplayProgress(dataset, on_complete=self._on_complete)
         self._replay_path: str | None = None
         self._pending_streams: list[ReplayStream[Any]] = []
-        self._playback: Playback | None = None
+        self._playing: Replay | None = None
 
     @cached_property
     def replay(self) -> Replay:
@@ -302,8 +302,8 @@ class ReplayConnection(CompositeResource):
 
     def stop(self) -> None:
         # Stop reading before the store closes.
-        if self._playback is not None:
-            self._playback.stop()
+        if self._playing is not None:
+            self._playing.stop()
         super().stop()
 
     def standup(self) -> bool:
@@ -348,10 +348,9 @@ class ReplayConnection(CompositeResource):
         return self._progress.track(source)
 
     def _replay_observable(self, stream: ReplayStream[_T]) -> Observable[_T]:
-        if self._playback is None:
-            self._playback = self.replay.playback()
+        self._playing = self.replay
         self._pending_streams.append(stream)
-        return self._tracked(self._playback.add(stream))
+        return self._tracked(self._playing.add(stream))
 
     def seal_subscriptions(self) -> None:
         """Mark the subscription set complete and buffer the first frames."""
@@ -361,13 +360,13 @@ class ReplayConnection(CompositeResource):
             self._progress.start(self.replay, self._pending_streams, path=self._replay_path)
             self._pending_streams.clear()
         self._progress.seal()
-        if self._playback is not None:
-            self._playback.load()
+        if self._playing is not None:
+            self._playing.load()
 
     def play(self) -> None:
         """Start the clock: every subscriber is listening."""
-        if self._playback is not None:
-            self._playback.play()
+        if self._playing is not None:
+            self._playing.play()
 
     def _on_complete(self) -> None:
         if self._exit_on_complete:

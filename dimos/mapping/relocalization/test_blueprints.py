@@ -27,7 +27,7 @@ from reactivex.disposable import Disposable
 from dimos.constants import HUNG_TEST_TIMEOUT
 from dimos.experimental.robot.bosdyn.spot.replay import SpotReplay
 from dimos.mapping.relocalization.blueprints import RecordingPlayer
-from dimos.memory.replay import Playback, ReplayStream
+from dimos.memory.replay import Replay, ReplayStream
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -153,14 +153,14 @@ def test_player_can_stop_from_replay_callback(
 def test_player_closes_store_after_partial_startup(
     player: RecordingPlayer | SpotReplay, mocker: MockerFixture
 ) -> None:
-    add = Playback.add
+    add = Replay.add
 
-    def fail_tf(self: Playback, stream: ReplayStream[Any]) -> Observable[Any]:
+    def fail_tf(self: Replay, stream: ReplayStream[Any]) -> Observable[Any]:
         if stream.name == "tf":
             raise RuntimeError("cannot open tf replay")
         return add(self, stream)
 
-    mocker.patch.object(Playback, "add", fail_tf)
+    mocker.patch.object(Replay, "add", fail_tf)
     replay = mocker.spy(SqliteStore, "replay")
     with pytest.raises(RuntimeError, match="cannot open tf replay"):
         player.start()
@@ -172,7 +172,7 @@ def test_player_closes_store_after_partial_startup(
 
 def test_player_logs_source_duration_and_completion(player, mocker):
     log = mocker.patch("dimos.memory.replay_progress.logger")
-    add = mocker.spy(Playback, "add")
+    add = mocker.spy(Replay, "add")
     player.start()
     path = player.config.dataset
     log.info.assert_called_once_with(

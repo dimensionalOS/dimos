@@ -79,7 +79,7 @@ def _play_until_terminal(
     replay: Replay, stream: ReplayStream[Any]
 ) -> tuple[list[Any], list[Exception], MagicMock]:
     """Play *stream* alone until it errors or completes; its frames, errors and on_completed."""
-    playback = replay.playback()
+    playback = replay
     received: list[Any] = []
     errors: list[Exception] = []
     finished = threading.Event()
@@ -172,7 +172,7 @@ def test_a_failed_stream_stops_the_whole_replay(mocker: MockerFixture) -> None:
         replay = store.replay()
         broken = replay.stream("broken")
         mocker.patch.object(broken, "rows", side_effect=OSError("recording read failed"))
-        playback = replay.playback()
+        playback = replay
         errors: dict[str, Exception] = {}
         both = threading.Event()
 

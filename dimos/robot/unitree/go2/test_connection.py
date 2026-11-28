@@ -41,7 +41,7 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.memory.replay import Playback
+from dimos.memory.replay import Replay
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -772,7 +772,7 @@ def test_replay_loop_cli_controls_repeated_playback(tmp_path, mocker, loop):
         g=GlobalConfig(**parsed.global_config_values()), **parsed.module_kwargs("go2connection")
     )
     log = mocker.patch("dimos.memory.replay_progress.logger")
-    add = mocker.spy(Playback, "add")
+    add = mocker.spy(Replay, "add")
     module = GO2Connection(g=cfg.g, replay_loop=cfg.replay_loop, lidar=False, camera=False)
     mocker.patch.object(module.cmd_vel, "subscribe", return_value=mocker.Mock())
     mocker.patch.object(module.velocity_command, "subscribe", return_value=mocker.Mock())

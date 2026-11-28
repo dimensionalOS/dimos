@@ -36,7 +36,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import Out
 from dimos.memory.cli.dataset import open_dataset, open_store, resolve_dataset, stream_payload_types
-from dimos.memory.replay import Playback
+from dimos.memory.replay import Replay
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.base import Store
 from dimos.memory.tap import check_topics, matching
@@ -114,7 +114,7 @@ class ReplayModule(Module):
     stream_types: dict[str, type] = {}  # set by replay_module()
     topics: str = "*"  # set by replay_module(); carried to workers via the blueprint kwargs
     _store: Store | None = None
-    _playback: Playback | None = None
+    _replay: Replay | None = None
     _static: list[tuple[Out[Any], Any]] = []
 
     @classproperty
@@ -171,15 +171,14 @@ class ReplayModule(Module):
         timed = {n: s for n, s in streams.items() if n not in static}
         progress = ReplayProgress(str(path))
         progress.start(replay, timed.values())
-        playback = replay.playback()
-        self._playback = playback
+        self._replay = replay
         self._static = [(self.outputs[n], streams[n].first()) for n in static]
         for name, stream in timed.items():
             port = self.outputs[name]
             logger.info("Replaying %s -> %s", name, port)
-            self.register_disposable(progress.track(playback.add(stream)).subscribe(port.publish))
+            self.register_disposable(progress.track(replay.add(stream)).subscribe(port.publish))
         progress.seal()
-        playback.load()
+        replay.load()
 
     @rpc
     def on_system_modules_ready(self, _modules: list[RPCClient]) -> None:
@@ -187,13 +186,13 @@ class ReplayModule(Module):
         for port, msg in self._static:
             self.register_disposable(interval(1.0).subscribe(partial(_republish, port, msg)))
         self._static = []
-        if self._playback is not None:
-            self._playback.play()
+        if self._replay is not None:
+            self._replay.play()
 
     @rpc
     def stop(self) -> None:
-        if self._playback is not None:
-            self._playback.stop()
+        if self._replay is not None:
+            self._replay.stop()
         super().stop()
         if self._store is not None:
             self._store.stop()

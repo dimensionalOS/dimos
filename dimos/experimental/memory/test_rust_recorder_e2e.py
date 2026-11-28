@@ -54,7 +54,7 @@ from dimos.imitation.dataprep.core import extract_episodes
 from dimos.imitation.dataprep.schema import EpisodeExtractor, FeatureSpec, RecordingSchema
 from dimos.memory.cli.app import mem_app
 from dimos.memory.cli.dataset import open_dataset
-from dimos.memory.replay import Playback
+from dimos.memory.replay import Replay
 from dimos.memory.replay_module import ReplayModule
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
@@ -620,7 +620,7 @@ def test_native_json_events_replay_to_the_live_quest_hud(
 ):
     artifact = _capture_native_artifact(tmp_path, rust_recorder_executable, store_kind, monkeypatch)
     received = []
-    add = mocker.spy(Playback, "add")
+    add = mocker.spy(Replay, "add")
     with ExitStack() as cleanup:
         hud = WebXRTeleopModule()
         cleanup.callback(hud.stop)

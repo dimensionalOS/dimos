@@ -21,7 +21,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.constants import HUNG_TEST_TIMEOUT
-from dimos.memory.replay import Playback, Replay
+from dimos.memory.replay import Replay
 from dimos.memory.store.sqlite import SqliteStore
 
 pytestmark = [
@@ -50,9 +50,9 @@ def store(tmp_path: Path) -> Iterator[SqliteStore]:
 
 def _record(
     replay: Replay, names: list[str]
-) -> tuple[Playback, list[tuple[str, float]], threading.Event]:
+) -> tuple[Replay, list[tuple[str, float]], threading.Event]:
     """A playback of *names* logging (stream, frame) in publish order, and an event set when all end."""
-    playback = replay.playback()
+    playback = replay
     published: list[tuple[str, float]] = []
     remaining = set(names)
     done = threading.Event()
@@ -93,7 +93,7 @@ def test_nothing_publishes_before_play(store: SqliteStore) -> None:
 
 def test_no_frame_publishes_before_its_recorded_offset(store: SqliteStore) -> None:
     replay = store.replay(speed=0.5)
-    playback = replay.playback()
+    playback = replay
     arrivals: list[float] = []
     done = threading.Event()
     playback.add(replay.stream("odom")).subscribe(
@@ -115,7 +115,7 @@ def test_slow_subscriber_drops_nothing_and_warns_once(
 ) -> None:
     log = mocker.patch("dimos.memory.replay.logger")
     replay = store.replay(lag_warning=0.05)
-    playback = replay.playback()
+    playback = replay
     published: list[float] = []
     done = threading.Event()
 
@@ -135,7 +135,7 @@ def test_slow_subscriber_drops_nothing_and_warns_once(
 
 def test_loop_replays_in_order_after_the_gap(store: SqliteStore) -> None:
     replay = store.replay(loop=True, loop_gap=0.3)
-    playback = replay.playback()
+    playback = replay
     published: list[float] = []
     arrivals: list[float] = []
     enough = threading.Event()
@@ -159,7 +159,7 @@ def test_loop_replays_in_order_after_the_gap(store: SqliteStore) -> None:
 
 def test_stop_from_a_callback_allows_closing_the_store(store: SqliteStore) -> None:
     replay = store.replay()
-    playback = replay.playback()
+    playback = replay
     published: list[float] = []
 
     stopped = threading.Event()
@@ -185,7 +185,7 @@ def test_failing_subscriber_leaves_the_other_streams_playing(
 ) -> None:
     log = mocker.patch("dimos.memory.replay.logger")
     replay = store.replay(speed=10.0)
-    playback = replay.playback()
+    playback = replay
     odom: list[float] = []
     done = threading.Event()
 

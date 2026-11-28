@@ -14,9 +14,9 @@
 
 """Multi-stream replay over a memory :class:`Store`.
 
-``store.replay()`` returns a :class:`Replay` view. ``replay.playback()`` plays
-the streams added to it as one timeline: every frame is published in recorded
-order, at its recorded offset from the first frame, and none is dropped.
+``store.replay()`` returns a :class:`Replay`, which plays the streams added to
+it as one timeline: every frame is published in recorded order, at its recorded
+offset from the first frame, and none is dropped.
 """
 
 from __future__ import annotations
@@ -68,11 +68,21 @@ class ReplayConfig(BaseConfig):
 
 
 class Replay(Configurable):
-    """Time-bounded view over a :class:`Store`.
+    """Plays a :class:`Store`'s streams, within a seek/duration window, as one timeline.
 
-    Constructed via :meth:`Store.replay`. Pass ``speed``, ``seek``,
-    ``duration``, ``from_timestamp``, ``loop``, ``buffer_size`` and
-    ``lag_warning`` to control playback.
+    Constructed via :meth:`Store.replay`. A reader thread merges the :meth:`add`-ed streams by
+    timestamp, decodes each frame and keeps ``buffer_size`` of them buffered. A publisher thread
+    publishes each at its recorded offset from the first frame, divided by ``speed``, counted from
+    :meth:`play`. No frame is dropped: a publisher that falls behind publishes late frames at once
+    and warns past ``lag_warning`` seconds. A frame that cannot be read or decoded stops the
+    replay and errors every stream.
+
+    :meth:`load` returns once the buffer is full, so a module's ``start()`` pays the first reads
+    there, before :meth:`play` starts the clock. :meth:`stop` waits for an in-flight publish and
+    closes every read cursor, so the store can be closed after it.
+
+    TODO: messages keep their recorded timestamps; shift them to playback time,
+    so a replayed message is stamped like a live one.
     """
 
     config: ReplayConfig
@@ -81,6 +91,16 @@ class Replay(Configurable):
         super().__init__(**kwargs)
         self.store = store
         self._first_ts: float | None = None
+        self._streams: dict[str, ReplayStream[Any]] = {}
+        self._subjects: dict[str, Subject[Any]] = {}
+        self._stopped = threading.Event()
+        self._buffer = _Buffer(self.config.buffer_size, self._stopped)
+        self._state_lock = threading.Lock()
+        self._reader: threading.Thread | None = None
+        self._read_done = threading.Event()
+        self._loaded = threading.Event()
+        self._publisher: threading.Thread | None = None
+        self._error: Exception | None = None
 
     @property
     def streams(self) -> StreamAccessor[ReplayStream[Any]]:
@@ -109,9 +129,167 @@ class Replay(Configurable):
                 self._first_ts = min(candidates)
         return self._first_ts
 
-    def playback(self) -> Playback:
-        """An empty chronological timeline to :meth:`Playback.add` streams to."""
-        return Playback(self)
+    def add(self, stream: ReplayStream[T]) -> Observable[T]:
+        """Put *stream* on the timeline. Its frames complete when it ends (never, with ``loop``)."""
+        with self._state_lock:
+            if self._reader is not None:
+                raise RuntimeError("Replay.add() after load()")
+            if stream.name in self._streams:
+                raise ValueError(f"stream {stream.name!r} is already on the timeline")
+            self._streams[stream.name] = stream
+            subject: Subject[T] = Subject()
+            self._subjects[stream.name] = subject
+            return subject
+
+    def load(self) -> None:
+        """Fill the buffer, returning once it is full. Later calls return at once."""
+        if self._loaded.is_set():
+            return
+        with self._state_lock:
+            if self._reader is None and not self._stopped.is_set():
+                self._reader = threading.Thread(
+                    target=self._read, name="replay-reader", daemon=True
+                )
+                self._reader.start()
+        self._buffer.wait_full(self._read_done)
+        self._loaded.set()
+
+    def play(self) -> None:
+        """Start the clock at the first frame and publish. Idempotent."""
+        self.load()
+        with self._state_lock:
+            if self._publisher is not None or self._stopped.is_set():
+                return
+            self._publisher = threading.Thread(
+                target=self._publish, args=(time.monotonic(),), name="replay-publisher", daemon=True
+            )
+            self._publisher.start()
+
+    def stop(self) -> None:
+        with self._state_lock:  # a concurrent load() or play() starts its thread first
+            self._stopped.set()
+            threads = (self._reader, self._publisher)
+        self._buffer.wake()
+        current = threading.current_thread()
+        for thread in threads:
+            if thread is not None and thread is not current:
+                thread.join()
+
+    def _read(self) -> None:
+        try:
+            # A looping stream never ends on its own: end them all once the recording runs dry.
+            if self._read_passes() and self.config.loop:
+                for name in self._streams:
+                    if not self._buffer.put((0.0, name, _END)):
+                        return
+        finally:
+            self._read_done.set()
+            self._buffer.wake()
+
+    def _read_passes(self) -> bool:
+        """Buffer every pass of the recording. False once stopped or failed."""
+        offset = 0.0
+        while True:
+            rows = [self._rows(name, stream) for name, stream in self._streams.items()]
+            first = last = None
+            try:
+                for ts, name, obs in heapq.merge(*rows, key=lambda row: row[0]):
+                    if obs is _FAILED:
+                        self._buffer.put((ts, name, _FAILED))
+                        return False
+                    if obs is _END:
+                        if not self._buffer.put((ts, name, _END)):
+                            return False
+                        continue
+                    first = ts if first is None else first
+                    last = ts
+                    try:
+                        value = self._streams[name]._decode(obs)
+                    except Exception as error:
+                        self._error = error
+                        self._buffer.put((ts, name, _FAILED))
+                        return False
+                    if not self._buffer.put((ts + offset, name, value)):
+                        return False
+            finally:
+                for stream_rows in rows:
+                    stream_rows.close()
+            if not self.config.loop or first is None or last is None:
+                return True
+            offset += last - first + self.config.loop_gap
+
+    def _rows(
+        self, name: str, stream: ReplayStream[Any]
+    ) -> Generator[tuple[float, str, Any], None, None]:
+        """*name*'s rows in ts order, then _END unless looping; a read error ends it at once."""
+        try:
+            rows = iter(stream.rows())
+            try:
+                ts = float("-inf")
+                for obs in rows:
+                    ts = float(obs.ts)
+                    yield ts, name, obs
+            finally:
+                close = getattr(rows, "close", None)
+                if close is not None:
+                    close()
+        except Exception as error:
+            self._error = error
+            yield float("-inf"), name, _FAILED
+            return
+        if not self.config.loop:
+            yield ts, name, _END
+
+    def _publish(self, wall_t0: float) -> None:
+        speed = self.config.speed
+        lag_warning = self.config.lag_warning
+        ended: set[str] = set()
+        first_ts: float | None = None
+        behind = False
+        while len(ended) < len(self._subjects):
+            item = self._buffer.get()
+            if item is None:
+                return
+            ts, name, value = item
+            if value is _FAILED:
+                self._fail(name, ended)
+                return
+            if value is _END:
+                ended.add(name)
+                self._deliver(name, self._subjects[name].on_completed)
+                continue
+            if first_ts is None:
+                first_ts = ts
+            due = wall_t0 + (ts - first_ts) / speed
+            early = due - time.monotonic()
+            if early > 0:
+                behind = False  # back on schedule
+                if self._stopped.wait(early):
+                    return
+            elif -early > lag_warning and not behind:
+                behind = True
+                logger.warning("Replay is behind schedule", lag_s=round(-early, 3), stream=name)
+            self._deliver(name, self._subjects[name].on_next, value)
+
+    def _fail(self, failed: str, ended: set[str]) -> None:
+        """A bad recording or a config that cannot decode it: stop, and error every stream."""
+        error = cast("Exception", self._error)
+        logger.error("Replay stopped: recording could not be read", stream=failed, exc_info=error)
+        for name, subject in self._subjects.items():
+            if name not in ended:
+                try:
+                    subject.on_error(error)
+                except Exception as raised:
+                    if raised is not error:  # a subscriber without on_error re-raises it
+                        logger.exception("Replay subscriber failed", stream=name)
+
+    @staticmethod
+    def _deliver(name: str, notify: Callable[..., None], *args: Any) -> None:
+        # A subscriber's bug is logged, not allowed to stop the replay for every other subscriber.
+        try:
+            notify(*args)
+        except Exception:
+            logger.exception("Replay subscriber failed", stream=name)
 
 
 class ReplayStream(Generic[T]):
@@ -199,7 +377,7 @@ class ReplayStream(Generic[T]):
 # A buffered item is (ts, stream name, value): ts is recording seconds plus the loop passes
 # before it, and value is a decoded frame or one of these.
 _END = object()  # the stream has no more frames
-_FAILED = object()  # the stream could not be read or decoded; Playback._error says why
+_FAILED = object()  # the stream could not be read or decoded; Replay._error says why
 
 
 class _Buffer:
@@ -241,201 +419,3 @@ class _Buffer:
     def wake(self) -> None:
         with self._changed:
             self._changed.notify_all()
-
-
-class Playback:
-    """Plays several :class:`ReplayStream` as one chronological timeline.
-
-    A reader thread merges the streams by timestamp, decodes each frame and
-    keeps a buffer of ``buffer_size`` of them full. A publisher thread takes each frame
-    in order, waits until its recorded offset from the first frame (divided by
-    ``speed``) has passed since :meth:`play`, and publishes it. No frame is
-    dropped: a publisher that falls behind publishes the late frames at once and
-    warns when it is more than ``lag_warning`` seconds behind. A frame that cannot be
-    read or decoded stops the whole replay and errors every stream.
-
-    :meth:`add` every stream and subscribe to what it returns. :meth:`load`
-    returns once the buffer is full (or the recording ends), so calling it in a
-    module's ``start()`` pays the first reads and decodes there, before
-    :meth:`play` starts the clock. :meth:`stop` waits for an in-flight publish and closes
-    every read cursor, so the store can be closed after it. Called from a
-    subscriber's callback, nothing more is read or decoded once it returns.
-
-    TODO: messages keep their recorded timestamps; shift them to playback time,
-    so a replayed message is stamped like a live one.
-    """
-
-    def __init__(self, replay: Replay) -> None:
-        self._replay = replay
-        self._streams: dict[str, ReplayStream[Any]] = {}
-        self._subjects: dict[str, Subject[Any]] = {}
-        self._stopped = threading.Event()
-        self._buffer = _Buffer(replay.config.buffer_size, self._stopped)
-        self._state_lock = threading.Lock()
-        self._reader: threading.Thread | None = None
-        self._read_done = threading.Event()
-        self._loaded = threading.Event()
-        self._publisher: threading.Thread | None = None
-        self._error: Exception | None = None
-
-    def add(self, stream: ReplayStream[T]) -> Observable[T]:
-        """Put *stream* on the timeline. Its frames complete when it ends (never, with ``loop``)."""
-        with self._state_lock:
-            if self._reader is not None:
-                raise RuntimeError("Playback.add() after load()")
-            if stream.name in self._streams:
-                raise ValueError(f"stream {stream.name!r} is already on the timeline")
-            self._streams[stream.name] = stream
-            subject: Subject[T] = Subject()
-            self._subjects[stream.name] = subject
-            return subject
-
-    def load(self) -> None:
-        """Fill the buffer, returning once it is full. Later calls return at once."""
-        if self._loaded.is_set():
-            return
-        with self._state_lock:
-            if self._reader is None and not self._stopped.is_set():
-                self._reader = threading.Thread(
-                    target=self._read, name="replay-reader", daemon=True
-                )
-                self._reader.start()
-        self._buffer.wait_full(self._read_done)
-        self._loaded.set()
-
-    def play(self) -> None:
-        """Start the clock at the first frame and publish. Idempotent."""
-        self.load()
-        with self._state_lock:
-            if self._publisher is not None or self._stopped.is_set():
-                return
-            self._publisher = threading.Thread(
-                target=self._publish, args=(time.monotonic(),), name="replay-publisher", daemon=True
-            )
-            self._publisher.start()
-
-    def stop(self) -> None:
-        with self._state_lock:  # a concurrent load() or play() starts its thread first
-            self._stopped.set()
-            threads = (self._reader, self._publisher)
-        self._buffer.wake()
-        current = threading.current_thread()
-        for thread in threads:
-            if thread is not None and thread is not current:
-                thread.join()
-
-    def _read(self) -> None:
-        try:
-            # A looping stream never ends on its own: end them all once the recording runs dry.
-            if self._read_passes() and self._replay.config.loop:
-                for name in self._streams:
-                    if not self._buffer.put((0.0, name, _END)):
-                        return
-        finally:
-            self._read_done.set()
-            self._buffer.wake()
-
-    def _read_passes(self) -> bool:
-        """Buffer every pass of the recording. False once stopped or failed."""
-        offset = 0.0
-        while True:
-            rows = [self._rows(name, stream) for name, stream in self._streams.items()]
-            first = last = None
-            try:
-                for ts, name, obs in heapq.merge(*rows, key=lambda row: row[0]):
-                    if obs is _FAILED:
-                        self._buffer.put((ts, name, _FAILED))
-                        return False
-                    if obs is _END:
-                        if not self._buffer.put((ts, name, _END)):
-                            return False
-                        continue
-                    first = ts if first is None else first
-                    last = ts
-                    try:
-                        value = self._streams[name]._decode(obs)
-                    except Exception as error:
-                        self._error = error
-                        self._buffer.put((ts, name, _FAILED))
-                        return False
-                    if not self._buffer.put((ts + offset, name, value)):
-                        return False
-            finally:
-                for stream_rows in rows:
-                    stream_rows.close()
-            if not self._replay.config.loop or first is None or last is None:
-                return True
-            offset += last - first + self._replay.config.loop_gap
-
-    def _rows(
-        self, name: str, stream: ReplayStream[Any]
-    ) -> Generator[tuple[float, str, Any], None, None]:
-        """*name*'s rows in ts order, then _END unless looping; a read error ends it at once."""
-        try:
-            rows = iter(stream.rows())
-            try:
-                ts = float("-inf")
-                for obs in rows:
-                    ts = float(obs.ts)
-                    yield ts, name, obs
-            finally:
-                close = getattr(rows, "close", None)
-                if close is not None:
-                    close()
-        except Exception as error:
-            self._error = error
-            yield float("-inf"), name, _FAILED
-            return
-        if not self._replay.config.loop:
-            yield ts, name, _END
-
-    def _publish(self, wall_t0: float) -> None:
-        speed = self._replay.config.speed
-        lag_warning = self._replay.config.lag_warning
-        ended: set[str] = set()
-        first_ts: float | None = None
-        behind = False
-        while len(ended) < len(self._subjects):
-            item = self._buffer.get()
-            if item is None:
-                return
-            ts, name, value = item
-            if value is _FAILED:
-                self._fail(name, ended)
-                return
-            if value is _END:
-                ended.add(name)
-                self._deliver(name, self._subjects[name].on_completed)
-                continue
-            if first_ts is None:
-                first_ts = ts
-            due = wall_t0 + (ts - first_ts) / speed
-            early = due - time.monotonic()
-            if early > 0:
-                behind = False  # back on schedule
-                if self._stopped.wait(early):
-                    return
-            elif -early > lag_warning and not behind:
-                behind = True
-                logger.warning("Replay is behind schedule", lag_s=round(-early, 3), stream=name)
-            self._deliver(name, self._subjects[name].on_next, value)
-
-    def _fail(self, failed: str, ended: set[str]) -> None:
-        """A bad recording or a config that cannot decode it: stop, and error every stream."""
-        error = cast("Exception", self._error)
-        logger.error("Replay stopped: recording could not be read", stream=failed, exc_info=error)
-        for name, subject in self._subjects.items():
-            if name not in ended:
-                try:
-                    subject.on_error(error)
-                except Exception as raised:
-                    if raised is not error:  # a subscriber without on_error re-raises it
-                        logger.exception("Replay subscriber failed", stream=name)
-
-    @staticmethod
-    def _deliver(name: str, notify: Callable[..., None], *args: Any) -> None:
-        # A subscriber's bug is logged, not allowed to stop the replay for every other subscriber.
-        try:
-            notify(*args)
-        except Exception:
-            logger.exception("Replay subscriber failed", stream=name)

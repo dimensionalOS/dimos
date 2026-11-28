@@ -102,7 +102,7 @@ def test_empty_recording_logs_zero_duration_and_completion(mocker):
         replay = store.replay()
         stream = replay.stream("odom")
         progress.start(replay, [stream])
-        playback = replay.playback()
+        playback = replay
         finished = threading.Event()
         with progress.track(playback.add(stream)).subscribe(on_completed=finished.set):
             progress.seal()
