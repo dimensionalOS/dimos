@@ -107,7 +107,8 @@ DIMOS_APPIMAGE_OUT=/mnt/appimage packaging/appimage/build.sh
 
 The result is `<out>/dimos-<version>-<arch>.AppImage` and its `.sha256` file. CI
 builds it with the [`appimage` workflow](/.github/workflows/appimage.yml), started by
-hand.
+hand. The workflow's artifact holds the image, the `.sha256` file and `install.sh`.
+Check a copy with `sha256sum -c dimos-<version>-<arch>.AppImage.sha256`.
 
 - **Run it from a clean checkout.** The wheel is built from the files that are there.
 - **Use a neutral output folder.** The path ends up in package metadata.
@@ -117,7 +118,7 @@ hand.
   Its glibc must not be newer than the target's.
 - It needs network: Python packages, the Nix cache, LFS, Hugging Face, GitHub.
 - It needs about 50 GB of disk.
-- With warm caches it takes about 12 minutes on a 32-thread machine. Five of them
+- With warm caches it takes about 11 minutes on a 32-thread machine. Four of them
   are the compression.
 
 `build.sh <stage>...` runs single stages. In order:
