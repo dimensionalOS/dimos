@@ -336,6 +336,10 @@ cuda = [
 sim = [
     # Simulation
     "mujoco>=3.3.4",
+    # MuJoCo's USD reader: sim2 worlds are composed as USD and loaded straight into MuJoCo (4.0 needs Python 3.11).
+    "mujoco>=4.0.0; python_version >= '3.11'",
+    # mujoco-usd pins usd-core 25.11, which has no linux-aarch64 wheel; a robot does not run a simulation.
+    "mujoco-usd>=4.0.0; python_version >= '3.11' and (sys_platform != 'linux' or platform_machine != 'aarch64')",
     # sim2 worlds are composed as USD.
     "usd-core>=23.11; sys_platform != 'linux' or platform_machine != 'aarch64'",
     "mjcf-to-urdf>=0.1.1",
@@ -475,6 +479,8 @@ tests = [
     # Tests-only installs need core for native point-cloud Narrowphase queries.
     "roboplan-core==0.8.0",
     "mujoco>=3.3.4",
+    "mujoco>=4.0.0; python_version >= '3.11'",
+    "mujoco-usd>=4.0.0; python_version >= '3.11' and (sys_platform != 'linux' or platform_machine != 'aarch64')",
     "mjcf-to-urdf>=0.1.1",
     "pygame>=2.6.1",
     "python-can>=4",
@@ -861,7 +867,7 @@ testpaths = ["dimos", "experimental/gateway/tests"]
 env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
 ]
-addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (self_hosted or self_hosted_large or web_browser or bake_e2e or native_e2e)'"
+addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros -p dimos.sim2.pytest_plugin --import-mode=importlib --color=yes -m 'not (self_hosted or self_hosted_large or web_browser or bake_e2e or native_e2e)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
