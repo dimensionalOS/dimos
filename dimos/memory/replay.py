@@ -38,7 +38,7 @@ from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Generator, Iterator
 
     from reactivex.observable import Observable
 
@@ -404,7 +404,9 @@ class Playback:
                 return True
             offset += last - first + self._replay.config.loop_gap
 
-    def _rows(self, name: str, stream: ReplayStream[Any]) -> Iterator[tuple[float, str, Any]]:
+    def _rows(
+        self, name: str, stream: ReplayStream[Any]
+    ) -> Generator[tuple[float, str, Any], None, None]:
         """*name*'s rows in ts order, then _END unless looping; a read error ends it at once."""
         try:
             rows = iter(stream._base_stream())
