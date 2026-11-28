@@ -95,6 +95,7 @@ class WebsocketVisModule(Module):
         - click_goal: Goal position from user clicks
     """
 
+    required_imports = ("socketio", "starlette", "uvicorn")
     config: WebsocketConfig
     _rerun_bridge: RerunBridgeSpec | None = None
 

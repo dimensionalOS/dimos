@@ -15,6 +15,9 @@
 """The published mount tree composes back to the g1.urdf geometry."""
 
 import math
+import sys
+
+import pytest
 
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -22,6 +25,7 @@ from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.robot.unitree.g1.g1_tf_publisher import (
     D435_PITCH,
     MID360_PITCH,
+    G1TfPublisher,
     base_to_torso,
     mount_transforms,
     torso_to_mid360,
@@ -105,6 +109,11 @@ def test_rest_pose_base_to_torso_matches_urdf_offsets() -> None:
     assert abs(rest.rotation.euler.x) < 1e-6
     assert abs(rest.rotation.euler.y) < 1e-6
     assert abs(rest.rotation.euler.z) < 1e-6
+
+
+def test_check_dependencies_allows_rest_pose_without_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "unitree_sdk2py", None)
+    G1TfPublisher.check_dependencies()
 
 
 def test_d435_hangs_off_base_link() -> None:

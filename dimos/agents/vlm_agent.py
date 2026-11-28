@@ -23,6 +23,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.optional_dependencies import check_imports
 
 if TYPE_CHECKING:
     from langchain_core.language_models.chat_models import BaseChatModel
@@ -38,11 +39,28 @@ class VLMAgentConfig(ModuleConfig):
 class VLMAgent(Module):
     """Stream-first agent for vision queries with optional RPC access."""
 
+    required_imports = ("langchain",)
     config: VLMAgentConfig
 
     color_image: In[Image]
     query_stream: In[HumanMessage]
     answer_stream: Out[AIMessage]
+
+    @classmethod
+    def check_dependencies(cls, **kwargs: Any) -> None:
+        super().check_dependencies(**kwargs)
+        from langchain.chat_models.base import _get_chat_model_creator, _parse_model
+
+        model = kwargs.get("model", VLMAgentConfig.model_fields["model"].default)
+        if model.startswith("ollama:"):
+            check_imports("ollama")
+        # Follow init_chat_model's own inference, import and fallback selection.
+        # Resolving the factory does not construct a client or contact a provider.
+        try:
+            _, provider = _parse_model(model, None)
+            _get_chat_model_creator(provider)
+        except ValueError as error:
+            raise ImportError(str(error)) from error
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
