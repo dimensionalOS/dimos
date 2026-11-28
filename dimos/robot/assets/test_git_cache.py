@@ -91,3 +91,32 @@ def test_refresh_updates_clean_checkout(tmp_path: Path) -> None:
     assert original_commit != updated_commit
     assert Repo(checkout).head.commit.hexsha == updated_commit
     assert (checkout / "model.urdf").read_text() == "updated"
+
+
+def test_a_shipped_source_is_used_without_git_or_the_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    url, ref = "https://example.com/vendor/arm_description.git", "0123abc"
+    shipped = tmp_path / "shipped" / "sources" / GitAssetCache._source_key(url, ref)
+    (shipped / "arm_description").mkdir(parents=True)
+    (shipped / "arm_description" / "model.urdf").write_text("shipped")
+    monkeypatch.setenv("DIMOS_ROBOT_ASSETS_DIR", str(tmp_path / "shipped"))
+    monkeypatch.setattr(Repo, "clone_from", lambda *_: pytest.fail("a shipped source was cloned"))
+    cache = GitAssetCache(tmp_path / "cache")
+
+    assert cache.resolve(url, ref) == shipped / "arm_description"
+    assert not (tmp_path / "cache").exists()
+
+
+def test_a_source_that_is_not_shipped_is_cloned_into_the_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    remote_path, _ = _make_remote(tmp_path)
+    (tmp_path / "shipped" / "sources").mkdir(parents=True)
+    monkeypatch.setenv("DIMOS_ROBOT_ASSETS_DIR", str(tmp_path / "shipped"))
+    cache = GitAssetCache(tmp_path / "cache")
+
+    checkout = cache.resolve(str(remote_path), "main")
+
+    assert checkout.is_relative_to(tmp_path / "cache")
+    assert (checkout / "model.urdf").read_text() == "initial"

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from hashlib import sha256
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -35,6 +36,12 @@ logger = setup_logger()
 DEFAULT_ROBOT_ASSET_CACHE_ROOT = CACHE_DIR / "robot_assets"
 
 
+def shipped_robot_assets_dir() -> Path | None:
+    """The directory named by DIMOS_ROBOT_ASSETS_DIR. An install ships robot descriptions there."""
+    value = os.environ.get("DIMOS_ROBOT_ASSETS_DIR")
+    return Path(value).expanduser().resolve() if value else None
+
+
 class GitAssetCacheError(RuntimeError):
     """Raised when an asset source cannot be resolved."""
 
@@ -51,6 +58,8 @@ class GitAssetCache:
     - for clean cached repositories, fetch and check out the declared ref;
     - if fetching/updating a cached repository fails, warn and reuse the cache;
     - if the cached repository has local changes, warn and skip updates.
+
+    A source that DIMOS_ROBOT_ASSETS_DIR holds is used as it is, without the cache.
     """
 
     def __init__(self, cache_root: Path | str = DEFAULT_ROBOT_ASSET_CACHE_ROOT) -> None:
@@ -61,7 +70,12 @@ class GitAssetCache:
     def resolve(self, repo_url: str, ref: str) -> Path:
         """Return a local checkout for `repo_url` at `ref`."""
         key = self._source_key(repo_url, ref)
-        checkout_path = self._sources_root / key / self._repo_slug(repo_url)
+        slug = self._repo_slug(repo_url)
+        # A shipped copy is only read: no fetch, no lock file, no git.
+        shipped_dir = shipped_robot_assets_dir()
+        if shipped_dir is not None and (shipped_dir / "sources" / key / slug).is_dir():
+            return shipped_dir / "sources" / key / slug
+        checkout_path = self._sources_root / key / slug
         lock_path = self._locks_root / f"{key}.lock"
 
         self._sources_root.mkdir(parents=True, exist_ok=True)

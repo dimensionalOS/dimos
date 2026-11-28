@@ -42,6 +42,21 @@ cannot be inspected. It removes the remaining cache entries and exits with
 status 1 when anything is preserved. Use `dimos cache clean --force` to delete
 the preserved checkouts too.
 
+## Descriptions shipped with an installation
+
+An installation can ship its robot descriptions. Set `DIMOS_ROBOT_ASSETS_DIR` to
+the folder that holds them:
+
+```text
+$DIMOS_ROBOT_ASSETS_DIR/
+└── sources/<source key>/<repository name>/   # the files of the declared ref
+```
+
+`<source key>` and `<repository name>` are the ones the cache uses. A source that
+is there is used as it is: no clone, no fetch, no lock file. The machine needs
+neither git nor network, and the folder can be read-only. The copy needs no
+`.git` folder. A source that is not there goes through the cache as usual.
+
 ## Using a robot description source
 
 Create a source handle wherever the robot's config or catalog is defined, then
