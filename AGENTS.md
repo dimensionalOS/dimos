@@ -43,7 +43,7 @@ dimos restart          # stop + re-run with same original args
 | `unitree-g1-agentic-sim` | G1 | sim | gpt-5.6-luna (G1 prompt) | ✓ | Full agentic sim, no real robot needed |
 | `xarm-grasp-agent` | xArm | real | gpt-5.6-luna | ✓ | Manipulation + perception + agent |
 | `xarm-perception-sim-agent` | xArm | sim | gpt-5.6-luna | ✓ | Manipulation + perception + agent, sim |
-| `xarm7-planner-coordinator` | xArm7 | real | — | — | Trajectory planner coordinator |
+| `xarm7-planner-coordinator` | xArm7 | real, mock or MuJoCo | — | — | Trajectory planner coordinator |
 | `teleop-webxr-xarm7` | xArm7 | real | — | — | WebXR teleop |
 | `dual-xarm6-planner-coordinator` | xArm6×2 | mock | — | — | Dual-arm motion planner |
 
