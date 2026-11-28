@@ -61,3 +61,19 @@ def test_empty_recording_has_no_window(session: Store) -> None:
     stream = session.stream("lidar", str)
 
     assert RecordingWindow.from_store(session, 1.0, 2.0).apply(stream) is stream
+
+
+def test_adjacent_fractional_clips_share_one_epoch_boundary(session: Store) -> None:
+    origin = 1_700_000_000.0
+    stream = session.stream("camera", int)
+    for index, offset in enumerate((0.0, 0.4, 0.4 + 0.2)):
+        stream.append(index, ts=origin + offset)
+
+    def clip(seek: float) -> list[int]:
+        return [
+            frame
+            for _, frame in session.replay(seek=seek, duration=0.2).stream("camera").iterate_ts()
+        ]
+
+    assert clip(0.4) == [1]
+    assert clip(0.4 + 0.2) == [2]

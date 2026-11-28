@@ -51,15 +51,20 @@ class RecordingWindow:
         from_timestamp: float | None = None,
     ) -> RecordingWindow:
         """Resolve relative bounds only when the replay needs the first timestamp."""
-        start = from_timestamp
-        if start is None:
-            if not seek and duration is None:
-                return cls()
-            first = first_ts()
-            if first is None:
-                return cls()
-            start = first + (seek or 0.0)
-        return cls(start, inf if duration is None else start + duration)
+        if from_timestamp is not None:
+            return cls.from_offsets(from_timestamp, 0.0, duration)
+        if not seek and duration is None:
+            return cls()
+        first = first_ts()
+        if first is None:
+            return cls()
+        return cls.from_offsets(first, seek or 0.0, duration)
+
+    @classmethod
+    def from_offsets(cls, origin: float, seek: float, duration: float | None) -> RecordingWindow:
+        # Adjacent clips must round their shared boundary from the same origin.
+        end = inf if duration is None else origin + (seek + duration)
+        return cls(origin + seek, end)
 
     def apply(self, stream: Stream[T]) -> Stream[T]:
         if self == RecordingWindow():
