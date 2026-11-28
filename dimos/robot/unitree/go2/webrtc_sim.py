@@ -98,12 +98,12 @@ class Go2WebRtcSimConfig(SimSensorConfig):
     # How often it reads cmd_vel into its servos and sends its odometry.
     control_rate_hz: float = 50.0
     # Its camera: the real one's lens (front_camera_720.yaml) at ``scale`` of its 1280x720.
-    camera_rate_hz: float = 60.0
+    camera_rate_hz: float = 120.0
     camera_scale: float = 0.5
     # Its frames go out as JPEGs of this quality.
     jpeg_quality: int = 75
     # Its frames are drawn on this many views at once (each its own render process on macOS), so one draws while another is tone mapped.
-    camera_views: int = 4
+    camera_views: int = 6
     render: RenderQuality = RenderQuality()
     l1: SimL1Config = Field(default_factory=lambda: SimL1Config(stamp_tolerance=None))
 
