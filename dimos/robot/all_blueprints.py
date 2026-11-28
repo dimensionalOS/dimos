@@ -173,6 +173,7 @@ all_blueprints = {
     "unitree-g1-groot-wbc": "dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_groot_wbc:unitree_g1_groot_wbc",
     "unitree-g1-record": "dimos.robot.unitree.g1.blueprints.basic.unitree_g1_record:unitree_g1_record",
     "unitree-g1-replay-mesh": "dimos.robot.unitree.g1.blueprints.basic.unitree_g1_replay_mesh:unitree_g1_replay_mesh",
+    "unitree-g1-sim-office": "dimos.robot.unitree.g1.blueprints.sim.unitree_g1_sim_office:unitree_g1_sim_office",
     "unitree-g1-teleop": "dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop:unitree_g1_teleop",
     "unitree-go2": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2:unitree_go2",
     "unitree-go2-agentic": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic:unitree_go2_agentic",
