@@ -120,6 +120,7 @@ def main() -> None:
     parser.add_argument("--game", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--camera-port", type=int, required=True)
+    parser.add_argument("--observer-height", type=int, choices=(540, 720, 1080), default=540)
     parser.add_argument("--gpu")
     parser.add_argument("--robot", choices=("g1", "m20"), default="g1")
     parser.add_argument("--policy", type=Path)
@@ -131,6 +132,8 @@ def main() -> None:
     if args.robot == "m20" and args.policy is None:
         parser.error("--robot m20 requires the explicit --policy checkpoint")
     is_m20 = args.robot == "m20"
+    observer_height = args.observer_height
+    observer_width = observer_height * 16 // 9
     if args.stream_catalog and not is_m20:
         parser.error("Collision streaming is currently validated with M20 only")
     if not math.isfinite(args.max_forward_speed) or not 0 < args.max_forward_speed <= 3:
@@ -176,7 +179,7 @@ def main() -> None:
         args.runtime / "renderer",
         tuple(origin),
         gpu=args.gpu,
-        observer=ObserverOutput(args.runtime, args.camera_port),
+        observer=ObserverOutput(args.runtime, args.camera_port, observer_width, observer_height),
         object_store=object_store,
     )
     deployment: ModuleCoordinator | None = None
@@ -303,12 +306,12 @@ def main() -> None:
                         )
                         camera = CameraConfig(
                             camera_frame,
-                            width=960,
-                            height=540,
-                            fx=570,
-                            fy=570,
-                            cx=480,
-                            cy=270,
+                            width=observer_width,
+                            height=observer_height,
+                            fx=570 * observer_height / 540,
+                            fy=570 * observer_height / 540,
+                            cx=observer_width / 2,
+                            cy=observer_height / 2,
                         )
                         observer.load(scene, (camera,))
                         observer_loaded = True
