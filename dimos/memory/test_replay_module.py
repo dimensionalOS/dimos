@@ -19,6 +19,7 @@ from typing import Any
 from unittest import mock
 
 import pytest
+from pytest_mock import MockerFixture
 from reactivex import interval, merge
 from reactivex.disposable import Disposable
 from reactivex.testing import TestScheduler
@@ -71,13 +72,14 @@ def test_module_publishes_recorded_messages(recording: str) -> None:
     assert [round(t, 3) for t in got["goal"]] == [1.05]
 
 
-def test_stop_waits_for_in_flight_decode(recording: str, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stop_waits_for_in_flight_decode(recording: str, mocker: MockerFixture) -> None:
     entered = threading.Event()
-    release = threading.Event()
+    stop_waiting = threading.Event()
     decoded = threading.Event()
-    disposed = threading.Event()
-    errors: list[Exception] = []
+    decoded_at_dispose: list[bool] = []
+    reader: list[threading.Thread] = []
     decode = ReplayStream._decode
+    join = threading.Thread.join
     calls = 0
 
     def held_decode(self: ReplayStream[Any], obs: Any) -> Any:
@@ -85,36 +87,32 @@ def test_stop_waits_for_in_flight_decode(recording: str, monkeypatch: pytest.Mon
         calls += 1
         if calls == 1:  # the frame start() buffers
             return decode(self, obs)
+        reader.append(threading.current_thread())
         entered.set()
-        try:
-            assert release.wait(HUNG_TEST_TIMEOUT), "decode was not released"
-            data = decode(self, obs)
-            decoded.set()
-            return data
-        except Exception as exc:
-            errors.append(exc)
-            raise
+        assert stop_waiting.wait(HUNG_TEST_TIMEOUT), "stop did not wait for the decode"
+        data = decode(self, obs)
+        decoded.set()
+        return data
 
-    monkeypatch.setattr(ReplayStream, "_decode", held_decode)
+    def tracked_join(thread: threading.Thread, timeout: float | None = None) -> None:
+        if thread in reader and threading.current_thread() is stopper:
+            stop_waiting.set()
+        join(thread, timeout)
+
+    mocker.patch.object(ReplayStream, "_decode", held_decode)
+    mocker.patch.object(threading.Thread, "join", tracked_join)
     module = replay_module(recording, topics="odom")(
         dataset=recording, topics="odom", buffer_size=1
     )
-    module.register_disposable(Disposable(disposed.set))
+    module.register_disposable(Disposable(lambda: decoded_at_dispose.append(decoded.is_set())))
     stopper = threading.Thread(target=module.stop)
-    try:
-        module.start()
-        assert entered.wait(HUNG_TEST_TIMEOUT), "the reader did not decode ahead of the buffer"
-        stopper.start()
-        assert not disposed.wait(0.1), "stop disposed before the in-flight decode finished"
-    finally:
-        release.set()
-        if stopper.ident is not None:
-            stopper.join(timeout=HUNG_TEST_TIMEOUT)
-        module.stop()
+    module.start()
+    assert entered.wait(HUNG_TEST_TIMEOUT), "the reader did not decode ahead of the buffer"
+    stopper.start()
+    join(stopper, HUNG_TEST_TIMEOUT)
 
-    assert disposed.is_set()
-    assert decoded.is_set()
-    assert errors == []
+    assert not stopper.is_alive()
+    assert decoded_at_dispose == [True]
     with SqliteStore(path=recording) as store:
         assert [obs.data.ts for obs in store.stream("odom")] == pytest.approx([1.0, 1.1, 1.2])
 

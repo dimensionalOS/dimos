@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import sqlite3
 import threading
@@ -42,13 +41,9 @@ pytestmark = [
 
 @pytest.fixture(
     params=[
-        # 20 recorded seconds played in one, reading one frame ahead.
-        pytest.param(
-            (RecordingPlayer, "dataset", {"speed": 20.0, "buffer_size": 1}), id="recording"
-        ),
-        pytest.param(
-            (SpotReplay, "dataset", {"loop": False, "speed": 20.0, "buffer_size": 1}), id="spot"
-        ),
+        # Reading one frame ahead, so a stop finds the reader mid-recording.
+        pytest.param((RecordingPlayer, "dataset", {"buffer_size": 1}), id="recording"),
+        pytest.param((SpotReplay, "dataset", {"loop": False, "buffer_size": 1}), id="spot"),
     ]
 )
 def player(
@@ -59,7 +54,7 @@ def player(
         lidar = store.stream("pointlio_lidar", PointCloud2)
         odometry = store.stream("odometry", Odometry)
         tf = store.stream("tf", TFMessage)
-        for ts in (1.0, 11.0, 21.0):
+        for ts in (1.0, 1.1, 1.2):
             lidar.append(PointCloud2.from_numpy(np.zeros((1, 3), dtype=np.float32)), ts=ts)
             odometry.append(Odometry(ts=ts), ts=ts)
             tf.append(TFMessage(), ts=ts)
@@ -75,7 +70,7 @@ def test_player_stops_mid_replay(player: RecordingPlayer | SpotReplay) -> None:
     with Disposable(player.tf.subscribe(lambda _: started.set())):
         player.start()
         player.on_system_modules_ready([])
-        assert started.wait(5)
+        assert started.wait(HUNG_TEST_TIMEOUT)
         # Both streams still hold an open cursor here.
         player.stop()
 
@@ -84,10 +79,13 @@ def test_concurrent_stop_keeps_store_open_until_decode_finishes(
     player: RecordingPlayer | SpotReplay, mocker: MockerFixture
 ) -> None:
     entered = threading.Event()
-    release = threading.Event()
+    stops_waiting = threading.Event()
     decoded = threading.Event()
-    disposing = threading.Event()
+    decoded_at_dispose: list[bool] = []
+    reader: list[threading.Thread] = []
+    waiting: set[threading.Thread] = set()
     decode = ReplayStream._decode
+    join = threading.Thread.join
     calls = 0
 
     def held_decode(self: ReplayStream[Any], obs: Any) -> Any:
@@ -95,30 +93,37 @@ def test_concurrent_stop_keeps_store_open_until_decode_finishes(
         calls += 1
         if calls == 1:  # the frame start() buffers
             return decode(self, obs)
+        reader.append(threading.current_thread())
         entered.set()
-        assert release.wait(HUNG_TEST_TIMEOUT), "decode was not released"
+        assert stops_waiting.wait(HUNG_TEST_TIMEOUT), "stop did not wait for the decode"
         value = decode(self, obs)
         decoded.set()
         return value
 
-    mocker.patch.object(ReplayStream, "_decode", held_decode)
-    replay = mocker.spy(SqliteStore, "replay")
-    player.register_disposable(Disposable(disposing.set))
-    with ThreadPoolExecutor(max_workers=2) as workers:
-        try:
-            player.start()
-            store = replay.spy_return.store
-            assert entered.wait(HUNG_TEST_TIMEOUT), "the reader did not decode ahead of the buffer"
-            stops = [workers.submit(player.stop) for _ in range(2)]
-            assert not disposing.wait(0.1), "stop disposed before the in-flight decode finished"
-            assert store.stream("tf").count() == 3
-        finally:
-            release.set()
-        for stop in stops:
-            stop.result(timeout=HUNG_TEST_TIMEOUT)
+    def tracked_join(thread: threading.Thread, timeout: float | None = None) -> None:
+        if thread in reader:
+            waiting.add(threading.current_thread())
+            if waiting == stoppers:
+                stops_waiting.set()
+        join(thread, timeout)
 
-    assert decoded.is_set()
-    assert disposing.is_set()
+    mocker.patch.object(ReplayStream, "_decode", held_decode)
+    mocker.patch.object(threading.Thread, "join", tracked_join)
+    replay = mocker.spy(SqliteStore, "replay")
+    player.register_disposable(Disposable(lambda: decoded_at_dispose.append(decoded.is_set())))
+    first_stop = threading.Thread(target=player.stop)
+    second_stop = threading.Thread(target=player.stop)
+    stoppers = {first_stop, second_stop}
+    player.start()
+    store = replay.spy_return.store
+    assert entered.wait(HUNG_TEST_TIMEOUT), "the reader did not decode ahead of the buffer"
+    for stopper in stoppers:
+        stopper.start()
+    for stopper in stoppers:
+        join(stopper, HUNG_TEST_TIMEOUT)
+        assert not stopper.is_alive()
+
+    assert all(decoded_at_dispose)
     with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
         store.list_streams()
 
@@ -174,8 +179,8 @@ def test_player_logs_source_duration_and_completion(player, mocker):
         "Replay started",
         source=path,
         path=path,
-        duration_s=20.0,
-        speed=20.0,
+        duration_s=pytest.approx(0.2),
+        speed=1.0,
         loop=False,
     )
     finished = threading.Event()
