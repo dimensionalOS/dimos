@@ -96,8 +96,10 @@ class Go2WebRtcSimConfig(SimSensorConfig):
     # How often it reads cmd_vel into its servos and sends its odometry.
     control_rate_hz: float = 50.0
     # Its camera: the real one's lens (front_camera_720.yaml) at ``scale`` of its 1280x720.
-    camera_rate_hz: float = 10.0
+    camera_rate_hz: float = 60.0
     camera_scale: float = 0.5
+    # Its frames are drawn on this many views at once (each its own render process on macOS), so one draws while another is tone mapped.
+    camera_views: int = 4
     render: RenderQuality = RenderQuality()
     l1: SimL1Config = Field(default_factory=lambda: SimL1Config(stamp_tolerance=None))
 
@@ -217,73 +219,90 @@ class Go2WebRtcSim(ViewSensor):
         camera, l1 = self._site(f"{BODY}/camera_link/camera_optical"), self._site(f"{BODY}/l1")
         info = self._camera_info()
         fovy = math.degrees(2 * math.atan(info.height / 2 / info.K[4]))
-        view: WorldView | None = None
-        raycaster: Raycaster | None = None
-        from_world = np.eye(4)
+        mount = SensorMount("camera", camera, "go2_front_camera", fovy)
+        # The world it views is composed once the sim runs, which its first tick says.
+        async for _ in self._world.ticks(config.camera_rate_hz):
+            break
+        view = await asyncio.to_thread(self.open_view, mount, config.render)
+        raycaster = view.raycaster(
+            config.l1.geom_groups, mounted_at=l1, blind_to_robots=(self.namespace,)
+        )
+        # Its odometry starts on its mount, which holds its anchor.
+        anchor = _matrix(*view.pose(self._site(self.config.usd.root_link)))
+        from_world = np.asarray(np.linalg.inv(anchor), dtype=np.float64)
+        # Each sensor on its own clock, and the camera on views of its own, so a frame being drawn never holds up the L1.
+        drawers = [view.twin() for _ in range(config.camera_views)]
+        try:
+            await asyncio.gather(self._film(drawers, info), self._map(view, raycaster, from_world))
+        finally:
+            for drawer in drawers:
+                drawer.close()
+
+    async def _film(self, idle: list[WorldView], info: CameraInfo) -> None:
+        """Its camera, a frame each tick on whichever view is free; with none free, the frame is skipped, as a real camera drops one."""
+        config = self.config
+        drawing: set[asyncio.Task[None]] = set()
+        published = [-math.inf]
+        try:
+            async for _ in self._world.ticks(config.camera_rate_hz):
+                if not idle:
+                    continue
+                drawer = idle.pop()
+                drawer.update(self._world)
+                # Checked when it is taken, not once drawn: the world being off wall time is what drops a frame.
+                if not self.on_time(
+                    "color_image", drawer.time, 1 / config.camera_rate_hz, config.stamp_tolerance
+                ):
+                    idle.append(drawer)
+                    continue
+                task = asyncio.create_task(self._photograph(drawer, info, idle, published))
+                drawing.add(task)
+                task.add_done_callback(drawing.discard)
+        finally:
+            for task in drawing:
+                task.cancel()
+
+    async def _map(
+        self, view: WorldView, raycaster: Raycaster, from_world: NDArray[np.float64]
+    ) -> None:
+        """Its L1's voxel map, a scan each period."""
+        config = self.config
         voxels = L1Voxels(config.l1)
-        # Each sensor reads on its own rate off the one view: the camera every tick, the L1 every so many.
-        rate = max(config.camera_rate_hz, 1 / config.l1.period)
-        camera_every = max(1, round(rate / config.camera_rate_hz))
-        l1_every = max(1, round(rate * config.l1.period))
-        tick = 0
-        async for _ in self._world.ticks(rate):
-            if view is None:
-                mount = SensorMount("camera", camera, "go2_front_camera", fovy)
-                view = await asyncio.to_thread(self.open_view, mount, config.render)
-                raycaster = view.raycaster(
-                    config.l1.geom_groups, mounted_at=l1, blind_to_robots=(self.namespace,)
-                )
-                # Its odometry starts on its mount, which holds its anchor.
-                anchor = _matrix(*view.pose(self._site(self.config.usd.root_link)))
-                from_world = np.asarray(np.linalg.inv(anchor), dtype=np.float64)
-                continue
-            assert raycaster is not None
-            tick += 1
-            # Read off the event loop, so a render never holds up cmd_vel and odometry.
-            image, points, stamp = await asyncio.to_thread(
-                self._read,
-                view,
-                raycaster,
-                voxels,
-                from_world,
-                info,
-                tick % camera_every == 0,
-                tick % l1_every == 0,
-            )
-            if image is not None and self.on_time(
-                "color_image", stamp, 1 / config.camera_rate_hz, config.stamp_tolerance
-            ):
-                self.color_image.publish(image)
-                self.camera_info.publish(info.with_ts(stamp))
-            if points is not None and self.on_time(
-                "lidar", stamp, config.l1.period, config.l1.stamp_tolerance
-            ):
+        async for _ in self._world.ticks(1 / config.l1.period):
+            # Read off the event loop, so a scan never holds up cmd_vel and odometry.
+            points, stamp = await asyncio.to_thread(self._scan, view, raycaster, voxels, from_world)
+            if self.on_time("lidar", stamp, config.l1.period, config.l1.stamp_tolerance):
                 self.lidar.publish(PointCloud2.from_numpy(points, self.odom_frame_id, stamp))
 
-    def _read(
+    async def _photograph(
+        self, view: WorldView, info: CameraInfo, idle: list[WorldView], published: list[float]
+    ) -> None:
+        """Its camera's image of ``view``, published unless a newer frame went first; ``view`` is idle again after."""
+        try:
+            stamp = view.time
+            rgb = await asyncio.to_thread(view.render, "go2_front_camera", info.width, info.height)
+        finally:
+            idle.append(view)
+        if stamp <= published[0]:
+            return
+        published[0] = stamp
+        self.color_image.publish(
+            Image(data=rgb, format=ImageFormat.RGB, frame_id=info.frame_id, ts=stamp)
+        )
+        self.camera_info.publish(info.with_ts(stamp))
+
+    def _scan(
         self,
         view: WorldView,
         raycaster: Raycaster,
         voxels: L1Voxels,
         from_world: NDArray[np.float64],
-        info: CameraInfo,
-        render: bool,
-        scan: bool,
-    ) -> tuple[Image | None, NDArray[np.float64] | None, float]:
-        """Its camera's image and its L1's map, as asked for, off the world as it is now."""
+    ) -> tuple[NDArray[np.float64], float]:
+        """Its L1's map off the world as it is now, and when that was."""
         view.update(self._world)
-        stamp = view.time
-        image = None
-        if render:
-            rgb = view.render("go2_front_camera", info.width, info.height)
-            image = Image(data=rgb, format=ImageFormat.RGB, frame_id=info.frame_id, ts=stamp)
-        points = None
-        if scan:
-            l1 = self._site(f"{BODY}/l1")
-            origin, orientation = view.pose(l1)
-            body, _ = view.pose(self._site(BODY))
-            points = voxels.scan(raycaster, origin, orientation, from_world, body)
-        return image, points, stamp
+        origin, orientation = view.pose(self._site(f"{BODY}/l1"))
+        body, _ = view.pose(self._site(BODY))
+        return voxels.scan(raycaster, origin, orientation, from_world, body), view.time
 
     def _camera_info(self) -> CameraInfo:
         """The real front camera's lens, scaled to the images this one renders: a pinhole, so no distortion."""

@@ -28,14 +28,12 @@ from dimos.sim2.mujoco.lights import apply_lights, dome_sky
 from dimos.sim2.mujoco.look import (
     ambient_headroom,
     blank_textures,
-    display,
     light_headroom,
     linear_textures,
-    merged_light,
     scale_light,
     show_sky,
     stage_tone_map,
-    tone_mapped,
+    toned,
 )
 from dimos.sim2.mujoco.names import resolved
 from dimos.sim2.mujoco.ray_scene import RayScene
@@ -46,6 +44,8 @@ from dimos.sim2.world_observations import WORLD, Entity, WorldMirror
 
 # Standard gravity in world axes (z up): an accelerometer at rest reads its negative.
 _GRAVITY = np.array([0.0, 0.0, -9.81])
+# A geom group no camera draws: MuJoCo shows groups 0-2 unless told otherwise.
+_HIDDEN_GROUP = 5
 
 
 def _open_stage(scene: Path) -> Any:
@@ -108,6 +108,14 @@ class MujocoView:
         self._renders: Renders | RenderProcess | None = None
         self._previous: dict[str, tuple[float, NDArray[np.float64]]] = {}
         self._offsets: dict[int, tuple[NDArray[np.float64], Rotation]] = {}
+        carrier = (
+            None if mount is None or mount.kind != "camera" else self._robot_of(mount.frame_id)
+        )
+        if carrier is not None and self._root(carrier) >= 0:
+            # A camera inside its robot sees none of it, and MuJoCo would draw every triangle of it behind the lens.
+            carried = set(self._under(self._root(carrier)))
+            hidden = [g for g in range(self.model.ngeom) if self.model.geom_bodyid[g] in carried]
+            self.model.geom_group[hidden] = _HIDDEN_GROUP
 
     @property
     def time(self) -> float:
@@ -187,16 +195,23 @@ class MujocoView:
         # Placed here as well as where it renders, as pose() reads the cameras this places.
         mujoco.mj_comPos(self.model, self.data)
         mujoco.mj_camlight(self.model, self.data)
-        if self._tone_map is None or self._full_headroom <= self._headroom:
-            rgb = self._renders.render(self.data, camera, width, height)
-            return rgb if self._tone_map is None else display(rgb, self._headroom, self._tone_map)
-        # MuJoCo clips each light's color at 1, so the shade renders alone at its own scale and the direct light at the full one.
-        dimmer = self._headroom / self._full_headroom
-        shade, lit = self._renders.render_each(
-            self.data, camera, width, height, [(1.0, False), (dimmer, True)]
-        )
-        linear = merged_light(shade, self._headroom, lit, self._full_headroom)
-        return tone_mapped(linear, self._tone_map)
+        if self._tone_map is None:
+            return self._renders.render(self.data, camera, width, height)
+        if self._full_headroom <= self._headroom:
+            lightings, headrooms = [(1.0, True)], [self._headroom]
+        else:
+            # MuJoCo clips each light's color at 1, so the shade renders alone at its own scale and the direct light at the full one.
+            dimmer = self._headroom / self._full_headroom
+            lightings, headrooms = (
+                [(1.0, False), (dimmer, True)],
+                [self._headroom, self._full_headroom],
+            )
+        if isinstance(self._renders, RenderProcess):
+            return self._renders.render_toned(
+                self.data, camera, width, height, lightings, headrooms, self._tone_map
+            )
+        images = self._renders.render_each(self.data, camera, width, height, lightings)
+        return toned(images, headrooms, self._tone_map)
 
     def raycaster(
         self,

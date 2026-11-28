@@ -14,6 +14,7 @@
 
 """The view transform a stage's RenderSettings ask for, applied to a MuJoCo render: linear light in, display sRGB out."""
 
+from collections.abc import Sequence
 import functools
 from pathlib import Path
 
@@ -242,6 +243,16 @@ def _rec1886_to_srgb() -> NDArray[np.float32]:
     """Rec.1886's 2.4 power decoded and the sRGB transfer curve (IEC 61966-2-1) encoded, at every 16-bit code value."""
     light = np.linspace(0.0, 1.0, np.iinfo(np.uint16).max + 1, dtype=np.float64) ** 2.4
     return linear_to_srgb(light).astype(np.float32)
+
+
+def toned(
+    renders: Sequence[NDArray[np.uint8]], headrooms: Sequence[float], curve: str
+) -> NDArray[np.uint8]:
+    """The displayed image of one render of light scaled down by its headroom, or of a shade render and a lit one (see merged_light)."""
+    if len(renders) == 1:
+        return display(renders[0], headrooms[0], curve)
+    (shade, lit), (shade_headroom, lit_headroom) = renders, headrooms
+    return tone_mapped(merged_light(shade, shade_headroom, lit, lit_headroom), curve)
 
 
 def display(render: NDArray[np.uint8], headroom: float, curve: str) -> NDArray[np.uint8]:
