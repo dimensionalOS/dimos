@@ -1,0 +1,68 @@
+# Builds the DimOS AppImage for Ubuntu 26.04 on x86_64. See packaging/appimage/README.md.
+# Started by hand. The image stays a workflow artifact until there is a bucket to publish it to.
+name: appimage
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: appimage-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  build:
+    timeout-minutes: 240
+    # Ubuntu 24.04: what the build compiles itself must not need a newer glibc than the target has.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read  # For checkout
+    env:
+      # A neutral path, because package metadata in the image records it. /mnt has the space.
+      DIMOS_APPIMAGE_OUT: /mnt/appimage/out
+      UV_CACHE_DIR: /mnt/appimage/uv-cache
+    steps:
+      - name: Checkout
+        # LFS files stay pointers. build.sh pulls the archives of data.tsv and nothing else.
+        uses: actions/checkout@v7.0.1
+      - name: Free runner disk space
+        uses: BRAINSia/free-disk-space@v2.1.3
+      - name: Make the build folder
+        run: |
+          sudo mkdir -p /mnt/appimage
+          sudo chown "$USER" /mnt/appimage
+      - name: Install Nix (with Cachix substituter)
+        env:
+          INPUT_EXTRA_NIX_CONFIG: |
+            http-connections = 50
+            extra-substituters = https://dimensionalos.cachix.org
+            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+          INPUT_SET_AS_TRUSTED_USER: "true"
+        run: bash docker/ros/install-nix.sh
+      - name: Install system packages
+        # portaudio19-dev also builds pyaudio. The three libraries are copied into the image.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools portaudio19-dev libturbojpeg libquadmath0
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
+      - name: Build the image
+        run: packaging/appimage/build.sh
+      - name: Upload the image
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: dimos-appimage-x86_64
+          path: |
+            /mnt/appimage/out/dimos-*.AppImage
+            /mnt/appimage/out/dimos-*.AppImage.sha256
+            packaging/appimage/install.sh
+          compression-level: 0  # The image is compressed already.
+          retention-days: 14
+          if-no-files-found: error

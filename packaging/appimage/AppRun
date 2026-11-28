@@ -1,0 +1,38 @@
+#!/bin/bash
+# Entry point of the DimOS AppImage and of its extracted tree.
+#
+#   AppRun <args>                  the dimos command line
+#   AppRun bundle-exec <cmd> ...   any command with the image's environment
+#   <symlink named dtop, ...>      that command of the image
+
+HERE="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+
+# The host's Python settings must not leak into the image's interpreter.
+unset PYTHONHOME PYTHONPATH VIRTUAL_ENV
+export PYTHONNOUSERSITE=1
+export PATH="$HERE/opt/python/bin:$HERE/usr/bin:$PATH"
+export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export DENO_DIR="$HERE/opt/deno-dir"
+# What the image ships. A value that is already set wins, so a machine can point
+# DimOS at its own folders.
+export DIMOS_DATA_DIR="${DIMOS_DATA_DIR:-$HERE/opt/data}"
+export DIMOS_NATIVE_DIR="${DIMOS_NATIVE_DIR:-$HERE/opt/native}"
+export DIMOS_ROBOT_ASSETS_DIR="${DIMOS_ROBOT_ASSETS_DIR:-$HERE/opt/robot_assets}"
+# The models are in the image and the folder is read-only, so nothing is downloaded.
+export HF_HOME="${HF_HOME:-$HERE/opt/models}"
+export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+# GitPython fails at import when the machine has no git, which takes the whole
+# command line down. Quiet: only the features that call git fail, when used.
+export GIT_PYTHON_REFRESH="${GIT_PYTHON_REFRESH:-quiet}"
+
+if [[ "${1:-}" == "bundle-exec" ]]; then
+  shift
+  [[ $# -gt 0 ]] || { echo "usage: bundle-exec <command> [args...]" >&2; exit 2; }
+  exec "$@"
+fi
+
+# ARGV0 is the name the AppImage was called by, $0 the name of a link to this file.
+# A link named after a command of the image runs that command.
+name="$(basename "${ARGV0:-$0}")"
+[[ -x "$HERE/opt/python/bin/$name" ]] || name=dimos
+exec "$HERE/opt/python/bin/$name" "$@"

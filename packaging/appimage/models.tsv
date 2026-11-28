@@ -1,0 +1,3 @@
+model	revision	licence	use
+Systran/faster-whisper-base	ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66	MIT	Speech to text in the agent blueprints. WhisperNode("base") in dimos/stream/audio/stt/node_whisper.py loads it through faster-whisper.
+ustc-community/dfine-small-coco	f79e65b5fbb33ceb9d3ebba042955d7410c608f8	Apache-2.0	The default detector of the detection modules: DFineDetector in dimos/perception/detection/detectors/dfine.py.

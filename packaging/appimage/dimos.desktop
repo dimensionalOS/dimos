@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=DimOS
+Comment=The agentic operating system for generalist robotics
+Exec=dimos
+Icon=dimensional
+Terminal=true
+Categories=Development;Science;
+X-AppImage-Version=@VERSION@
