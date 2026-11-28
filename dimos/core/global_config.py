@@ -18,7 +18,7 @@ Module and subsystem settings belong to their owners' configuration classes.
 """
 
 import os
-from threading import Lock
+from threading import RLock
 from typing import Any, Literal, TypeAlias
 
 from pydantic import AliasChoices, Field, ValidationInfo, field_validator
@@ -138,24 +138,27 @@ class GlobalConfig(BaseSettings):
         return super().__getattribute__(name)
 
     def __setattr__(self, name: str, value: Any) -> None:
-        if self is _pending_config and name in type(self).model_fields:
-            get_global_config(**{name: value})
-        else:
+        if name not in type(self).model_fields:
             super().__setattr__(name, value)
+            return
+        with _config_lock:
+            if self is _pending_config:
+                get_global_config(**{name: value})
+            else:
+                super().__setattr__(name, value)
 
     def update(self, **kwargs: object) -> None:
-        """Validate the complete set of overrides before updating this instance."""
-        for key in kwargs:
-            if key not in type(self).model_fields:
-                raise AttributeError(f"GlobalConfig has no field '{key}'")
-        if self is _pending_config:
-            get_global_config(**kwargs)
-            return
-        if not kwargs:
-            return
-        updated = type(self).model_validate({**self.model_dump(), **kwargs})
-        self.__dict__.update(updated.__dict__)
-        self.model_fields_set.update(kwargs)
+        """Validate and publish overrides as a single update."""
+        with _config_lock:
+            for key in kwargs:
+                if key not in type(self).model_fields:
+                    raise AttributeError(f"GlobalConfig has no field '{key}'")
+            if self is _pending_config:
+                get_global_config(**kwargs)
+            elif kwargs:
+                updated = type(self).model_validate({**self.model_dump(), **kwargs})
+                self.__dict__.update(updated.__dict__)
+                self.model_fields_set.update(kwargs)
 
     @property
     def parsed_robot_ips(self) -> tuple[str, ...]:
@@ -173,7 +176,7 @@ class GlobalConfig(BaseSettings):
 # Default arguments and existing imports all hold this same model instance.
 global_config = GlobalConfig.model_construct()
 _pending_config = global_config
-_config_lock = Lock()
+_config_lock = RLock()
 
 
 def get_global_config(**overrides: Any) -> GlobalConfig:

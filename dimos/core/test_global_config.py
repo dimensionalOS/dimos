@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier, BrokenBarrierError
 
 from pydantic import ValidationError
 import pytest
@@ -86,3 +88,26 @@ def test_dotenv_is_ignored_under_pytest(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.delenv("ROBOT_IP", raising=False)
 
     assert GlobalConfig().robot_ip is None
+
+
+def test_concurrent_updates_preserve_both_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = GlobalConfig()
+    rendezvous = Barrier(2)
+    original_dump = GlobalConfig.model_dump
+
+    def overlapping_snapshot(self):
+        snapshot = original_dump(self)
+        # If updates are serialized, only the first writer can reach this point.
+        try:
+            rendezvous.wait(timeout=0.5)
+        except BrokenBarrierError:
+            pass
+        return snapshot
+
+    monkeypatch.setattr(GlobalConfig, "model_dump", overlapping_snapshot)
+    with ThreadPoolExecutor(2) as workers:
+        first = workers.submit(config.update, n_workers=19)
+        second = workers.submit(config.update, robot_width=8.0)
+        first.result()
+        second.result()
+    assert (config.n_workers, config.robot_width) == (19, 8.0)

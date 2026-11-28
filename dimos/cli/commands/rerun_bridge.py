@@ -16,8 +16,6 @@
 
 from __future__ import annotations
 
-import os
-
 import typer
 
 from dimos.core.global_config import global_config
@@ -43,7 +41,7 @@ def rerun_bridge_cmd(
         typer.echo(parser.format_help())
         return
     try:
-        parsed = parser.parse(options or (), environ=os.environ, global_overrides=ctx.obj)
+        parsed = parser.parse(options or (), global_overrides=ctx.obj)
     except BlueprintConfigError as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error

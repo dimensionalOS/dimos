@@ -220,8 +220,13 @@ def test_rerun_bridge_resolves_its_settings_like_a_blueprint_module(
 def test_rerun_bridge_applies_resolved_global_options(monkeypatch: pytest.MonkeyPatch) -> None:
     import dimos.visualization.rerun.bridge as bridge
 
-    seen: list[str] = []
-    monkeypatch.setattr(bridge, "run_bridge", lambda **config: seen.append(global_config.transport))
+    monkeypatch.setattr(global_config, "robot_width", 5.75)
+    seen = []
+    monkeypatch.setattr(
+        bridge,
+        "run_bridge",
+        lambda **config: seen.append((global_config.transport, global_config.robot_width)),
+    )
 
     result = CliRunner().invoke(
         main,
@@ -237,7 +242,7 @@ def test_rerun_bridge_applies_resolved_global_options(monkeypatch: pytest.Monkey
     )
 
     assert result.exit_code == 0, result.output
-    assert seen == ["lcm"]
+    assert seen == [("lcm", 5.75)]
 
 
 def test_run_composition_leaves_blueprint_alone_when_relay_disabled() -> None:
