@@ -51,7 +51,7 @@ from dimos.perception.localize.association import (
     Groups,
 )
 from dimos.perception.localize.memento import FrameSpan, Gap, Memento, Reader, Sighting, Span
-from dimos.perception.localize.rig import Rig, camera_hz
+from dimos.perception.localize.rig import Rig, camera_hz, window_tf
 from dimos.perception.localize.support_plane import (
     SupportPlane,
     fit_support_plane,
@@ -227,8 +227,7 @@ def embed_index(
     hz = rig.cap_embed_hz(embed_hz if embed_hz is not None else rig.embed_hz)
     rig.embed_hz = hz
     first, *rest = [
-        index_frames(rig, cam.color.after(t0).before(t1), embed_hz=hz)
-        for cam in rig.cameras.values()
+        index_frames(rig, cam.color.time_range(t0, t1), embed_hz=hz) for cam in rig.cameras.values()
     ]
     feed = (
         first.transform(lambda upstream: heapq.merge(upstream, *rest, key=lambda obs: obs.ts))
@@ -246,6 +245,25 @@ def embed_index(
     )
     logger.info(f"index: {embedded.count()} frames embedded over {t1 - t0:.1f}s")
     return embedded
+
+
+def index_recording(
+    store: Any,
+    rig: Rig,
+    embedder: EmbeddingModel,
+    t0: float,
+    t1: float,
+    embed_hz: float | None = None,
+) -> tuple[Rig, Stream[Any, Any]]:
+    """Cut a saved recording to ``[t0, t1]``, its timestamps in s, and embed that window.
+
+    ``rig`` is ``Rig.from_store(store)``. Returns a copy of it whose tf and lidar
+    hold only the window, and the window's frame index for ``localize``, embedded
+    at ``embed_hz`` frames per second (the rig's rate when None).
+    """
+    lidar = None if rig.lidar is None else rig.lidar.time_range(t0, t1)
+    rig = replace(rig, tf=window_tf(store, t0, t1), lidar=lidar)
+    return rig, embed_index(rig, embedder, t0, t1, embed_hz=embed_hz)
 
 
 def retrieve(

@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
-from reactivex.testing import TestScheduler
 
+import numpy as np
+
+from dimos.constants import HUNG_TEST_TIMEOUT
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -32,10 +33,8 @@ def test_feed_logs_source_duration_and_completion(tmp_path, mocker):
                 )
             store.stream("camera_info", CameraInfo).append(CameraInfo(), ts=ts)
             store.stream("tf", TFMessage).append(TFMessage(), ts=ts)
-    scheduler = TestScheduler()
-    mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
-    log = mocker.patch("dimos.memory.replay_progress.logger")
-    with DepthCameraFeed(dataset=str(path)):
+    log = mocker.patch("dimos.memory.replay_module.logger")
+    with DepthCameraFeed(dataset=str(path)) as feed:
         log.info.assert_called_once_with(
             "Replay started",
             source=str(path),
@@ -44,5 +43,6 @@ def test_feed_logs_source_duration_and_completion(tmp_path, mocker):
             speed=1.0,
             loop=False,
         )
-        scheduler.advance_by(5)
+        feed.on_system_modules_ready([])
+        assert feed.replay_done.wait(HUNG_TEST_TIMEOUT)
         assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=str(path))]

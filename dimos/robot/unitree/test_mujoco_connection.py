@@ -135,7 +135,6 @@ def _bare_connection(
     monkeypatch: MonkeyPatch, popen: Callable[..., Any], config: MujocoConfig | None = None
 ) -> MujocoConnection:
     """A MujocoConnection whose subprocess, shared memory and logging are doubles."""
-    monkeypatch.setattr(mujoco_connection, "ensure_menagerie", lambda: None)
     monkeypatch.setattr(mujoco_connection, "get_data", lambda _name: None)
     monkeypatch.setattr(mujoco_connection, "ShmWriter", _FakeShmWriter)
     monkeypatch.setattr(mujoco_connection.subprocess, "Popen", popen)
