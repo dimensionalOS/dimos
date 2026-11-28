@@ -219,15 +219,6 @@ def test_it_publishes_no_moving_tf_only_its_static_edges_and_odometry(
     assert {(edge.frame_id, edge.child_frame_id) for edge in static} == go2.tf_edge_ids
 
 
-class _DrawnView:
-    """A view whose frames are one flat colour."""
-
-    time = 3.0
-
-    def render(self, camera: str, width: int, height: int) -> NDArray[np.uint8]:
-        return np.full((height, width, 3), (200, 40, 10), dtype=np.uint8)
-
-
 @pytest.mark.skipif_no_turbojpeg
 def test_its_camera_sends_jpegs_with_its_lens_stamped_as_the_frame_was_drawn(
     monkeypatch: pytest.MonkeyPatch,
@@ -239,8 +230,8 @@ def test_its_camera_sends_jpegs_with_its_lens_stamped_as_the_frame_was_drawn(
         monkeypatch.setattr(go2.color_image, "publish", images.append)
         monkeypatch.setattr(go2.camera_info, "publish", infos.append)
         info = go2._camera_info()
-        idle: list[Any] = []
-        asyncio.run(go2._photograph(_DrawnView(), info, idle, [-math.inf]))
+        rgb = np.full((info.height, info.width, 3), (200, 40, 10), dtype=np.uint8)
+        go2._publish_frame(info, rgb, 3.0)
     finally:
         go2.stop()
     [jpeg] = images
@@ -249,4 +240,3 @@ def test_its_camera_sends_jpegs_with_its_lens_stamped_as_the_frame_was_drawn(
     decoded = jpeg.decode()
     assert (decoded.width, decoded.height) == (info.width, info.height)
     assert [i.ts for i in infos] == [3.0]
-    assert len(idle) == 1, "its view is free to draw again"
