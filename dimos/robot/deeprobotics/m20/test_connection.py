@@ -58,7 +58,7 @@ from dimos.robot.deeprobotics.m20.connection import (
 )
 
 INPUTS = ("requested_cmd_vel", "command_ready", "motion_state", "gait_state", "odometry")
-OUTPUTS = ("cmd_vel", "motion_state_cmd", "gait_cmd", "odom", "goal", "battery")
+OUTPUTS = ("cmd_vel", "motion_state_cmd", "gait_cmd", "goal", "battery")
 
 MAGIC = bytes.fromhex("eb91eb90")
 HEADER = struct.Struct("<4sHHB7s")

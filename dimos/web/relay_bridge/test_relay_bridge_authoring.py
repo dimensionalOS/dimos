@@ -40,6 +40,7 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.encode.cbor import decode, encode
@@ -134,14 +135,14 @@ def test_composition_ignores_disabled_producers() -> None:
 
 
 def test_composition_preserves_existing_relay() -> None:
-    existing = RelayBridgeModule.blueprint(local_port=8899, available_channels=("odom",))
+    existing = RelayBridgeModule.blueprint(local_port=8899, available_channels=("odometry",))
     blueprint = with_relay_bridge(autoconnect(_BareModule.blueprint(), existing).solidify())
     relay_atoms = [atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule]
 
     assert len(relay_atoms) == 1
     assert relay_atoms[0].kwargs == {
         "local_port": 8899,
-        "available_channels": ("odom",),
+        "available_channels": ("odometry",),
     }
 
 
@@ -344,14 +345,14 @@ def test_channels_without_manifest_fails(monkeypatch) -> None:
 
     patch_relay(monkeypatch, fake_connect)
     spec = RuntimeChannelSpec(
-        ch="odom",
-        message_type=PoseStamped,
+        ch="odometry",
+        message_type=Odometry,
         dir="rx",
-        encoding="pose.json.v1",
+        encoding="odometry.json.v1",
         delivery="reliable",
         max_hz=20.0,
         params={},
-        encoder=builtin_codecs.encode_pose,
+        encoder=builtin_codecs.encode_odometry,
     )
     module = RelayBridgeModule(
         relay_url="http://127.0.0.1:1", robot_id="unit-bot", channels=(spec,)
@@ -371,7 +372,7 @@ def test_spec_manifest_mismatch_fails(monkeypatch) -> None:
     manifest = {
         "version": 1,
         "channels": [
-            {"ch": "odom", "encoding": "pose.json.v1", "delivery": "reliable", "maxHz": 5.0}
+            {"ch": "odometry", "encoding": "odometry.json.v1", "delivery": "reliable", "maxHz": 5.0}
         ],
     }
 
@@ -382,7 +383,7 @@ def test_spec_manifest_mismatch_fails(monkeypatch) -> None:
             manifest=manifest,
             channels=(spec,),
         )
-        module.odom.transport = FakeTransport()
+        module.odometry.transport = FakeTransport()
         with pytest.raises(RuntimeError, match=match):
             try:
                 module.start()
@@ -390,14 +391,14 @@ def test_spec_manifest_mismatch_fails(monkeypatch) -> None:
                 stop_module(module)
 
     good = RuntimeChannelSpec(
-        ch="odom",
-        message_type=PoseStamped,
+        ch="odometry",
+        message_type=Odometry,
         dir="rx",
-        encoding="pose.json.v1",
+        encoding="odometry.json.v1",
         delivery="reliable",
         max_hz=5.0,
         params={},
-        encoder=builtin_codecs.encode_pose,
+        encoder=builtin_codecs.encode_odometry,
     )
     start_with(replace(good, ch="target_pose"), "do not match the compiled runtime specs")
     # Every advertised field that drives behavior is cross-checked: a spec
@@ -410,7 +411,7 @@ def test_spec_manifest_mismatch_fails(monkeypatch) -> None:
     start_with(replace(good, dir="tx"), "does not match its compiled runtime spec")
     start_with(
         replace(good, message_type=Twist),
-        "message type Twist does not match the RelayBridgeModule port type PoseStamped",
+        "message type Twist does not match the RelayBridgeModule port type Odometry",
     )
 
 
@@ -777,7 +778,7 @@ def _nav_path(*xy: tuple[float, float]) -> NavPath:
 def map_bridge(monkeypatch):
     blueprint = cockpit(layout=Map2D(path="path", click="clicked_point", stop="stop_movement"))
     module, clients = start_authored(
-        monkeypatch, blueprint, wire=("global_costmap", "odom", "path")
+        monkeypatch, blueprint, wire=("global_costmap", "odometry", "path")
     )
     try:
         yield module, clients

@@ -76,7 +76,7 @@ def test_rtc_relay_advertises_jpeg_channels_as_tracks(monkeypatch) -> None:
         cam = _wire_channel(clients[0], "color_image")
         assert cam["encoding"] == TRACK_ENCODING
         assert cam["params"] == {}  # jpeg quality means nothing to a track
-        assert _wire_channel(clients[0], "odom")["encoding"] == "pose.json.v1"
+        assert _wire_channel(clients[0], "odometry")["encoding"] == "odometry.json.v1"
         # Only the wire copy changes: the runtime spec keeps its JPEG encoder.
         spec = next(s for s in module._channel_specs if s.ch == "color_image")
         assert spec.encoding == "jpeg.v1" and spec.encoder is not None

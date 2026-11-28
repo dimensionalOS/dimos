@@ -41,10 +41,11 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig, DepthCameraHardware
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -330,7 +331,7 @@ class MujocoSimModule(
     # Floating-base pose for robots whose MJCF has a free joint at the
     # root. Published every step; consumers like the viser viewer use
     # this to translate the robot in world space.
-    odom: Out[PoseStamped]
+    odometry: Out[Odometry]
     tf: Out[TFMessage]
     body_poses: Out[TFMessage]
 
@@ -800,17 +801,22 @@ class MujocoSimModule(
             base_quat = data.qpos[
                 self._root_base_qpos_adr + 3 : self._root_base_qpos_adr + 7
             ]  # (w, x, y, z) per MuJoCo convention
-            self.odom.publish(
-                PoseStamped(
+            # The twist stays zero: only the root qpos address is tracked here,
+            # so there is no qvel slice to read the base velocity from.
+            self.odometry.publish(
+                Odometry(
                     ts=time.time(),
                     frame_id="world",
-                    position=Vector3(float(base_pos[0]), float(base_pos[1]), float(base_pos[2])),
-                    orientation=Quaternion(
-                        float(base_quat[1]),
-                        float(base_quat[2]),
-                        float(base_quat[3]),
-                        float(base_quat[0]),
-                    ),  # PoseStamped uses x,y,z,w
+                    child_frame_id="base_link",
+                    pose=Pose(
+                        Vector3(float(base_pos[0]), float(base_pos[1]), float(base_pos[2])),
+                        Quaternion(
+                            float(base_quat[1]),
+                            float(base_quat[2]),
+                            float(base_quat[3]),
+                            float(base_quat[0]),
+                        ),  # Quaternion uses x,y,z,w
+                    ),
                 )
             )
 

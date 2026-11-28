@@ -158,7 +158,7 @@ function boundedId(s: string): boolean {
 }
 
 // The map panels: channels[0] is the map (latest rx in the kind's encoding),
-// channels[1] (optional) the pose.json.v1 rx pose marker.
+// channels[1] (optional) the rx pose marker (pose.json.v1 or odometry.json.v1).
 const MAP_ENCODINGS = new Map([
   ["map2d", "costmap.zlib.v1"],
   ["map3d", "voxels.zlib.v1"],
@@ -182,14 +182,20 @@ function checkMapPanel(
   }
   if (panel.channels.length === 2) {
     const pose = chIds.get(panel.channels[1])!;
-    if (pose.encoding !== "pose.json.v1" || dirOf(pose) !== "rx") {
+    if (!POSE_ENCODINGS.includes(pose.encoding) || dirOf(pose) !== "rx") {
       throw new ManifestError(
         code,
-        `${panel.kind} panel ${panel.id} pose channel must be a pose.json.v1 rx channel`,
+        `${panel.kind} panel ${panel.id} pose channel must be a ${
+          POSE_ENCODINGS.join(" or ")
+        } rx channel`,
       );
     }
   }
 }
+
+// PoseStamped and Odometry carry the same marker payload under different
+// encoding ids; a pose slot takes either.
+export const POSE_ENCODINGS = ["pose.json.v1", "odometry.json.v1"];
 
 function dirOf(spec: RawChannelSpec): Dir {
   return spec.dir ?? "rx";

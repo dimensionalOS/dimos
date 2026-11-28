@@ -1,6 +1,6 @@
 # C++ Robot Control Example
 
-Subscribes to `/odom` and publishes velocity commands to `/cmd_vel`.
+Subscribes to `/odometry` and publishes velocity commands to `/cmd_vel`.
 
 ## Build
 

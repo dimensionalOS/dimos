@@ -39,6 +39,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.models.vl.base import VlModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 from dimos.msgs.visualization_msgs.EntityMarkers import EntityMarkers, Marker
 from dimos.perception.experimental.temporal_memory.clip_filter import (
@@ -122,7 +123,7 @@ class TemporalMemory(Module):
     config: TemporalMemoryConfig
 
     color_image: In[Image]
-    odom: In[PoseStamped]
+    odometry: In[Odometry]
     entity_markers: Out[EntityMarkers]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -312,8 +313,8 @@ class TemporalMemory(Module):
             self._robot_z = msg.position.z
             self._odom_count += 1
 
-        if self.odom.transport is not None:
-            unsub_odom = self.odom.subscribe(_on_odom)
+        if self.odometry.transport is not None:
+            unsub_odom = self.odometry.subscribe(lambda msg: _on_odom(msg.to_pose_stamped()))
             self.register_disposable(Disposable(unsub_odom))
         else:
             logger.warning(

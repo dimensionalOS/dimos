@@ -55,8 +55,8 @@ from __future__ import annotations
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
@@ -127,7 +127,8 @@ unitree_go2_rpp_controller = (
             (GO2Connection, "cmd_vel", "go2_cmd_vel"),
             (GO2Connection, "velocity_command", "go2_velocity_command"),
             (_Go2RppCoordinator, "go2_joint_state", "joint_state"),
-            (GO2Connection, "odom", "go2_odom"),
+            (GO2Connection, "odometry", "go2_odometry"),
+            (_Go2RppCoordinator, "odometry", "go2_odometry"),
         ]
     )
     .transports(
@@ -138,7 +139,7 @@ unitree_go2_rpp_controller = (
             ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
             # Preserve the public body-velocity RPC/stream and navigation odometry.
             ("go2_cmd_vel", Twist): LCMTransport("/go2/cmd_vel", Twist),
-            ("go2_odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),
+            ("go2_odometry", Odometry): LCMTransport("/go2/odometry", Odometry),
             # Controller IN: planned path + target speed (from any source).
             ("path", Path): LCMTransport("/path", Path),
             ("speed", Float32): LCMTransport("/speed", Float32),

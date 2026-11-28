@@ -228,13 +228,12 @@ def test_measured_body_rates_and_independent_odometry(
     assert odom.ts == ts
     assert odom.pose.position.x == pytest.approx(-0.1 * (ts - previous))
     assert odom.twist.linear.x == pytest.approx(0.4)
-    # The pose and tf share the same gate.
-    assert bool(r.ports["odom"].sent) is publish_tf
+    # publish_odom_tf now gates only the tf; odometry always goes out.
     assert bool(r.ports["tf"].sent) is publish_tf
     if publish_tf:
-        assert r.ports["odom"].sent[-1].position.x == pytest.approx(odom.pose.position.x)
-        assert r.ports["odom"].sent[-1].ts == ts
-        assert r.ports["tf"].sent[-1].transforms[0].ts == ts
+        transform = r.ports["tf"].sent[-1].transforms[0]
+        assert transform.ts == ts
+        assert transform.translation.x == pytest.approx(odom.pose.position.x)
 
 
 def test_gripper_units_readback_and_dedup(rig: Callable[..., Rig]) -> None:

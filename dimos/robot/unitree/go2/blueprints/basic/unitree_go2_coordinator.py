@@ -25,8 +25,8 @@ from __future__ import annotations
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.unitree.go2.connection import (
     GO2_BASE_JOINTS,
     GO2Connection,
@@ -60,7 +60,8 @@ unitree_go2_coordinator = (
             (GO2Connection, "cmd_vel", "go2_cmd_vel"),
             (GO2Connection, "velocity_command", "go2_velocity_command"),
             (Go2Coordinator, "go2_joint_state", "joint_state"),
-            (GO2Connection, "odom", "go2_odom"),
+            (GO2Connection, "odometry", "go2_odometry"),
+            (Go2Coordinator, "odometry", "go2_odometry"),
         ]
     )
     .transports(
@@ -68,7 +69,7 @@ unitree_go2_coordinator = (
             ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
             ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
             ("go2_cmd_vel", Twist): LCMTransport("/go2/cmd_vel", Twist),
-            ("go2_odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),
+            ("go2_odometry", Odometry): LCMTransport("/go2/odometry", Odometry),
         }
     )
 )

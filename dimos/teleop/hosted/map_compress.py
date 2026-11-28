@@ -34,6 +34,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -53,7 +54,7 @@ class MapCompressModule(Module):
     _MAX_MAP_BYTES = 32 * 1024  # ~50% of CF's observed ~64 KB drop threshold
 
     global_costmap: In[OccupancyGrid]
-    odom: In[PoseStamped]
+    odometry: In[Odometry]
     map_out: Out[bytes]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -67,7 +68,11 @@ class MapCompressModule(Module):
         if self.config.map_hz > 0:
             self.register_disposable(Disposable(self.global_costmap.subscribe(self._on_costmap)))
         if self.config.odom_hz > 0:
-            self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
+            self.register_disposable(
+                Disposable(
+                    self.odometry.subscribe(lambda msg: self._on_odom(msg.to_pose_stamped()))
+                )
+            )
 
     @rpc
     def stop(self) -> None:

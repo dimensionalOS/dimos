@@ -29,6 +29,7 @@ from dimos.models.qwen.bbox import BBox
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
@@ -57,7 +58,7 @@ class NavigationSkillContainer(Module):
     _object_tracking: ObjectTrackingSpec | None = None
 
     color_image: In[Image]
-    odom: In[PoseStamped]
+    odometry: In[Odometry]
     goal_reached: In[Bool]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -74,7 +75,9 @@ class NavigationSkillContainer(Module):
     def start(self) -> None:
         super().start()
         self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
-        self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
+        self.register_disposable(
+            Disposable(self.odometry.subscribe(lambda msg: self._on_odom(msg.to_pose_stamped())))
+        )
         self.register_disposable(Disposable(self.goal_reached.subscribe(self._on_goal_reached)))
         self._skill_started = True
 

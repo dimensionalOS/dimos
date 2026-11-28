@@ -19,7 +19,7 @@
 """
 Simple virtual robot demonstrating a dimos Module with In/Out ports.
 
-Subscribes to Twist commands and publishes PoseStamped.
+Subscribes to Twist commands and publishes Odometry.
 """
 
 import math
@@ -31,10 +31,10 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 
 
 def apply_twist(pose: Pose, twist: Twist, dt: float) -> Pose:
@@ -52,6 +52,7 @@ def apply_twist(pose: Pose, twist: Twist, dt: float) -> Pose:
 
 class SimpleRobotConfig(ModuleConfig):
     frame_id: str = "world"
+    child_frame_id: str = "base_link"
     update_rate: float = 30.0
     cmd_timeout: float = 0.5
 
@@ -61,7 +62,7 @@ class SimpleRobot(Module):
 
     config: SimpleRobotConfig
     cmd_vel: In[Twist]
-    pose: Out[PoseStamped]
+    odometry: Out[Odometry]
     _pose = Pose()
     _vel = Twist()
     _vel_time = 0.0
@@ -89,12 +90,13 @@ class SimpleRobot(Module):
 
         self._pose = apply_twist(self._pose, vel, dt)
 
-        self.pose.publish(
-            PoseStamped(
+        self.odometry.publish(
+            Odometry(
                 ts=now,
                 frame_id=self.config.frame_id,
-                position=self._pose.position,
-                orientation=self._pose.orientation,
+                child_frame_id=self.config.child_frame_id,
+                pose=self._pose,
+                twist=vel,
             )
         )
 
@@ -110,7 +112,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     robot = SimpleRobot()
-    robot.pose.transport = LCMTransport("/odom", PoseStamped)
+    robot.odometry.transport = LCMTransport("/odometry", Odometry)
     robot.cmd_vel.transport = LCMTransport("/cmd_vel", Twist)
     robot.start()
 
@@ -120,7 +122,7 @@ if __name__ == "__main__":
         start_visualization(robot)
 
     print("Robot running.")
-    print("  Publishing: /odom (PoseStamped)")
+    print("  Publishing: /odometry (Odometry)")
     print("  Subscribing: /cmd_vel (Twist)")
     print("  Run 'lcmspy' in another terminal to see LCM messages")
     print("  Check /examples/language-interop for sending commands from LUA, C++, TS etc.")

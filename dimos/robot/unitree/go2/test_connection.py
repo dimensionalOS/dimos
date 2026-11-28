@@ -301,7 +301,7 @@ def connection(stub_webrtc: MagicMock) -> Iterator[Callable[[bool], GO2Connectio
             odom_frame_id="go2_odom",
         )
         conn.tf = MagicMock()
-        conn.odom = MagicMock()
+        conn.odometry = MagicMock()
         built.append(conn)
         return conn
 
@@ -317,14 +317,14 @@ def test_publish_tf_off_keeps_odometry_on_its_port(
     conn = connection(publish_tf=False)
     conn._publish_tf(PoseStamped(ts=1.0, frame_id="ignored"))
     assert conn.tf.publish.call_count == 0
-    assert conn.odom.publish.call_count == 1
+    assert conn.odometry.publish.call_count == 1
 
 
 def test_publish_tf_on_by_default(connection: Callable[[bool], GO2Connection]) -> None:
     conn = connection(publish_tf=True)
     conn._publish_tf(PoseStamped(ts=1.0, frame_id="ignored"))
     assert conn.tf.publish.call_count == 1
-    assert conn.odom.publish.call_count == 1
+    assert conn.odometry.publish.call_count == 1
 
 
 def test_body_command_and_pose_derived_feedback(connection):
@@ -339,7 +339,10 @@ def test_body_command_and_pose_derived_feedback(connection):
     q = Quaternion(0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4))
     conn._publish_tf(PoseStamped(ts=10.0, position=[2.0, 3.0, 0.0], orientation=q))
     conn.joint_state.publish.assert_not_called()  # No invented first rate.
-    conn.odometry.publish.assert_not_called()
+    # The pose still goes out; only the rate is unknown, so the twist is zero.
+    first = conn.odometry.publish.call_args.args[0]
+    assert first.ts == 10.0
+    assert [first.twist.linear.x, first.twist.angular.z] == pytest.approx([0.0, 0.0])
     conn._publish_tf(PoseStamped(ts=10.1, position=[1.99, 3.04, 0.0], orientation=q))
     state = conn.joint_state.publish.call_args.args[0]
     odom = conn.odometry.publish.call_args.args[0]
@@ -622,15 +625,20 @@ def test_go2_replay_publishes_the_window_and_derives_tf(
 @pytest.mark.parametrize(
     "available, expected",
     [
-        ({"lidar", "odom", "color_image", "tf"}, ("lidar", "odom", "color_image", None)),
+        ({"lidar", "odom", "color_image", "tf"}, ("lidar", "odom", None, "color_image", None)),
         (
             {"go2_lidar", "go2_odom", "color_image", "tf"},
-            ("go2_lidar", "go2_odom", "color_image", None),
+            ("go2_lidar", "go2_odom", None, "color_image", None),
+        ),
+        # Recorded after the odom -> odometry rename: the pose comes from odometry.
+        (
+            {"lidar", "odom", "go2_odometry", "color_image"},
+            ("lidar", None, "go2_odometry", "color_image", None),
         ),
     ],
 )
 def test_go2_replay_reads_mid360_stream_names_and_derives_tf(
     available: set[str], expected: tuple[str | None, ...]
 ) -> None:
-    ports = ("lidar", "odom", "color_image", "tf")
+    ports = ("lidar", "odom", "recorded_odometry", "color_image", "tf")
     assert tuple(Go2Replay._stream_name(None, p, available) for p in ports) == expected  # type: ignore[arg-type]

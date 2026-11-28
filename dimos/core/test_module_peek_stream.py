@@ -26,7 +26,7 @@ from dimos.utils.testing.waiting import wait_until
 
 
 class PeekModule(Module):
-    odom: Out[PoseStamped]
+    pose: Out[PoseStamped]
     incoming: In[PoseStamped]
     duplex: IO[PoseStamped]
 
@@ -43,7 +43,7 @@ def module(mocker):
 
 
 @pytest.mark.flaky(reruns=1)
-@pytest.mark.parametrize("stream_name", ["odom", "incoming", "duplex"])
+@pytest.mark.parametrize("stream_name", ["pose", "incoming", "duplex"])
 def test_peek_observes_external_publications(module, each_transport, stream_name):
     topic = f"/peek/{stream_name}"
     module.set_transport(stream_name, make_transport(topic, PoseStamped))
@@ -77,14 +77,14 @@ def send_only_transport(mocker) -> LCMTransport:
 @pytest.mark.parametrize("has_transport", [False, True])
 def test_peek_preserves_local_output_without_transport_loopback(module, mocker, has_transport):
     if has_transport:
-        module.set_transport("odom", send_only_transport(mocker))
+        module.set_transport("pose", send_only_transport(mocker))
     expected = PoseStamped(ts=123.0, position=(4.0, 5.0, 6.0))
 
     with ThreadPoolExecutor() as executor:
-        result = executor.submit(module.peek_stream, "odom", 3.0)
+        result = executor.submit(module.peek_stream, "pose", 3.0)
 
         def publish_until_done():
-            module.odom.publish(expected)
+            module.pose.publish(expected)
             return result.done()
 
         wait_until(publish_until_done, timeout=5.0, interval=0.02)
@@ -96,16 +96,16 @@ def test_one_publication_reaches_every_pending_peek_and_subscriber(module, mocke
     # A peek completes inside Out.publish(); dropping its callback there must not
     # make publish() skip the subscribers registered after it.
     transport = send_only_transport(mocker)
-    module.set_transport("odom", transport)
+    module.set_transport("pose", transport)
     received = []
     expected = PoseStamped(ts=123.0, position=(4.0, 5.0, 6.0))
 
     with ThreadPoolExecutor() as executor:
-        peeks = [executor.submit(module.peek_stream, "odom", 3.0) for _ in range(2)]
+        peeks = [executor.submit(module.peek_stream, "pose", 3.0) for _ in range(2)]
         # Each peek subscribes locally before it subscribes to the transport.
         wait_until(lambda: transport.subscribe.call_count == 2, timeout=5.0, interval=0.02)
-        module.odom.subscribe(received.append)
-        module.odom.publish(expected)
+        module.pose.subscribe(received.append)
+        module.pose.publish(expected)
         results = [peek.result(timeout=5.0) for peek in peeks]
 
     assert all(result is expected for result in results)
@@ -114,7 +114,7 @@ def test_one_publication_reaches_every_pending_peek_and_subscriber(module, mocke
 
 @pytest.mark.parametrize(
     "stream_name",
-    ["odom", pytest.param("incoming", marks=pytest.mark.skipif_flaky_in_ci), "duplex"],
+    ["pose", pytest.param("incoming", marks=pytest.mark.skipif_flaky_in_ci), "duplex"],
 )
 def test_peek_timeout_releases_transport_subscription(module, mocker, stream_name):
     transport = LCMTransport("/peek/idle", PoseStamped)

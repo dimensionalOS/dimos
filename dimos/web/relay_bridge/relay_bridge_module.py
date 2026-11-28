@@ -59,9 +59,9 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 from dimos.web.codecs import EncodedPayload, encoder_definition
@@ -219,7 +219,7 @@ class RelayBridgeModule(Module):
     # Exact producer types (GO2Connection/CostMapper outputs) so autoconnect
     # matches.
     color_image: In[Image]
-    odom: In[PoseStamped]
+    odometry: In[Odometry]
     global_costmap: In[OccupancyGrid]
     # tx: cockpit teleop twists, autoconnected by name+type to
     # MovementManager.tele_cmd_vel (publish is a no-op while unwired).

@@ -96,7 +96,7 @@ BUILTIN_CHANNELS: tuple[BuiltinChannel, ...] = (
     BuiltinChannel(
         "color_image", "jpeg.v1", "latest", lambda c: c.image_max_hz, _jpeg_default_params
     ),
-    BuiltinChannel("odom", "pose.json.v1", "reliable", lambda c: c.odom_max_hz),
+    BuiltinChannel("odometry", "odometry.json.v1", "reliable", lambda c: c.odom_max_hz),
     BuiltinChannel(
         "global_costmap",
         "costmap.zlib.v1",

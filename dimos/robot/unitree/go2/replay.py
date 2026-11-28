@@ -54,7 +54,8 @@ class Go2Replay(ReplayModule):
     """Replays a Go2 recording's lidar, odom and camera, and derives tf, odometry and camera_info.
 
     Reads streams lidar, odom and color_image; mid360 recordings name the first two
-    go2_lidar and go2_odom.
+    go2_lidar and go2_odom, and recordings made after the odom -> odometry rename
+    hold the pose as go2_odometry or odometry (nav_msgs.Odometry) instead of odom.
 
     ``GO2Connection.blueprint()`` returns this under ``--replay``, under GO2Connection's name.
     """
@@ -62,6 +63,7 @@ class Go2Replay(ReplayModule):
     config: Go2ReplayConfig
     lidar: Out[PointCloud2]
     odom: Out[PoseStamped]
+    recorded_odometry: Out[Odometry]
     color_image: Out[Image]
     odometry: Out[Odometry]
     joint_state: Out[JointState]
@@ -84,6 +86,11 @@ class Go2Replay(ReplayModule):
         self._previous_odom: PoseStamped | None = None
 
     def _stream_name(self, port: str, available: set[str]) -> str | None:
+        recorded_odometry = next((n for n in ("go2_odometry", "odometry") if n in available), None)
+        if port == "recorded_odometry":
+            return recorded_odometry
+        if port == "odom" and recorded_odometry is not None:
+            return None  # the recorded odometry carries the same poses
         if port not in ("lidar", "odom", "color_image"):
             return None  # derived here, not replayed
         recorded = f"go2_{port}"
@@ -93,6 +100,13 @@ class Go2Replay(ReplayModule):
         super()._start()
         # GO2Connection's own method: this class has the ports and config it uses.
         self.register_disposable(Disposable(self.odom.subscribe(self._publish_from_odom)))  # type: ignore[misc]
+        self.register_disposable(
+            Disposable(
+                self.recorded_odometry.subscribe(
+                    lambda msg: self._publish_from_odom(msg.to_pose_stamped())  # type: ignore[misc]
+                )
+            )
+        )
         if self.config.camera:
             info = GO2Connection.camera_info_static
             self.register_disposable(

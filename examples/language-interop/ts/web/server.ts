@@ -4,7 +4,7 @@
 // Forwards robot pose to browser, receives twist commands from browser
 
 import { LCM } from "jsr:@dimos/lcm";
-import { decodePacket, geometry_msgs } from "jsr:@dimos/msgs";
+import { decodePacket, nav_msgs } from "jsr:@dimos/msgs";
 
 const PORT = 8080;
 const clients = new Set<WebSocket>();
@@ -50,11 +50,10 @@ console.log(`Server: http://localhost:${PORT}`);
 const lcm = new LCM();
 await lcm.start();
 
-// Subscribe to pose and just log to show how server can decode messages for itself
-lcm.subscribe("/odom", geometry_msgs.PoseStamped, (msg) => {
-  const pos = msg.data.pose.position;
-  const ori = msg.data.pose.orientation;
-  console.log(`[pose] x=${pos.x.toFixed(2)} y=${pos.y.toFixed(2)} z=${pos.z.toFixed(2)}`);
+// Subscribe to odometry and just log to show how server can decode messages for itself
+lcm.subscribe("/odometry", nav_msgs.Odometry, (msg) => {
+  const pos = msg.data.pose.pose.position;
+  console.log(`[odometry] x=${pos.x.toFixed(2)} y=${pos.y.toFixed(2)} z=${pos.z.toFixed(2)}`);
 });
 
 // Forward all raw packets to browser (we are decoding LCM directly in the browser)

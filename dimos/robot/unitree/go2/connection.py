@@ -268,7 +268,6 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
     velocity_command: In[JointState]
     joint_state: Out[JointState]
     pointcloud: Out[PointCloud2]
-    odom: Out[PoseStamped]
     odometry: Out[Odometry]
     lidar: Out[PointCloud2]
     color_image: Out[Image]
@@ -459,8 +458,7 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
         ]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
-        if self._publish_from_odom(msg) and self.odom.transport:
-            self.odom.publish(msg)
+        self._publish_from_odom(msg)
 
     def _publish_from_odom(self, msg: PoseStamped) -> bool:
         """joint_state, odometry and tf from one odom pose. False for an invalid pose."""
@@ -477,6 +475,7 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
         with self._odom_lock:
             previous = self._previous_odom
             self._previous_odom = copy.deepcopy(msg)
+        twist: Twist | None = None
         if (
             previous is not None
             and msg.frame_id == previous.frame_id
@@ -499,19 +498,22 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
                         velocity=[linear.x, linear.y, angular.z],
                     )
                 )
-                self.odometry.publish(
-                    Odometry(
-                        ts=msg.ts,
-                        frame_id=self.config.odom_frame_id,
-                        child_frame_id=_prefixed(self.config.frame_id_prefix, "base_link"),
-                        pose=Pose(msg.position, msg.orientation),
-                        twist=twist,
-                    )
-                )
         msg.frame_id = self.config.odom_frame_id
         if self.config.publish_tf:
             transforms = self._odom_to_tf(msg, prefix=self.frame_id_prefix)
             self.tf.publish(TFMessage(*transforms))
+        # Every measured pose goes out, twist-bearing or not. The first sample
+        # after start, and the one after an odom_timeout_s gap, have no interval
+        # to rate from, and pose consumers must not lose them.
+        self.odometry.publish(
+            Odometry(
+                ts=msg.ts,
+                frame_id=self.config.odom_frame_id,
+                child_frame_id=_prefixed(self.config.frame_id_prefix, "base_link"),
+                pose=Pose(msg.position, msg.orientation),
+                twist=twist if twist is not None else Twist(),
+            )
+        )
         return True
 
     def publish_camera_info(self) -> None:

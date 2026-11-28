@@ -58,7 +58,7 @@ unitree_go2_mid360_record = autoconnect(
     GO2Connection.blueprint(publish_tf=False).remappings(
         [
             (GO2Connection, "lidar", "go2_lidar"),
-            (GO2Connection, "odom", "go2_odom"),
+            (GO2Connection, "odometry", "go2_odometry"),
         ]
     ),
     mid360_for_pointlio(),

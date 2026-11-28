@@ -170,7 +170,7 @@ def benchmark(mocker, request):
     clock = mocker.patch("dimos.control.benchmarking.benchmark.time", autospec=True)
     clock.perf_counter.side_effect = count(step=0.05)
     bench.start()
-    callbacks["odom"](_pose())
+    callbacks["odometry"](Odometry())
     yield bench, callbacks, clock
     bench.stop()
 

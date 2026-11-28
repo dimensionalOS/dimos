@@ -29,6 +29,7 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseArray import PoseArray
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.Header import Header
@@ -86,7 +87,7 @@ class PGOVoxelMapper(Module):
     dedicated_worker = True
 
     lidar: In[PointCloud2]
-    odom: In[PoseStamped]
+    odometry: In[Odometry]
     global_map: Out[PointCloud2]
     # On every new keyframe: graph poses (premap included once attached) and non-odometry edges
     pgo_keyframes: Out[PoseArray]
@@ -150,7 +151,9 @@ class PGOVoxelMapper(Module):
             )
             self._reloc_thread.start()
             logger.info(f"PGO premap loaded: map_file={cfg.map_file!r} keyframes={len(premap)}")
-        self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
+        self.register_disposable(
+            Disposable(self.odometry.subscribe(lambda msg: self._on_odom(msg.to_pose_stamped())))
+        )
         # One frame at a time; frames arriving during an ICP or a rebuild are dropped.
         self.register_disposable(
             backpressure(self.lidar.observable().pipe(repair_stale_ts())).subscribe(self._on_lidar)

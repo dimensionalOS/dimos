@@ -34,6 +34,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.base import NavigationState
 from dimos.navigation.experimental.dannav.holonomic_tc.holonomic_path_controller import (
@@ -70,7 +71,7 @@ class DanHolonomicTC(Module):
     config: DanHolonomicTCConfig
 
     path: In[Path]
-    odom: In[PoseStamped]
+    odometry: In[Odometry]
     stop_movement: In[Bool]
 
     nav_cmd_vel: Out[Twist]
@@ -94,7 +95,9 @@ class DanHolonomicTC(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
+        self.register_disposable(
+            Disposable(self.odometry.subscribe(lambda msg: self._on_odom(msg.to_pose_stamped())))
+        )
         self.register_disposable(Disposable(self.path.subscribe(self._on_path)))
         if self.stop_movement.transport is not None:
             self.register_disposable(Disposable(self.stop_movement.subscribe(self._on_stop)))

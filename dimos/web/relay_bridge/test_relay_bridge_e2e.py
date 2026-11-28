@@ -53,9 +53,11 @@ from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.transport import pLCMTransport
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.rpc.rpc_utils import deserialize_exception
@@ -80,7 +82,7 @@ from dimos.web.relay_bridge.wt_client import RelayClient, RelayRejectedError, fe
 pytestmark = pytest.mark.self_hosted
 
 ROBOT_ID = "bridge-e2e"
-POSE = PoseStamped(ts=42.5, position=[1.5, -2.5, 0.25], orientation=[0.0, 0.0, 0.0, 1.0])
+POSE = Odometry(ts=42.5, pose=Pose(Vector3(1.5, -2.5, 0.25), Quaternion(0.0, 0.0, 0.0, 1.0)))
 COSTMAP_GRID = OccupancyGrid(
     grid=np.array([[-1, 0, 50], [100, 0, -1]], dtype=np.int8),
     resolution=0.05,
@@ -106,7 +108,7 @@ class _Publisher:
     is never enough - keep them coming like a robot would)."""
 
     def __init__(self) -> None:
-        self.odom = pLCMTransport("/rb_e2e/odom")
+        self.odometry = pLCMTransport("/rb_e2e/odometry")
         self.image = pLCMTransport("/rb_e2e/color_image")
         self.stop = threading.Event()
         arr = np.zeros((48, 64, 3), dtype=np.uint8)
@@ -115,20 +117,20 @@ class _Publisher:
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self) -> None:
-        self.odom.start()
+        self.odometry.start()
         self.image.start()
         self._thread.start()
 
     def _run(self) -> None:
         while not self.stop.is_set():
-            self.odom.publish(POSE)
+            self.odometry.publish(POSE)
             self.image.publish(self._image)
             time.sleep(0.05)
 
     def close(self) -> None:
         self.stop.set()
         self._thread.join(timeout=2)
-        self.odom.stop()
+        self.odometry.stop()
         self.image.stop()
 
 
@@ -136,13 +138,13 @@ def _start_bridge() -> tuple[RelayBridgeModule, tuple[pLCMTransport, ...]]:
     # web_build=False: tests must never trigger the npm-downloading build.
     module = RelayBridgeModule(local_port=0, open_browser=False, web_build=False, robot_id=ROBOT_ID)
     transports = (
-        pLCMTransport("/rb_e2e/odom"),
+        pLCMTransport("/rb_e2e/odometry"),
         pLCMTransport("/rb_e2e/color_image"),
         pLCMTransport("/rb_e2e/global_costmap"),
     )
     for transport in transports:
         transport.start()
-    module.odom.transport = transports[0]
+    module.odometry.transport = transports[0]
     module.color_image.transport = transports[1]
     module.global_costmap.transport = transports[2]
     module.start()  # spawns the Deno relay, connects, registers
@@ -301,15 +303,15 @@ def test_full_session_flow_and_lazy_encode(
         async with await _viewer(bridge) as viewer:
             await viewer.hello()
             # robots push carries the bridge's identity (drain until watch lands).
-            await attach_viewer(viewer, ROBOT_ID, ["odom", "color_image"])
+            await attach_viewer(viewer, ROBOT_ID, ["odometry", "color_image"])
 
             frames = await collect_until(
                 viewer,
-                lambda fs: any(f.header.ch == "odom" for f in fs)
+                lambda fs: any(f.header.ch == "odometry" for f in fs)
                 and any(f.header.ch == "color_image" for f in fs),
                 timeout=15.0,
             )
-            odom = next(f for f in frames if f.header.ch == "odom")
+            odom = next(f for f in frames if f.header.ch == "odometry")
             pose = json.loads(odom.payload)
             assert pose == {"x": 1.5, "y": -2.5, "z": 0.25, "yaw": 0.0, "ts": 42.5}
             assert odom.header.delivery == "reliable"
@@ -335,7 +337,7 @@ def test_full_session_flow_and_lazy_encode(
             encoded_before = bridge.encoded["color_image"]
             await asyncio.sleep(0.5)  # publisher keeps publishing the whole time
             assert bridge.encoded["color_image"] == encoded_before
-            assert "odom" in bridge._session.unsubs
+            assert "odometry" in bridge._session.unsubs
 
     asyncio.run(flow())
 
@@ -478,11 +480,11 @@ def test_relay_child_death_respawns_and_recovers(
         # A fresh viewer attaches to the new relay and frames flow again.
         async with await _viewer(bridge) as viewer:
             await viewer.hello()
-            await attach_viewer(viewer, ROBOT_ID, ["odom"])
+            await attach_viewer(viewer, ROBOT_ID, ["odometry"])
             frames = await collect_until(
-                viewer, lambda fs: any(f.header.ch == "odom" for f in fs), timeout=15.0
+                viewer, lambda fs: any(f.header.ch == "odometry" for f in fs), timeout=15.0
             )
-            assert any(f.header.ch == "odom" for f in frames)
+            assert any(f.header.ch == "odometry" for f in frames)
 
     asyncio.run(flow())
 
@@ -492,7 +494,7 @@ def test_relay_child_death_respawns_and_recovers(
 
 def _start_teleop_bridge() -> tuple[RelayBridgeModule, tuple[pLCMTransport, ...]]:
     manifest = default_manifest(
-        RelayBridgeConfig(), ("color_image", "odom", "global_costmap", "tele_cmd_vel")
+        RelayBridgeConfig(), ("color_image", "odometry", "global_costmap", "tele_cmd_vel")
     )
     module = RelayBridgeModule(
         local_port=0,
@@ -502,13 +504,13 @@ def _start_teleop_bridge() -> tuple[RelayBridgeModule, tuple[pLCMTransport, ...]
         manifest=manifest,
     )
     transports = (
-        pLCMTransport("/rb_e2e/odom"),
+        pLCMTransport("/rb_e2e/odometry"),
         pLCMTransport("/rb_e2e/color_image"),
         pLCMTransport("/rb_e2e/global_costmap"),
     )
     for transport in transports:
         transport.start()
-    module.odom.transport = transports[0]
+    module.odometry.transport = transports[0]
     module.color_image.transport = transports[1]
     module.global_costmap.transport = transports[2]
     module.start()
@@ -697,7 +699,7 @@ def _external_bridge(
         open_browser=False,
         web_build=False,
         robot_id=ROBOT_ID,
-        manifest=default_manifest(RelayBridgeConfig(), ("odom",)),
+        manifest=default_manifest(RelayBridgeConfig(), ("odometry",)),
     )
 
 

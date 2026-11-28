@@ -34,6 +34,7 @@ from dimos.mapping.voxels.keys import KEY_OFFSET, pack_indices, unpack_keys
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -72,8 +73,7 @@ def decode_text(msg: str) -> str:
     return msg
 
 
-@web_encoder("pose.json.v1")
-def encode_pose(msg: PoseStamped) -> bytes:
+def _pose_payload(msg: PoseStamped | Odometry) -> bytes:
     pose = {
         "x": msg.position.x,
         "y": msg.position.y,
@@ -82,6 +82,19 @@ def encode_pose(msg: PoseStamped) -> bytes:
         "ts": msg.ts,
     }
     return json.dumps(pose, separators=(",", ":")).encode()
+
+
+@web_encoder("pose.json.v1")
+def encode_pose(msg: PoseStamped) -> bytes:
+    return _pose_payload(msg)
+
+
+# One encoding carries one message type, so nav_msgs.Odometry needs its own id
+# even though the bytes are identical to pose.json.v1 — the viewer decodes both
+# with the generic *.json.vN decoder.
+@web_encoder("odometry.json.v1")
+def encode_odometry(msg: Odometry) -> bytes:
+    return _pose_payload(msg)
 
 
 @web_encoder("path.json.v1")

@@ -21,7 +21,7 @@ from dimos.core.transport import LCMTransport
 from dimos.mapping.costmapper import CostMapper
 from dimos.memory.module import Recorder, RecorderConfig, pose_setter_for
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -64,14 +64,14 @@ class Go2Memory(Recorder):
     color_image: In[Image]
     camera_info: In[CameraInfo]
     lidar: In[PointCloud2]
-    odom: In[PoseStamped]
+    odometry: In[Odometry]
     config: Go2MemoryConfig
 
     _last_odom_pose: Pose | None = None
 
-    @pose_setter_for("odom")
-    async def _odom_pose(self, msg: PoseStamped) -> Pose | None:
-        self._last_odom_pose = msg
+    @pose_setter_for("odometry")
+    async def _odom_pose(self, msg: Odometry) -> Pose | None:
+        self._last_odom_pose = msg.to_pose_stamped()
         return self._last_odom_pose
 
     @pose_setter_for("lidar")

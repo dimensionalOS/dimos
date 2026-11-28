@@ -44,9 +44,11 @@ import pytest
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.simulation.mujoco.constants import VIDEO_FPS
 from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module, teleop
@@ -62,7 +64,7 @@ from dimos.web.relay_bridge.module_test_support import (
     image_transport,
     kill_session,
     make_bridge,
-    odom_transport,
+    odometry_transport,
     patch_relay,
     push,
     wait_until,
@@ -85,7 +87,7 @@ def test_manifest_and_robot_info_content() -> None:
     config = RelayBridgeConfig(robot_id="go2-lab", robot_name="Lab", image_max_hz=12.0)
     # A video panel for the camera and a map2d panel binding costmap + pose;
     # rates and quality flow from the config fields.
-    assert default_manifest(config, ("color_image", "odom", "global_costmap")) == {
+    assert default_manifest(config, ("color_image", "odometry", "global_costmap")) == {
         "version": 1,
         "channels": [
             {
@@ -99,9 +101,9 @@ def test_manifest_and_robot_info_content() -> None:
                 "requiredScope": None,
             },
             {
-                "ch": "odom",
+                "ch": "odometry",
                 "dir": "rx",
-                "encoding": "pose.json.v1",
+                "encoding": "odometry.json.v1",
                 "delivery": "reliable",
                 "maxHz": 20.0,
                 "params": {},
@@ -125,7 +127,7 @@ def test_manifest_and_robot_info_content() -> None:
                 "id": "p1",
                 "kind": "map2d",
                 "title": "",
-                "channels": ["global_costmap", "odom"],
+                "channels": ["global_costmap", "odometry"],
                 "params": {},
             },
         ],
@@ -167,45 +169,45 @@ def test_start_registers_but_subscribes_nothing(bridge) -> None:
     assert robot.id == "unit-bot"
     assert isinstance(manifest, dict) and len(manifest["channels"]) == 2
     assert image_transport(module).subscribers == []
-    assert odom_transport(module).subscribers == []
+    assert odometry_transport(module).subscribers == []
 
 
 def test_subs_snapshot_toggles_subscriptions(bridge) -> None:
     module, clients = bridge
-    push(module, clients[0], Subs(chs=["odom"], n=1))
-    assert wait_until(lambda: len(odom_transport(module).subscribers) == 1)
+    push(module, clients[0], Subs(chs=["odometry"], n=1))
+    assert wait_until(lambda: len(odometry_transport(module).subscribers) == 1)
     assert image_transport(module).subscribers == []
 
     # A stale (already-seen n) snapshot must be ignored.
     push(module, clients[0], Subs(chs=[], n=1))
     time.sleep(0.1)
-    assert len(odom_transport(module).subscribers) == 1
+    assert len(odometry_transport(module).subscribers) == 1
 
     push(module, clients[0], Subs(chs=[], n=2))
-    assert wait_until(lambda: odom_transport(module).subscribers == [])
+    assert wait_until(lambda: odometry_transport(module).subscribers == [])
 
 
 def test_unknown_channels_in_snapshot_are_ignored(bridge) -> None:
     module, clients = bridge
-    push(module, clients[0], Subs(chs=["mystery", "odom"], n=1))
-    assert wait_until(lambda: len(odom_transport(module).subscribers) == 1)
+    push(module, clients[0], Subs(chs=["mystery", "odometry"], n=1))
+    assert wait_until(lambda: len(odometry_transport(module).subscribers) == 1)
     assert image_transport(module).subscribers == []
 
 
 def test_encode_paths_and_max_hz_gate(bridge) -> None:
     module, clients = bridge
     client = clients[0]
-    push(module, client, Subs(chs=["color_image", "odom"], n=1))
+    push(module, client, Subs(chs=["color_image", "odometry"], n=1))
     assert wait_until(
-        lambda: image_transport(module).subscribers and odom_transport(module).subscribers
+        lambda: image_transport(module).subscribers and odometry_transport(module).subscribers
     )
 
-    pose = PoseStamped(ts=42.5, position=[1.5, -2.5, 0.25], orientation=[0.0, 0.0, 0.0, 1.0])
-    odom_transport(module).publish(pose)
-    assert module.encoded["odom"] == 1
+    pose = Odometry(ts=42.5, pose=Pose(Vector3(1.5, -2.5, 0.25), Quaternion(0.0, 0.0, 0.0, 1.0)))
+    odometry_transport(module).publish(pose)
+    assert module.encoded["odometry"] == 1
     assert wait_until(lambda: len(client.frames) == 1)
     ch, payload, delivery, _ = client.frames[0]
-    assert (ch, delivery) == ("odom", "reliable")
+    assert (ch, delivery) == ("odometry", "reliable")
     decoded = json.loads(payload)
     assert decoded == {"x": 1.5, "y": -2.5, "z": 0.25, "yaw": 0.0, "ts": 42.5}
 
@@ -221,15 +223,15 @@ def test_encode_paths_and_max_hz_gate(bridge) -> None:
     # ~250 ms), so this back-to-back pair reliably lands inside the 50 ms
     # interval - exactly one of the two encodes.
     time.sleep(0.06)
-    count = module.encoded["odom"]
-    odom_transport(module).publish(pose)
-    odom_transport(module).publish(pose)
-    assert module.encoded["odom"] == count + 1
+    count = module.encoded["odometry"]
+    odometry_transport(module).publish(pose)
+    odometry_transport(module).publish(pose)
+    assert module.encoded["odometry"] == count + 1
 
     # After the interval passes, encoding resumes.
     time.sleep(0.06)
-    odom_transport(module).publish(pose)
-    assert wait_until(lambda: module.encoded["odom"] == count + 2)
+    odometry_transport(module).publish(pose)
+    assert wait_until(lambda: module.encoded["odometry"] == count + 2)
 
 
 def test_default_image_gate_preserves_mujoco_video_rate() -> None:
@@ -328,7 +330,7 @@ COSTMAP_CELLS = bytes([255, 0, 50, 100, 0, 255])
 
 @pytest.fixture
 def costmap_bridge(monkeypatch):
-    module, clients = make_bridge(monkeypatch, wire=("color_image", "odom", "global_costmap"))
+    module, clients = make_bridge(monkeypatch, wire=("color_image", "odometry", "global_costmap"))
     try:
         yield module, clients
     finally:
@@ -493,7 +495,7 @@ def test_costmap_empty_cached_grid_is_not_replayed(costmap_bridge) -> None:
 
 
 def test_stop_disposes_costmap_cache_subscription(monkeypatch) -> None:
-    module, _clients = make_bridge(monkeypatch, wire=("color_image", "odom", "global_costmap"))
+    module, _clients = make_bridge(monkeypatch, wire=("color_image", "odometry", "global_costmap"))
     transport = costmap_transport(module)
     assert len(transport.subscribers) == 1  # the always-on raw cache
     stop_module(module)
@@ -530,18 +532,18 @@ def test_manifest_omits_pose_binding_when_odom_unwired(monkeypatch) -> None:
 
 def test_session_loss_stops_encoders_and_reconnects(bridge) -> None:
     module, clients = bridge
-    push(module, clients[0], Subs(chs=["odom"], n=5))
-    assert wait_until(lambda: odom_transport(module).subscribers)
+    push(module, clients[0], Subs(chs=["odometry"], n=5))
+    assert wait_until(lambda: odometry_transport(module).subscribers)
 
     kill_session(module, clients[0])
     # Encoders stop the moment the session dies (no consumer = no work) ...
-    assert wait_until(lambda: odom_transport(module).subscribers == [])
+    assert wait_until(lambda: odometry_transport(module).subscribers == [])
     # ... and the supervisor dials a fresh session with a reset n horizon,
     # closing the dead client first (else its UDP socket leaks until GC).
     assert wait_until(lambda: len(clients) == 2)
     assert clients[0].close_count >= 1
-    push(module, clients[1], Subs(chs=["odom"], n=1))
-    assert wait_until(lambda: len(odom_transport(module).subscribers) == 1)
+    push(module, clients[1], Subs(chs=["odometry"], n=1))
+    assert wait_until(lambda: len(odometry_transport(module).subscribers) == 1)
 
 
 def test_encode_started_in_old_session_is_not_sent_to_replacement(
@@ -560,23 +562,22 @@ def test_encode_started_in_old_session_is_not_sent_to_replacement(
     # viewer subscribes (the runtime specs are the encoder source now).
     module._channel_specs = tuple(
         replace(spec, encoder=blocking_encode, encoder_takes_params=False)
-        if spec.ch == "odom"
+        if spec.ch == "odometry"
         else spec
         for spec in module._channel_specs
     )
     publisher = threading.Thread(
-        target=odom_transport(module).publish,
+        target=odometry_transport(module).publish,
         args=(
-            PoseStamped(
+            Odometry(
                 ts=42.5,
-                position=[1.5, -2.5, 0.25],
-                orientation=[0.0, 0.0, 0.0, 1.0],
+                pose=Pose(Vector3(1.5, -2.5, 0.25), Quaternion(0.0, 0.0, 0.0, 1.0)),
             ),
         ),
     )
     try:
-        push(module, clients[0], Subs(chs=["odom"], n=1))
-        assert wait_until(lambda: len(odom_transport(module).subscribers) == 1)
+        push(module, clients[0], Subs(chs=["odometry"], n=1))
+        assert wait_until(lambda: len(odometry_transport(module).subscribers) == 1)
 
         publisher.start()
         assert encode_started.wait(timeout=5.0)
@@ -598,10 +599,10 @@ def test_encode_started_in_old_session_is_not_sent_to_replacement(
 
 def test_stop_unsubscribes_and_closes(bridge) -> None:
     module, clients = bridge
-    push(module, clients[0], Subs(chs=["color_image", "odom"], n=1))
+    push(module, clients[0], Subs(chs=["color_image", "odometry"], n=1))
     assert wait_until(lambda: image_transport(module).subscribers)
 
-    image_tr, odom_tr = image_transport(module), odom_transport(module)
+    image_tr, odom_tr = image_transport(module), odometry_transport(module)
     module.stop()
     # The module's own teardown unsubscribed (not just the transports closing).
     assert (image_tr.unsubscribed, odom_tr.unsubscribed) == (1, 1)
@@ -711,10 +712,10 @@ def test_stop_survives_dead_task(monkeypatch) -> None:
     module, clients = make_bridge(monkeypatch, relay=relay)
     try:
         assert crashed.wait(timeout=5.0)
-        push(module, clients[0], Subs(chs=["color_image", "odom"], n=1))
+        push(module, clients[0], Subs(chs=["color_image", "odometry"], n=1))
         assert wait_until(lambda: image_transport(module).subscribers)
 
-        image_tr, odom_tr = image_transport(module), odom_transport(module)
+        image_tr, odom_tr = image_transport(module), odometry_transport(module)
         stop_module(module)
         assert (image_tr.unsubscribed, odom_tr.unsubscribed) == (1, 1)
         assert clients[0].close_count >= 1
@@ -728,8 +729,8 @@ def test_unsubscribe_failure_does_not_skip_other_cleanup_or_leak_into_new_sessio
 ) -> None:
     module, clients = bridge
     color = image_transport(module)
-    odom = odom_transport(module)
-    push(module, clients[0], Subs(chs=["color_image", "odom"], n=1))
+    odom = odometry_transport(module)
+    push(module, clients[0], Subs(chs=["color_image", "odometry"], n=1))
     assert wait_until(lambda: len(color.subscribers) == 1 and len(odom.subscribers) == 1)
     old_session = module._session
     assert old_session is not None
@@ -748,31 +749,31 @@ def test_unsubscribe_failure_does_not_skip_other_cleanup_or_leak_into_new_sessio
 
 
 def test_unwired_input_is_not_advertised_or_subscribed(monkeypatch) -> None:
-    module, clients = make_bridge(monkeypatch, wire=("odom",))
+    module, clients = make_bridge(monkeypatch, wire=("odometry",))
     try:
         _, manifest = clients[0].hello_args
         assert isinstance(manifest, dict)
-        assert [channel["ch"] for channel in manifest["channels"]] == ["odom"]
+        assert [channel["ch"] for channel in manifest["channels"]] == ["odometry"]
         assert manifest["panels"] == []  # the video panel drops with its channel
         assert manifest["layout"] is None
 
-        push(module, clients[0], Subs(chs=["color_image", "odom"], n=1))
-        assert wait_until(lambda: len(odom_transport(module).subscribers) == 1)
+        push(module, clients[0], Subs(chs=["color_image", "odometry"], n=1))
+        assert wait_until(lambda: len(odometry_transport(module).subscribers) == 1)
         assert module._session is not None
         assert "color_image" not in module._session.unsubs
         assert len(clients) == 1  # supervisor alive, session not recycled
         push(module, clients[0], Subs(chs=[], n=2))
-        assert wait_until(lambda: odom_transport(module).subscribers == [])
+        assert wait_until(lambda: odometry_transport(module).subscribers == [])
     finally:
         stop_module(module)
 
 
 def test_composition_channel_allowlist_filters_bound_inputs(monkeypatch) -> None:
-    module, clients = make_bridge(monkeypatch, available_channels=("odom",))
+    module, clients = make_bridge(monkeypatch, available_channels=("odometry",))
     try:
         _, manifest = clients[0].hello_args
         assert isinstance(manifest, dict)
-        assert [channel["ch"] for channel in manifest["channels"]] == ["odom"]
+        assert [channel["ch"] for channel in manifest["channels"]] == ["odometry"]
 
         push(module, clients[0], Subs(chs=["color_image"], n=1))
         assert wait_until(lambda: module._session is not None and module._session.last_n == 1)
@@ -833,7 +834,7 @@ def test_start_with_invalid_manifest_fails(monkeypatch) -> None:
         module = RelayBridgeModule(
             relay_url="http://127.0.0.1:1", robot_id="unit-bot", manifest=manifest
         )
-        module.odom.transport = FakeTransport()
+        module.odometry.transport = FakeTransport()
         try:
             module.start()
         finally:
@@ -858,7 +859,7 @@ def test_start_with_invalid_manifest_fails(monkeypatch) -> None:
             {
                 "version": 1,
                 "channels": [
-                    {"ch": "odom", "encoding": "jpeg.v1", "delivery": "latest", "maxHz": 1.0}
+                    {"ch": "odometry", "encoding": "jpeg.v1", "delivery": "latest", "maxHz": 1.0}
                 ],
             }
         )
@@ -880,24 +881,24 @@ def test_start_with_invalid_manifest_fails(monkeypatch) -> None:
 
 
 def test_advertised_unwired_channel_is_not_probed(monkeypatch) -> None:
-    manifest = default_manifest(RelayBridgeConfig(), ("color_image", "odom", "global_costmap"))
-    module, clients = make_bridge(monkeypatch, wire=("odom",), manifest=manifest)
+    manifest = default_manifest(RelayBridgeConfig(), ("color_image", "odometry", "global_costmap"))
+    module, clients = make_bridge(monkeypatch, wire=("odometry",), manifest=manifest)
     try:
         _, hello_manifest = clients[0].hello_args
         # No runtime stream probing: everything the manifest declares is
         # advertised, wired or not.
         assert [c["ch"] for c in hello_manifest["channels"]] == [
             "color_image",
-            "odom",
+            "odometry",
             "global_costmap",
         ]
-        push(module, clients[0], Subs(chs=["color_image", "odom", "global_costmap"], n=1))
-        assert wait_until(lambda: len(odom_transport(module).subscribers) == 1)
+        push(module, clients[0], Subs(chs=["color_image", "odometry", "global_costmap"], n=1))
+        assert wait_until(lambda: len(odometry_transport(module).subscribers) == 1)
         assert module._session is not None
-        assert set(module._session.unsubs) == {"odom"}
+        assert set(module._session.unsubs) == {"odometry"}
         assert len(clients) == 1  # supervisor alive, no reconcile crash
         push(module, clients[0], Subs(chs=[], n=2))
-        assert wait_until(lambda: odom_transport(module).subscribers == [])
+        assert wait_until(lambda: odometry_transport(module).subscribers == [])
     finally:
         stop_module(module)
 
@@ -909,7 +910,7 @@ def test_default_manifest_matches_cockpit_default_preset() -> None:
 
     (atom,) = cockpit().blueprints
     assert atom.kwargs["manifest"] == default_manifest(
-        RelayBridgeConfig(), ("color_image", "odom", "global_costmap", "tele_cmd_vel")
+        RelayBridgeConfig(), ("color_image", "odometry", "global_costmap", "tele_cmd_vel")
     )
     # Normalization is idempotent: the parser accepts its own output.
     assert parse_manifest(atom.kwargs["manifest"]).model_dump() == atom.kwargs["manifest"]
@@ -1171,11 +1172,11 @@ def test_supervisor_survives_reconcile_error(bridge, monkeypatch) -> None:
         real(session, want)
 
     monkeypatch.setattr(module, "_reconcile", flaky)
-    push(module, clients[0], Subs(chs=["odom"], n=1))
+    push(module, clients[0], Subs(chs=["odometry"], n=1))
     assert wait_until(lambda: len(clients) == 2)
     assert clients[0].close_count >= 1
-    push(module, clients[1], Subs(chs=["odom"], n=1))
-    assert wait_until(lambda: len(odom_transport(module).subscribers) == 1)
+    push(module, clients[1], Subs(chs=["odometry"], n=1))
+    assert wait_until(lambda: len(odometry_transport(module).subscribers) == 1)
 
 
 def test_port_conflict_fails_before_build(monkeypatch) -> None:
@@ -1194,7 +1195,7 @@ def test_port_conflict_fails_before_build(monkeypatch) -> None:
         blocker.listen(1)
         port = blocker.getsockname()[1]
         module = RelayBridgeModule(local_port=port, open_browser=False, robot_id="unit-bot")
-        module.odom.transport = FakeTransport()
+        module.odometry.transport = FakeTransport()
         with pytest.raises(RuntimeError, match="unavailable"):
             module.start()
         stop_module(module)

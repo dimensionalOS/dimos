@@ -52,7 +52,7 @@ class LayoutAlgo(Enum):
 
 
 # Connections to ignore (too noisy/common)
-DEFAULT_IGNORED_CONNECTIONS = {("odom", "PoseStamped")}
+DEFAULT_IGNORED_CONNECTIONS = {("odometry", "Odometry")}
 
 DEFAULT_IGNORED_MODULES = {
     "WebsocketVisModule",

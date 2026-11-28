@@ -108,8 +108,11 @@ def turbo_image(grid: NDArray[np.int8]) -> NDArray[np.uint8]:
     color_lut = _turbo_lut()
 
     # Map grid values to lookup indices
-    # Values: -1 -> 255, 0-100 -> 0-100, clipped to valid range
-    lookup_indices = np.where(grid == -1, 255, np.clip(grid, 0, 100)).astype(np.uint8)
+    # Values: -1 -> 255, 0-100 -> 0-100, clipped to valid range.
+    # Cast before substituting the unknown marker: numpy 2 rejects 255 against
+    # an int8 array outright rather than wrapping it.
+    lookup_indices = np.clip(grid, 0, 100).astype(np.uint8)
+    lookup_indices[grid == -1] = 255
 
     # Create BGR image using lookup table (vectorized operation)
     return color_lut[lookup_indices]

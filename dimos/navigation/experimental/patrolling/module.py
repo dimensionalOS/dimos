@@ -27,6 +27,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.navigation.experimental.patrolling.constants import EXTRA_CLEARANCE
 from dimos.navigation.experimental.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.experimental.patrolling.routers.patrol_router import PatrolRouter
@@ -43,7 +44,7 @@ class PatrollingConfig(ModuleConfig):
 
 class PatrollingModule(Module):
     config: PatrollingConfig
-    odom: In[PoseStamped]
+    odometry: In[Odometry]
     global_costmap: In[OccupancyGrid]
     goal_reached: In[Bool]
     goal_request: Out[PoseStamped]
@@ -68,9 +69,11 @@ class PatrollingModule(Module):
         yield
         await self._stop_patrolling()
 
-    async def handle_odom(self, msg: PoseStamped) -> None:
-        self._latest_pose = msg
-        self._router.handle_odom(msg)
+    async def handle_odometry(self, msg: Odometry) -> None:
+        # Named for the port: _auto_bind_handlers only finds handle_<input>.
+        pose = msg.to_pose_stamped()
+        self._latest_pose = pose
+        self._router.handle_odom(pose)
 
     async def handle_global_costmap(self, msg: OccupancyGrid) -> None:
         self._router.handle_occupancy_grid(msg)
