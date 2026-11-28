@@ -187,8 +187,8 @@ def test_the_sim_builds_its_world_from_the_blueprints_hardware() -> None:
         } <= frames
         mirror = WorldMirror()
         mirror._load(sim_module.snapshot()["entities"], 0)
-        # A robot's id is its namespace, the mount frame it sits on.
-        assert mirror.entity("scene/dog") is not None
+        # A robot's id is its namespace, the tf frame of the mount it sits on (its name).
+        assert mirror.entity("dog") is not None
     finally:
         coordinator.stop()
 
