@@ -313,7 +313,9 @@ def test_a_livox_opens_one_view_for_its_lidar_and_imu_and_reads_both_at_their_ra
 
 
 @pytest.mark.self_hosted  # the Mid-360 scan pattern is Git LFS data
-def test_a_livox_lidar_and_imu_share_one_real_view(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_livox_in_its_housing_sees_past_it_and_its_lidar_and_imu_share_one_real_view(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from dimos.sim2.livox import LivoxSim
 
     livox = LivoxSim(instance_name=f"{LIDAR_MOUNT}/livox", attached_to="lidar", **ANY_STAMP)
@@ -423,21 +425,6 @@ def _toy_world(sensor: Any, mount: str, monkeypatch: pytest.MonkeyPatch) -> Any:
     sensor._world = mirror
     sensor.world_layer = lambda: layer_file(world_usd, "toy-world")
     return mirror
-
-
-@pytest.mark.self_hosted  # the Mid-360 scan pattern is Git LFS data
-def test_a_livox_in_its_housing_sees_past_the_housing(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dimos.sim2.livox import LivoxSim
-
-    livox = LivoxSim(instance_name=f"{LIDAR_MOUNT}/livox", attached_to="lidar", **ANY_STAMP)
-    published: list[Any] = []
-    try:
-        _toy_world(livox, LIDAR_MOUNT, monkeypatch)
-        monkeypatch.setattr(livox.lidar, "publish", published.append)
-        asyncio.run(livox._scan())
-    finally:
-        livox.stop()
-    assert published and all(len(cloud.as_numpy()[0]) > 0 for cloud in published)
 
 
 def test_an_l1_maps_in_the_odometry_of_the_robot_it_rides(monkeypatch: pytest.MonkeyPatch) -> None:
