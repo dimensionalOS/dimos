@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A simulated Go2 as GO2Connection presents one over WebRTC: cmd_vel in; odom, its L1's voxel map and its front camera out, from one view of the world."""
+"""A simulated Go2 as GO2Connection presents one over WebRTC: cmd_vel in; odometry, its L1's voxel map and its front camera's JPEGs out, from one view of the world."""
 
 import asyncio
 from collections.abc import Coroutine
@@ -29,12 +29,14 @@ from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.assets.model import UsdModel
@@ -98,6 +100,8 @@ class Go2WebRtcSimConfig(SimSensorConfig):
     # Its camera: the real one's lens (front_camera_720.yaml) at ``scale`` of its 1280x720.
     camera_rate_hz: float = 60.0
     camera_scale: float = 0.5
+    # Its frames go out as JPEGs of this quality.
+    jpeg_quality: int = 75
     # Its frames are drawn on this many views at once (each its own render process on macOS), so one draws while another is tone mapped.
     camera_views: int = 4
     render: RenderQuality = RenderQuality()
@@ -110,9 +114,9 @@ class Go2WebRtcSim(ViewSensor):
     config: Go2WebRtcSimConfig
     cmd_vel: In[Twist]
     world_actions: Out[WorldAction]
-    odom: Out[PoseStamped]
+    odom: Out[Odometry]
     lidar: Out[PointCloud2]
-    color_image: Out[Image]
+    color_image: Out[CompressedImage]
     camera_info: Out[CameraInfo]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -182,7 +186,7 @@ class Go2WebRtcSim(ViewSensor):
         robot = self.namespace
         async for _ in self._world.ticks(self.config.control_rate_hz):
             stamp = time.time()
-            x, y, yaw = self._servo_positions(robot)
+            (x, y, yaw), moving = self._servo_states(robot)
             vx, vy, wz = self._desired if stamp < self._desired_expires else np.zeros(3)
             # cmd_vel is in its body's frame; the x and y servos slide along its mount's.
             along = (
@@ -194,20 +198,41 @@ class Go2WebRtcSim(ViewSensor):
                 robot, SERVOS, velocity=along, kp=(0.0,) * len(SERVOS), kd=self._gains
             )
             self.world_actions.publish(world_action(self._world, command))
-            self.odom.publish(self._odometry(x, y, yaw, self._world.time))
+            self.odom.publish(self._odometry((x, y, yaw), moving, self._world.time))
 
-    def _servo_positions(self, robot: str) -> tuple[float, float, float]:
+    def _servo_states(
+        self, robot: str
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+        """Its x, y and yaw servos' positions, and their velocities, as the world last sent them."""
         with self._world.lock:
             names, rows = self._world.joints(robot)
-        positions = {name: float(row[0]) for name, row in zip(names, rows, strict=True)}
-        return positions.get("x", 0.0), positions.get("y", 0.0), positions.get("yaw", 0.0)
+        states = {
+            name: (float(row[0]), float(row[1])) for name, row in zip(names, rows, strict=True)
+        }
+        x, y, yaw = (states.get(servo, (0.0, 0.0)) for servo in SERVOS)
+        return (x[0], y[0], yaw[0]), (x[1], y[1], yaw[1])
 
-    def _odometry(self, x: float, y: float, yaw: float, stamp: float) -> PoseStamped:
-        return PoseStamped(
+    def _odometry(
+        self,
+        position: tuple[float, float, float],
+        velocity: tuple[float, float, float],
+        stamp: float,
+    ) -> Odometry:
+        """Its body's pose in its odom frame at its servos' ``position``, and its twist (in its body's frame) at their ``velocity``."""
+        x, y, yaw = position
+        x_rate, y_rate, yaw_rate = velocity
+        # The x and y servos slide along its mount's axes; its twist is along its body's.
+        forward = x_rate * math.cos(yaw) + y_rate * math.sin(yaw)
+        leftward = -x_rate * math.sin(yaw) + y_rate * math.cos(yaw)
+        return Odometry(
             ts=stamp,
             frame_id=self.odom_frame_id,
-            position=Vector3(x, y, float(self._standing[2, 3])),
-            orientation=Quaternion(0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2)),
+            child_frame_id=self.tf_frames[BODY],
+            pose=Pose(
+                Vector3(x, y, float(self._standing[2, 3])),
+                Quaternion(0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2)),
+            ),
+            twist=Twist(Vector3(forward, leftward, 0.0), Vector3(0.0, 0.0, yaw_rate)),
         )
 
     def _site(self, frame: str) -> str:
@@ -277,18 +302,22 @@ class Go2WebRtcSim(ViewSensor):
     async def _photograph(
         self, view: WorldView, info: CameraInfo, idle: list[WorldView], published: list[float]
     ) -> None:
-        """Its camera's image of ``view``, published unless a newer frame went first; ``view`` is idle again after."""
+        """Its camera's JPEG of ``view``, published unless a newer frame went first; ``view`` is idle again after."""
         try:
             stamp = view.time
             rgb = await asyncio.to_thread(view.render, "go2_front_camera", info.width, info.height)
         finally:
             idle.append(view)
+        # Encoded off the event loop, as the frame was drawn.
+        jpeg = await asyncio.to_thread(
+            CompressedImage.from_image,
+            Image(data=rgb, format=ImageFormat.RGB, frame_id=info.frame_id, ts=stamp),
+            quality=self.config.jpeg_quality,
+        )
         if stamp <= published[0]:
             return
         published[0] = stamp
-        self.color_image.publish(
-            Image(data=rgb, format=ImageFormat.RGB, frame_id=info.frame_id, ts=stamp)
-        )
+        self.color_image.publish(jpeg)
         self.camera_info.publish(info.with_ts(stamp))
 
     def _scan(
