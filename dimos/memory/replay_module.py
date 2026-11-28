@@ -25,6 +25,7 @@ from __future__ import annotations
 from functools import partial
 from pathlib import Path
 import sys
+from threading import Thread
 from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
@@ -56,6 +57,8 @@ class ReplayModuleConfig(ModuleConfig):
     topics: str = "*"
     speed: float = 1.0
     loop: bool = False
+    # Shut the run down once every replayed stream has ended.
+    exit_on_end: bool = False
     # With ``loop``, recording seconds between the last frame of a pass and the first of the next.
     loop_gap: float = Field(default=0.0, ge=0.0)
     seek: float | None = None
@@ -169,7 +172,7 @@ class ReplayModule(Module):
         # replay would spend that lead time emitting nothing.
         static = {n for n, s in streams.items() if s.count() > 1 and s.first_ts() == s.last_ts()}
         timed = {n: s for n, s in streams.items() if n not in static}
-        progress = ReplayProgress(str(path))
+        progress = ReplayProgress(str(path), on_complete=self._replay_finished)
         progress.start(replay, timed.values())
         self._replay = replay
         self._static = [(self.outputs[n], streams[n].first()) for n in static]
@@ -179,6 +182,24 @@ class ReplayModule(Module):
             self.register_disposable(progress.track(replay.add(stream)).subscribe(port.publish))
         progress.seal()
         replay.load()
+
+    def _replay_finished(self) -> None:
+        if self.config.exit_on_end:
+            logger.info("Requesting coordinator shutdown after replay", source=self.config.dataset)
+            # Keep the RPC round trip off the replay thread.
+            Thread(target=self._request_shutdown, daemon=True).start()
+
+    def _request_shutdown(self) -> None:
+        from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
+
+        try:
+            client = CoordinatorRPC.connect(timeout=10.0)
+            try:
+                client.call("shutdown", requesting_module=self.config.rpc_name)
+            finally:
+                client.stop()
+        except Exception:
+            logger.error("Failed to request coordinator shutdown", exc_info=True)
 
     @rpc
     def on_system_modules_ready(self, _modules: list[RPCClient]) -> None:

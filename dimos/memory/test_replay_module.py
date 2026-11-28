@@ -268,6 +268,34 @@ def test_dataset_path_resolves_names_and_skips_the_default(recording: str) -> No
     assert dataset_path("no-such-dataset-for-this-test") == ""
 
 
+@pytest.mark.parametrize("exit_on_end", [False, True])
+def test_exit_on_end_shuts_the_run_down_after_the_last_frame(recording, mocker, exit_on_end):
+    client = mocker.Mock()
+    connect = mocker.patch(
+        "dimos.core.coordination.coordinator_rpc.CoordinatorRPC.connect", return_value=client
+    )
+    shutdown = threading.Event()
+    client.stop.side_effect = shutdown.set
+    add = mocker.spy(Replay, "add")
+    module = replay_module(recording)(
+        dataset=recording, exit_on_end=exit_on_end, rpc_name="replay-under-test"
+    )
+    finished = threading.Event()
+    try:
+        module.start()
+        merge(*add.spy_return_list).subscribe(on_completed=finished.set)
+        module.on_system_modules_ready([])
+        assert finished.wait(HUNG_TEST_TIMEOUT)
+        if exit_on_end:
+            assert shutdown.wait(HUNG_TEST_TIMEOUT)
+    finally:
+        module.stop()
+    if exit_on_end:
+        client.call.assert_called_once_with("shutdown", requesting_module="replay-under-test")
+    else:
+        connect.assert_not_called()
+
+
 @pytest.mark.parametrize("static", [False, True])
 def test_replay_logs_source_and_finishes_after_all_timed_streams(recording, mocker, static):
     # Static metadata must not extend the reported duration or prevent completion.
