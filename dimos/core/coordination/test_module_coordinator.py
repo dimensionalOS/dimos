@@ -27,6 +27,7 @@ from dimos.core._test_future_annotations_helper import (
     FutureModuleIn,
     FutureModuleOut,
 )
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import (
     Blueprint,
@@ -56,10 +57,12 @@ from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import IO, In, Out, Stream
 from dimos.core.transport import CloudflareTransport, PubSubTransport
 from dimos.core.transport_factory import transport_topic
+from dimos.hosted.fragment_compiler import compile_fragments
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.encode.cbor import decode, encode
+from dimos.protocol.pubsub.impl.webrtc.providers.cloudflare import CloudflareConfig
 import dimos.robot.get_all_blueprints as resolver
 from dimos.spec.utils import Spec
 
@@ -1394,8 +1397,74 @@ def test_spec_config_kwarg_reaches_provider_config() -> None:
     unconditionally — silently dropping the spec kwarg."""
     spec = CloudflareTransport.spec("state_reliable", robot_type="go2")
     bp = Blueprint(blueprints=(), transport_map=MappingProxyType({("s", bytes): spec}))
-    t = _materialize_transports(bp, {})[("s", bytes)]
+    with pytest.raises(BlueprintConfigError, match="api_key"):
+        _materialize_transports(bp, {})
+    t = _materialize_transports(bp, {"broker": {"api_key": "example"}})[("s", bytes)]
     assert t._config.robot_type == "go2"
+
+
+def test_disabled_hosted_module_releases_its_broker_key_requirement() -> None:
+    bp = autoconnect(SourceModule.blueprint(), TargetModule.blueprint()).solidify()
+    bp = bp.remappings(
+        [
+            (SourceModule, "color_image", "shared"),
+            (TargetModule, "remapped_data", "shared"),
+        ]
+    ).transports({("shared", Data1): CloudflareTransport.spec("state_reliable_back")})
+    shared = bp.disabled_modules(SourceModule)
+    with pytest.raises(BlueprintConfigError, match="api_key"):
+        BlueprintConfigParser(shared).parse(environ={})
+
+    disabled = shared.disabled_modules(TargetModule)
+    BlueprintConfigParser(disabled).parse(environ={})
+    assert _materialize_transports(disabled, {}) == {}
+
+
+def test_hosted_transport_uses_the_executing_hosts_environment() -> None:
+    bp = (
+        autoconnect(
+            SourceModule.blueprint().hosted(host="robot"),
+            TargetModule.blueprint().hosted(host="desk"),
+        )
+        .solidify()
+        .transports(
+            {
+                ("color_image", Data1): CloudflareTransport.spec("state_reliable_back"),
+                ("remapped_data", Data1): CloudflareTransport.spec(
+                    "events",
+                    config=CloudflareConfig(app_id="dummy-app", app_secret="dummy-default"),
+                ),
+            }
+        )
+    )
+    root = BlueprintConfigParser(bp).parse(
+        [
+            "--transports.broker.robot-name",
+            "camera",
+            "--transports.cloudflare.app-secret",
+            "dummy-override",
+        ],
+        environ={},
+    )
+    fragments = compile_fragments(
+        bp,
+        {SourceModule.name: "robot", TargetModule.name: "desk"},
+        run_id="run-1",
+        revision="rev",
+        overrides=root.file_and_cli,
+    )
+    desk = fragments["desk"].load_payload()
+    assert desk.overrides["transports"] == {"cloudflare": {"app_secret": "dummy-override"}}
+    BlueprintConfigParser(desk.blueprint).parse(environ={}, overrides=desk.overrides)
+    fragment = fragments["robot"].load_payload()
+    assert fragment.overrides["transports"] == {"broker": {"robot_name": "camera"}}
+    parser = BlueprintConfigParser(fragment.blueprint)
+    with pytest.raises(BlueprintConfigError, match="api_key"):
+        parser.parse(environ={}, overrides=fragment.overrides)
+    host = parser.parse(
+        environ={"TRANSPORTS__BROKER__API_KEY": "host-key"}, overrides=fragment.overrides
+    )
+    assert host.transport_overrides()["broker"] == {"robot_name": "camera", "api_key": "host-key"}
 
 
 def test_materialize_transports_deep_merges_sparse_nested_overrides() -> None:

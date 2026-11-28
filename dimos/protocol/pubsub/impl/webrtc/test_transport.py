@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import struct
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 import pytest
@@ -25,17 +26,31 @@ import pytest
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.core.coordination.module_coordinator import _materialize_transports
-from dimos.core.transport import WebRTCTransport
+from dimos.core.coordination.module_coordinator import ModuleCoordinator, _materialize_transports
+from dimos.core.transport import (
+    CloudflareAudioTransport,
+    CloudflareTransport,
+    CloudflareVideoTransport,
+    WebRTCAudioTransport,
+    WebRTCTransport,
+    WebRTCVideoTransport,
+)
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.impl.webrtc.providers import spec
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
+from dimos.protocol.pubsub.impl.webrtc.providers.cloudflare import CloudflareConfig
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
     AsyncProviderBase,
     ProviderConfig,
 )
 from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
+
+if TYPE_CHECKING:
+    from pytest_mock import MockerFixture
+
+    from dimos.core.stream import Transport, TransportSpec
+
 
 # ─── Mock provider ───────────────────────────────────────────────────
 
@@ -345,10 +360,90 @@ def test_raw_transport_pins_still_work() -> None:
 
 
 def test_broker_provider_requires_credentials() -> None:
-    with pytest.raises(RuntimeError, match="api_key required"):
-        BrokerConfig(robot_id="r1")._create()
-    # robot_id is optional — the broker derives it from the API key.
-    assert BrokerConfig(api_key="key")._create() is not None
+    with pytest.raises(ValidationError, match="api_key"):
+        BrokerConfig.model_validate({"robot_id": "r1"})
+
+
+@pytest.mark.parametrize(
+    "transport",
+    [
+        CloudflareTransport.spec("state_reliable_back"),
+        CloudflareAudioTransport.spec(),
+        CloudflareVideoTransport.spec(),
+    ],
+)
+def test_broker_credentials_required_for_selected_transport(transport: TransportSpec) -> None:
+    bp = Blueprint(blueprints=()).transports({("stream", bytes): transport})
+    parser = BlueprintConfigParser(bp)
+    with pytest.raises(BlueprintConfigError, match=r"transports.broker.api_key"):
+        parser.parse(environ={})
+    with pytest.raises(BlueprintConfigError, match=r"transports.broker.api_key"):
+        parser.parse(["--transports.broker.api-key", "  "], environ={})
+
+    parsed = parser.parse(environ={"TRANSPORTS__BROKER__API_KEY": "synthetic-key"})
+    instance = _materialize_transports(bp, parsed.transport_overrides())[("stream", bytes)]
+    assert instance._config.api_key == "synthetic-key"
+
+
+@pytest.mark.parametrize("field", ["app_id", "app_secret"])
+def test_direct_cloudflare_credentials(field: str) -> None:
+    values = {"app_id": "example-app", "app_secret": "example-secret"}
+    with pytest.raises(ValidationError, match=field):
+        CloudflareConfig.model_validate({k: v for k, v in values.items() if k != field})
+    with pytest.raises(ValidationError, match=field):
+        CloudflareConfig.model_validate({**values, field: "  "})
+
+
+@pytest.mark.parametrize(
+    "transport,args",
+    [
+        (CloudflareTransport, ("events",)),
+        (WebRTCTransport, ("events",)),
+        (WebRTCAudioTransport, ()),
+        (WebRTCVideoTransport, ()),
+    ],
+)
+def test_selected_direct_provider_uses_its_own_credentials(
+    transport: type[Transport[Any]], args: tuple[str, ...]
+) -> None:
+    config = CloudflareConfig(app_id="fixture-app", app_secret="fixture-secret")
+    bp = Blueprint(blueprints=()).transports(
+        {("events", bytes): transport.spec(*args, config=config)}
+    )
+    parser = BlueprintConfigParser(bp)
+    assert config.app_secret not in parser.format_help()
+    parsed = parser.parse(["--transports.cloudflare.app-id", "another-app"], environ={})
+    transport = _materialize_transports(bp, parsed.transport_overrides())[("events", bytes)]
+    assert transport._config == CloudflareConfig(app_id="another-app", app_secret=config.app_secret)
+
+
+def test_python_build_rejects_unconfigured_transport_before_host_setup(
+    mocker: MockerFixture,
+) -> None:
+    host_setup = mocker.patch(
+        "dimos.core.coordination.module_coordinator._run_configurators",
+        side_effect=AssertionError("entered host setup"),
+    )
+    bp = Blueprint(blueprints=()).transports({("stats", bytes): CloudflareTransport.spec("stats")})
+    with pytest.raises(BlueprintConfigError, match="api_key"):
+        ModuleCoordinator.build(bp)
+    host_setup.assert_not_called()
+
+
+def test_pinned_broker_config_supplies_credentials_and_accepts_overrides() -> None:
+    config = BrokerConfig(api_key="blueprint-key", robot_name="test robot")
+    bp = Blueprint(blueprints=()).transports(
+        {("stats", bytes): CloudflareTransport.spec("stats", config=config)}
+    )
+    parser = BlueprintConfigParser(bp)
+    for env, expected in [
+        ({}, "blueprint-key"),
+        ({"TRANSPORTS__BROKER__API_KEY": "override"}, "override"),
+    ]:
+        parsed = parser.parse(environ=env)
+        instance = _materialize_transports(bp, parsed.transport_overrides())[("stats", bytes)]
+        assert instance._config.api_key == expected
+        assert instance._config.robot_name == "test robot"
 
 
 def test_backend_coercion_leaves_webrtc_untouched() -> None:

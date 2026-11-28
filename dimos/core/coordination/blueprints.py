@@ -485,6 +485,29 @@ class Blueprint(BlueprintProtocol):
         disabled = set(self.disabled_modules_tuple)
         return tuple(bp for bp in self.blueprints if bp.module not in disabled)
 
+    @cached_property
+    def active_transport_map(self) -> Mapping[tuple[str, type], TransportSpec | Transport[Any]]:
+        """Omit pins whose last stream was removed by disabling a module."""
+        if not self.disabled_modules_tuple:
+            return self.transport_map
+        disabled = stream_name_types(self, include_disabled=True) - stream_name_types(self)
+        return MappingProxyType(
+            {key: spec for key, spec in self.transport_map.items() if key not in disabled}
+        )
+
+
+def stream_name_types(
+    blueprint: Blueprint, *, include_disabled: bool = False
+) -> set[tuple[str, type]]:
+    """Every wired stream (name, type), with remappings applied."""
+    result = set()
+    for bp in blueprint.blueprints if include_disabled else blueprint.active_blueprints:
+        for conn in bp.streams:
+            remapped_name = blueprint.remapping_map.get((bp.name, conn.name), conn.name)
+            if isinstance(remapped_name, str):
+                result.add((remapped_name, conn.type))
+    return result
+
 
 def config_defaults(module: type[ModuleBase]) -> dict[str, Any]:
     """Every config field that has a default, as the module's own config would fill it in.

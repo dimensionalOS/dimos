@@ -319,6 +319,7 @@ class WebRTCTransport(PubSubTransport[M]):
     process-scoped).
     """
 
+    _explicit_config_type = ProviderConfig
     _config_cls: type[ProviderConfig]
     _config: ProviderConfig
     _started: bool = False
@@ -410,6 +411,7 @@ class _ProviderTransport(Transport[T]):
     used directly with an explicit ``config``.
     """
 
+    _explicit_config_type = ProviderConfig
     _config_cls: type[ProviderConfig]
     _config: ProviderConfig
 

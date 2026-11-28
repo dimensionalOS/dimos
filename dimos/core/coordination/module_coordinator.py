@@ -31,11 +31,12 @@ from dimos.constants import RUNTIME_MODULES_DIR
 from dimos.core.coordination.blueprint_config.fields import (
     module_config_cls,
     validate_module_config,
+    validate_transport_config,
 )
-from dimos.core.coordination.blueprint_config.values import deep_merge, plain
 from dimos.core.coordination.blueprints import (
     MetaBlueprint,
     config_defaults,
+    stream_name_types as stream_name_types,
     transport_config_name,
 )
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
@@ -486,8 +487,10 @@ class ModuleCoordinator(Resource):
         )
         global_config.update(**global_values)
         coordinator = cls(g=global_config, module_rpc_namespace=module_rpc_namespace)
-        if parsed_config is None:
-            _validate_module_configs(blueprint, module_kwargs, global_config)
+        if parsed_config is None or blueprint.hosted_placements:
+            _validate_blueprint_configs(
+                blueprint, module_kwargs, transport_overrides, global_config
+            )
         # The admission RPC itself needs the configured multicast route and OS limits.
         _run_configurators(blueprint)
         _check_requirements(blueprint)
@@ -587,7 +590,9 @@ class ModuleCoordinator(Resource):
         self._global_config.update(**global_values)
         if "serve_coordinator_rpc" in global_values:
             self._serve_coordinator_rpc = self._global_config.serve_coordinator_rpc
-        _validate_module_configs(blueprint, module_kwargs, self._global_config)
+        _validate_blueprint_configs(
+            blueprint, module_kwargs, transport_overrides, self._global_config
+        )
         transports = _materialize_transports(blueprint, transport_overrides)
 
         # Scale worker pool.
@@ -853,17 +858,6 @@ class ModuleCoordinator(Resource):
             self.stop()
 
 
-def stream_name_types(blueprint: Blueprint) -> set[tuple[str, type]]:
-    """Every wired stream ``(name, type)`` in *blueprint*, remappings applied. No workers needed."""
-    result = set()
-    for bp in blueprint.active_blueprints:
-        for conn in bp.streams:
-            remapped_name = blueprint.remapping_map.get((bp.name, conn.name), conn.name)
-            if isinstance(remapped_name, str):
-                result.add((remapped_name, conn.type))
-    return result
-
-
 def _is_name_unique(blueprint: Blueprint, name: str) -> bool:
     return sum(1 for n, _ in stream_name_types(blueprint) if n == name) == 1
 
@@ -920,7 +914,7 @@ def _materialize_transports(
     ready-to-use instances sent into module workers.
     """
     materialized: dict[tuple[str, type], Transport[Any]] = {}
-    for key, spec in blueprint.transport_map.items():
+    for key, spec in blueprint.active_transport_map.items():
         if not isinstance(spec, TransportSpec):
             # Plain transport instance pinned directly in the blueprint — use
             # as-is (modulo the global lcm/zenoh backend switch).
@@ -929,12 +923,9 @@ def _materialize_transports(
         config = None
         config_cls = spec.config_cls
         if config_cls is not None:
-            # Config-field kwargs pinned on the spec, sparse overrides on top.
-            spec_fields = {
-                k: plain(v) for k, v in spec.kwargs.items() if k in config_cls.model_fields
-            }
-            deep_merge(spec_fields, overrides.get(transport_config_name(config_cls), {}))
-            config = config_cls(**spec_fields)
+            config = validate_transport_config(
+                config_cls, spec.config_kwargs, overrides.get(transport_config_name(config_cls), {})
+            )
         materialized[key] = _coerce_transport_to_backend(spec.build(config=config))
     return materialized
 
@@ -1091,9 +1082,10 @@ def _check_requirements(blueprint: Blueprint) -> None:
         sys.exit(1)
 
 
-def _validate_module_configs(
+def _validate_blueprint_configs(
     blueprint: Blueprint,
     module_kwargs: Mapping[str, Mapping[str, Any]],
+    transport_overrides: Mapping[str, Mapping[str, Any]],
     g: GlobalConfig,
 ) -> None:
     for atom in blueprint.active_blueprints:
@@ -1101,6 +1093,14 @@ def _validate_module_configs(
         config_fields = module_config_cls(atom).model_fields
         pinned = {key: value for key, value in atom.kwargs.items() if key in config_fields}
         validate_module_config(atom, {**pinned, **module_kwargs.get(atom.name, {})}, g)
+
+    for spec in blueprint.active_transport_map.values():
+        if isinstance(spec, TransportSpec) and (config_cls := spec.config_cls) is not None:
+            validate_transport_config(
+                config_cls,
+                spec.config_kwargs,
+                transport_overrides.get(transport_config_name(config_cls), {}),
+            )
 
 
 def _deploy_all_modules(
