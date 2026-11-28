@@ -18,7 +18,6 @@ import asyncio
 from collections.abc import Coroutine
 from functools import cached_property
 import math
-from pathlib import Path
 import time
 from typing import Any
 
@@ -49,16 +48,15 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     L1_XYZ,
     OPTICAL_RPY,
 )
-from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.l1 import L1Voxels, SimL1Config
 from dimos.sim2.mujoco.drives import usd_drives
 from dimos.sim2.mujoco.renders import RenderQuality
 from dimos.sim2.mujoco.sensor_mount import SensorMount
 from dimos.sim2.mujoco.sensor_world import WorldView, rotation_matrix
-from dimos.sim2.sensor import SimSensorConfig
-from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.sim import JointCommand, SimSensorConfig, SimulatedRobot, world_action
 from dimos.sim2.view_sensor import ViewSensor
 from dimos.simulation.sensors.lidar import Raycaster
+from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -71,7 +69,7 @@ SERVOS = ("x", "y", "yaw")
 
 def go2_usd() -> UsdModel:
     """The kinematic Go2, with the frames the real one has on tf: its front camera (and its optical frame) and its L1."""
-    return UsdModel.from_file(Path(__file__).parent / "assets" / "go2_kinematic.usda").with_frames(
+    return UsdModel.from_file(get_data("go2_sim_usd") / "go2_kinematic.usda").with_frames(
         {
             "camera_link": (BODY, CAMERA_XYZ, (0.0, 0.0, 0.0)),
             "camera_optical": (f"{BODY}/camera_link", (0.0, 0.0, 0.0), OPTICAL_RPY),

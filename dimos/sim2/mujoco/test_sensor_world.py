@@ -21,14 +21,11 @@ import pytest
 
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.layers import usd_under_namespace
-from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.mujoco.sensor_mount import SensorMount
 from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids
 from dimos.sim2.mujoco.view import MujocoView
-from dimos.sim2.sim import compose_usds
-from dimos.sim2.spec import ROBOT
-from dimos.sim2.usd_layer import layer_file
-from dimos.sim2.world_observations import WorldMirror, WorldWriter
+from dimos.sim2.scene import layer_file, toy_robot
+from dimos.sim2.sim import ROBOT, WorldMirror, WorldWriter, compose_usds
 
 # Every scene here is read out of a USD layer, and a runner without usd-core cannot read one:
 # linux-aarch64 has no wheel for it (pyproject's marker says so), so without this the tests
