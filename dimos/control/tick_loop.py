@@ -41,6 +41,7 @@ from dimos.control.task import (
     ResourceClaim,
     SensorStateSnapshot,
 )
+from dimos.control.tasks.policy_teleop_task.policy_teleop_task import PolicyTeleopTask
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -272,8 +273,14 @@ class TickLoop:
 
         with self._task_lock:
             self._joint_positions = state.joints.joint_positions.copy()
+            blended_sources = {
+                name
+                for task in self._tasks.values()
+                if isinstance(task, PolicyTeleopTask)
+                for name in task.source_task_names
+            }
             for task in self._tasks.values():
-                if not task.is_active():
+                if task.name in blended_sources or not task.is_active():
                     continue
 
                 try:

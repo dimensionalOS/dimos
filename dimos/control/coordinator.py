@@ -234,6 +234,7 @@ class ControlCoordinator(Module):
             cfg.type,
             cfg,
             connections=self._connections,
+            tasks=self._tasks,
         )
 
     def _frame_pose_port(self) -> Out[TFMessage]:

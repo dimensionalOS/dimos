@@ -798,6 +798,10 @@ class ModuleBase(Configurable, CompositeResource):
 
         disposed = False
 
+        async def _cancel_dispatcher() -> None:
+            task.cancel()
+            await task
+
         def _dispose() -> None:
             nonlocal disposed
             if disposed:
@@ -805,7 +809,19 @@ class ModuleBase(Configurable, CompositeResource):
             disposed = True
             loop_now = self._loop
             if loop_now is not None and loop_now.is_running():
-                loop_now.call_soon_threadsafe(task.cancel)
+                try:
+                    on_loop = asyncio.get_running_loop() is loop_now
+                except RuntimeError:
+                    on_loop = False
+                if on_loop:
+                    task.cancel()
+                else:
+                    # Finish handler teardown before stop() closes its event loop.
+                    future = asyncio.run_coroutine_threadsafe(_cancel_dispatcher(), loop_now)
+                    try:
+                        future.result(timeout=self._loop_thread_timeout)
+                    except TimeoutError:
+                        logger.error("Timed out cancelling async input handler")
 
         return on_msg, Disposable(_dispose)
 

@@ -192,6 +192,16 @@ class KeyboardTeleopModule(Module):
             screen.blit(title, (20, y_pos))
             y_pos += 40
 
+            focused = pygame.key.get_focused()
+            input_hint = (
+                "Keyboard ready: hold Q/E to move up/down"
+                if focused
+                else "Click this window to enable keyboard input"
+            )
+            input_color = (100, 255, 100) if focused else (255, 200, 80)
+            screen.blit(font.render(input_hint, True, input_color), (20, y_pos))
+            y_pos += 30
+
             twist_text = f"Linear twist: X={linear_x:.3f}  Y={linear_y:.3f}  Z={linear_z:.3f} m/s"
             screen.blit(font.render(twist_text, True, (100, 255, 100)), (20, y_pos))
             y_pos += 30

@@ -19,6 +19,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, TypedDict
 
+from dimos.control.coordinator import TaskConfig
+from dimos.control.tasks.policy_teleop_task.policy_teleop_task import TakeoverFn
 from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -34,6 +36,37 @@ class TeleopBinding(TypedDict):
 
     hand: str
     target_frame: str
+
+
+def policy_teleop_task(
+    joint_names: Sequence[str],
+    *,
+    operator_tasks: Sequence[str],
+    policy_tasks: Sequence[str],
+    name: str = "policy_teleop",
+    priority: int = 10,
+    alpha: float = 0.5,
+    takeover_fn: str | TakeoverFn | None = None,
+    switch_joints: Sequence[str] = (),
+    weight_rate: float = 2.0,
+    source_timeout_s: float = 0.2,
+) -> TaskConfig:
+    """Blend registered source tasks, which must precede this entry in ``tasks``."""
+    return TaskConfig(
+        name=name,
+        type="policy_teleop",
+        joint_names=list(joint_names),
+        priority=priority,
+        params={
+            "operator_tasks": list(operator_tasks),
+            "policy_tasks": list(policy_tasks),
+            "alpha": alpha,
+            "takeover_fn": takeover_fn,
+            "switch_joints": list(switch_joints),
+            "weight_rate": weight_rate,
+            "source_timeout_s": source_timeout_s,
+        },
+    )
 
 
 def planner(
