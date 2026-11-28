@@ -228,17 +228,20 @@ def test_a_livox_imu_is_read_at_the_frame_it_is_labelled_with(
 def test_an_l1_does_not_map_the_body_it_is_mounted_on(
     l1: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from dimos.sim2.l1 import SimL1
+
     run = _run(l1, "_map", "lidar", monkeypatch)
     assert run["view"].mounted_at == [l1.frame_id]
+    # The first tick opens the view, and each after it casts, stamped with the world it was cast in.
+    assert [cloud.ts for cloud in run["published"]] == [1.0 + tick for tick in range(TICKS - 1)]
 
-
-def test_an_l1_map_is_stamped_with_the_world_it_was_cast_in(
-    l1: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    run = _run(l1, "_map", "lidar", monkeypatch)
-    # The first tick opens the view, and each after it casts.
-    cast_at = [1.0 + tick for tick in range(TICKS - 1)]
-    assert [cloud.ts for cloud in run["published"]] == cast_at
+    # In a world far off wall time, with the default stamp tolerance, it sends nothing.
+    strict = SimL1(instance_name="left/l1")
+    monkeypatch.setattr(strict, "_rider_odometry", lambda rider: ("left/odom", np.eye(4)))
+    try:
+        assert _run(strict, "_map", "lidar", monkeypatch)["published"] == []
+    finally:
+        strict.stop()
 
 
 @pytest.mark.parametrize(
@@ -440,52 +443,29 @@ def test_a_livox_in_its_housing_sees_past_the_housing(monkeypatch: pytest.Monkey
 def test_an_l1_maps_in_the_odometry_of_the_robot_it_rides(monkeypatch: pytest.MonkeyPatch) -> None:
     from dimos.sim2.l1 import SimL1
 
-    l1 = SimL1(instance_name=f"{L1_MOUNT}/l1", attached_to="l1", stamp_tolerance=math.inf)
-    published: list[Any] = []
-    try:
-        _toy_world(l1, L1_MOUNT, monkeypatch)
-        monkeypatch.setattr(l1.lidar, "publish", published.append)
-        asyncio.run(l1._map())
-    finally:
-        l1.stop()
-    cloud = published[-1]
-    points, _ = cloud.as_numpy()
-    floor = points[points[:, 2] < l1.config.cell]
-    assert cloud.frame_id == f"{DOG}/odom"
-    assert len(floor) > 0 and np.abs(floor[:, 2]).max() <= l1.config.cell
+    clouds = {}
+    for mount, attached_to in ((L1_MOUNT, "l1"), (L1_UP_MOUNT, "l1_up")):
+        l1 = SimL1(instance_name=f"{mount}/l1", attached_to=attached_to, stamp_tolerance=math.inf)
+        published: list[Any] = []
+        try:
+            _toy_world(l1, mount, monkeypatch)
+            monkeypatch.setattr(l1.lidar, "publish", published.append)
+            asyncio.run(l1._map())
+        finally:
+            l1.stop()
+        clouds[attached_to] = published[-1]
+    cell = l1.config.cell
+    points, _ = clouds["l1"].as_numpy()
+    floor = points[points[:, 2] < cell]
+    assert clouds["l1"].frame_id == f"{DOG}/odom"
+    assert len(floor) > 0 and np.abs(floor[:, 2]).max() <= cell
     assert np.abs(floor[:, :2].mean(axis=0)).max() < 0.5, (
         "the floor is mapped around the odom origin"
     )
-
-
-def test_an_l1_maps_none_of_the_robot_it_rides(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dimos.sim2.l1 import SimL1
-
-    l1 = SimL1(instance_name=f"{L1_UP_MOUNT}/l1", attached_to="l1_up", stamp_tolerance=math.inf)
-    published: list[Any] = []
-    try:
-        _toy_world(l1, L1_UP_MOUNT, monkeypatch)
-        monkeypatch.setattr(l1.lidar, "publish", published.append)
-        asyncio.run(l1._map())
-    finally:
-        l1.stop()
-    points, _ = published[-1].as_numpy()
-    # The head sits on the neck joint 0.3 m ahead of and 0.2 m above the base, which stands 0.3 m up in odom.
-    head = np.array([0.3, 0.0, 0.5])
-    near_the_head = np.linalg.norm(points - head, axis=1) < 2 * l1.config.cell
+    # Looking up, it maps none of the robot: the head sits 0.3 m ahead of and 0.5 m up from the odom origin.
+    points, _ = clouds["l1_up"].as_numpy()
+    near_the_head = np.linalg.norm(points - np.array([0.3, 0.0, 0.5]), axis=1) < 2 * cell
     assert len(points) > 0 and not near_the_head.any(), "the L1 mapped the dog's own head"
-
-
-def test_an_l1_in_a_world_far_off_wall_time_sends_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dimos.sim2.l1 import SimL1
-
-    l1 = SimL1(instance_name="left/l1")
-    monkeypatch.setattr(l1, "_rider_odometry", lambda rider: ("left/odom", np.eye(4)))
-    try:
-        run = _run(l1, "_map", "lidar", monkeypatch)
-    finally:
-        l1.stop()
-    assert run["published"] == []
 
 
 def test_a_reading_off_wall_time_by_more_than_its_tolerance_is_dropped_and_warned_once(
