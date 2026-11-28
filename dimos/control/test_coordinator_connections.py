@@ -525,6 +525,9 @@ def test_tasks_drive_connection_joints_and_see_their_sensors(rig: Callable[..., 
     assert task.last_state.sensors.readings["mock/imu"]["qw"] == 1.0
     assert task.last_state.joints.get_position("mock/joint2") == 0.0
 
+    r.tick()
+    assert task.last_state.joints.joint_held_positions["mock/joint1"] == 0.5
+
 
 def test_commanded_positions_are_published_for_recording(rig: Callable[..., Rig]) -> None:
     r = rig()

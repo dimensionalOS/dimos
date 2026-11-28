@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from pathlib import Path
 
 import numpy as np
@@ -84,14 +85,27 @@ def test_eef_twist_config_requires_exactly_one_target_frame(
         _config(target_frames=target_frames)
 
 
-def _state(t_now: float = 1.0, *, dt: float = 0.01) -> CoordinatorState:
+def _state(
+    t_now: float = 1.0,
+    *,
+    dt: float = 0.01,
+    measured: tuple[float, float] = (0.0, 0.0),
+    held: tuple[float, float] | None = None,
+) -> CoordinatorState:
+    names = ("arm/joint1", "arm/joint2")
     return CoordinatorState(
         joints=JointStateSnapshot(
-            joint_positions={"arm/joint1": 0.0, "arm/joint2": 0.0},
+            joint_positions=dict(zip(names, measured, strict=True)),
+            joint_held_positions={} if held is None else dict(zip(names, held, strict=True)),
         ),
         t_now=t_now,
         dt=dt,
     )
+
+
+def _restarted_at(solver: PinkPoseTargetSolver) -> list[float]:
+    """The joints the task last restarted the solver's command at."""
+    return list(solver.reset.call_args.args[0].position)
 
 
 def _twist(x: float = 0.1) -> TwistStamped:
@@ -127,6 +141,55 @@ def test_zero_twist_reanchors_target_at_measured_pose(mocker: MockerFixture) -> 
     target = solver.step.call_args.args[0]["tool"]
     assert target.position.x == pytest.approx(0.0)
     assert solver.reset.call_count == resets + 1
+
+
+def test_release_restarts_at_the_held_joints_not_the_measured_ones(
+    mocker: MockerFixture,
+) -> None:
+    task, solver = _task(mocker)
+    task.on_ee_twist_command(_twist(), t_now=1.0)
+    task.compute(_state(1.01, measured=(0.02, -0.03), held=(0.0, 0.0)))
+    task.on_ee_twist_command(_twist(0.0), t_now=1.02)
+
+    task.compute(_state(1.03, measured=(0.12, 0.07), held=(0.1, 0.1)))
+
+    assert _restarted_at(solver) == pytest.approx([0.1, 0.1])
+
+
+def test_jog_after_idle_starts_where_another_task_left_the_arm_held(
+    mocker: MockerFixture,
+) -> None:
+    task, solver = _task(mocker)
+    task.on_ee_twist_command(_twist(), t_now=1.0)
+    task.compute(_state(1.01, held=(0.0, 0.0)))
+    task.compute(_state(1.32, held=(0.0, 0.0)))
+    assert not task.is_active()
+
+    task.on_ee_twist_command(_twist(), t_now=2.0)
+    task.compute(_state(2.01, measured=(0.51, 0.49), held=(0.5, 0.5)))
+
+    assert _restarted_at(solver) == pytest.approx([0.5, 0.5])
+
+
+def test_jog_starts_at_the_measured_joints_when_none_is_held(mocker: MockerFixture) -> None:
+    task, solver = _task(mocker)
+    task.on_ee_twist_command(_twist(), t_now=1.0)
+
+    task.compute(_state(1.01, measured=(0.02, -0.03)))
+
+    assert _restarted_at(solver) == pytest.approx([0.02, -0.03])
+
+
+def test_a_hold_far_from_the_arm_is_brought_within_the_tracking_limit(
+    mocker: MockerFixture,
+) -> None:
+    task, solver = _task(mocker)
+    task.on_ee_twist_command(_twist(), t_now=1.0)
+
+    task.compute(_state(1.01, measured=(0.0, 0.0), held=(1.0, -1.0)))
+
+    limit = math.radians(10.0)
+    assert _restarted_at(solver) == pytest.approx([limit, -limit])
 
 
 def test_twist_back_soon_after_an_unreachable_push_moves_at_once(mocker: MockerFixture) -> None:
@@ -172,8 +235,8 @@ def test_task_is_active_only_while_twists_arrive(mocker: MockerFixture) -> None:
     resets = solver.reset.call_count
     task.on_ee_twist_command(_twist(), t_now=2.0)
     assert task.is_active()
-    assert solver.reset.call_count == resets + 1
     assert task.compute(_state(2.01)) is not None
+    assert solver.reset.call_count == resets + 1
     # Re-anchored at the measured pose, not the target held before idling.
     assert solver.frame_poses.call_count == 2
     target = solver.step.call_args.args[0]["tool"]

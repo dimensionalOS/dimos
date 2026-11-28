@@ -370,16 +370,22 @@ class ConnectionSource:
             return [port for port in self._needed if port not in self._heard]
 
     def read_joints(self) -> JointStateSnapshot:
-        """The joints' latest positions, velocities and efforts.
+        """The joints' latest positions, velocities and efforts, and where each is held.
 
         A joint that does not report something is left out of that lookup,
-        rather than given a zero that looks like a real reading.
+        rather than given a zero that looks like a real reading. Held
+        positions are left out while they wait to be taken again from a new
+        reading.
         """
         latest = self._latest
         snapshot = JointStateSnapshot(
             timestamp=self._received_at,
             joint_command_interfaces=self.joint_command_interfaces,
         )
+        with self._lock:
+            holds_dropped = self._resumed or self._restart
+        if not holds_dropped:
+            snapshot.joint_held_positions.update(self._holds)
         for joint in self._joints:
             for interface, into in (
                 (Interface.POSITION, snapshot.joint_positions),

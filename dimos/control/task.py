@@ -88,6 +88,7 @@ class JointStateSnapshot:
         joint_positions: Joint name -> position (radians)
         joint_velocities: Joint name -> velocity (rad/s)
         joint_efforts: Joint name -> effort (Nm)
+        joint_held_positions: Joint name -> position it is held at (radians)
         timestamp: Unix timestamp when state was read
         joint_command_interfaces: Declared interfaces, available even when feedback is stale.
     """
@@ -95,6 +96,7 @@ class JointStateSnapshot:
     joint_positions: dict[JointName, float] = field(default_factory=dict)
     joint_velocities: dict[JointName, float] = field(default_factory=dict)
     joint_efforts: dict[JointName, float] = field(default_factory=dict)
+    joint_held_positions: dict[JointName, float] = field(default_factory=dict)
     timestamp: float = 0.0
     joint_command_interfaces: dict[JointName, frozenset[Interface]] = field(default_factory=dict)
 
