@@ -170,14 +170,79 @@ dimos/robot/manipulators/yourarm/
     └── basic.py         # Coordinator, connection and planner blueprints
 ```
 
+`config.py` declares the robot's model and the `ConnectionConfig` helper that
+`ControlCoordinator` shares:
+
+```python skip
+from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.contract.keys import Interface
+from dimos.control.contract.limits import movable_joints
+from dimos.robot.assets.model import JointDescription, RobotModel
+
+
+def yourarm_model(*, robot: str | None = None) -> RobotModel:
+    """YourArm's model.
+
+    For a real URDF, replace the entire model expression below, including
+    ``.with_added_joints(...)``, with ``RobotModel.from_file(...)``.
+    Keep the naming step.
+    """
+    joints = [f"joint{i}" for i in range(1, 7)]
+    model = RobotModel.from_root_link("base_link", name="yourarm").with_added_joints(
+        *(
+            JointDescription(
+                name=name,
+                type="revolute",
+                parent_link="base_link" if i == 0 else f"link{i}",
+                child_link=f"link{i + 1}",
+                lower=-3.14,
+                upper=3.14,
+                velocity=2.0,
+            )
+            for i, name in enumerate(joints)
+        )
+    )
+    if not robot:
+        return model
+    return model.with_renamed_joints({name: f"{robot}/{name}" for name in joints})
+
+
+def yourarm_coordinator_connection(source: str = "arm") -> ConnectionConfig:
+    """What ``ControlCoordinator`` needs to know about the connection named ``source``."""
+    model = yourarm_model(robot=source)
+    return ConnectionConfig(
+        source=source,
+        model=model,
+        joint_commands={joint.name: (Interface.POSITION,) for joint in movable_joints(model)},
+    )
+```
+
 `connection.py` declares a config and a module. The config says where the arm
 is plugged in and which joints take which commands; the module implements
 four methods. Values are in SI units (rad, m) under canonical
 `<source>/<joint>` names, e.g. `arm/joint1`.
 
 ```python skip
+from pydantic import model_validator
+from reactivex.disposable import Disposable
+from typing_extensions import Self
+
+from dimos.control.connection.connection_module import (
+    ConnectionConfig,
+    ConnectionModule,
+    Values,
+)
+from dimos.control.contract.convert import joint_state_to_values
+from dimos.control.contract.keys import Interface
+from dimos.control.contract.limits import movable_joints
+from dimos.core.core import rpc
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.manipulators.yourarm.config import yourarm_model
+
+
 class YourArmConfig(ConnectionConfig):
-    """Where YourArm is plugged in.
+    """Where YourArm is plugged in, and which joints it drives.
 
     Attributes:
         address: The arm's IP address, e.g. "192.168.1.100".
@@ -185,6 +250,17 @@ class YourArmConfig(ConnectionConfig):
 
     address: str
     source: str = "arm"
+    joint_commands: dict[str, tuple[Interface, ...]] = {}
+
+    @model_validator(mode="after")
+    def _model_from_urdf(self) -> Self:
+        if self.model is None:
+            self.model = yourarm_model(robot=self.source)
+        if not self.joint_commands:
+            self.joint_commands = {
+                joint.name: (Interface.POSITION,) for joint in movable_joints(self.model)
+            }
+        return self
 
 
 class YourArmConnection(ConnectionModule):
@@ -548,8 +624,8 @@ bimanual_task = TaskConfig(
 
 Do not pass planning groups into a control task. Planning groups select planning
 requests; control IK needs only the controlled joints and target frames. A
-single-hand task requires that hand's primary button. A bimanual task requires
-both buttons, and releasing either clears both controller references.
+single-hand task requires that hand's grip button. A bimanual task requires
+both grip buttons, and releasing either clears both controller references.
 
 Before connecting hardware, follow [Pink IK Configuration and Tuning](/docs/capabilities/manipulation/pink_ik_tuning.md)
 to tune task weights, robot-specific objectives, velocity limits, feedback
@@ -560,13 +636,13 @@ tolerance, and command tracking.
 The blueprint registry in `dimos/robot/all_blueprints.py` is **auto-generated** by scanning the codebase for blueprint declarations. After adding your blueprints:
 
 1. Run the generation test to update the registry:
-   ```bash
+   ```bash skip
    pytest dimos/robot/test_all_blueprints_generation.py
    ```
-2. Now you can run your arm via CLI:
-   ```bash
-   dimos run coordinator-yourarm
-   dimos run yourarm-planner        # If you added a planning blueprint
+2. With the arm connected at its IP address, run your blueprints via CLI:
+   ```bash skip
+   dimos run coordinator-yourarm --yourarmconnection.address 192.168.1.100
+   dimos run yourarm-planner --yourarmconnection.address 192.168.1.100  # If you added a planning blueprint
    ```
 
 ## Step 5: Testing
@@ -595,4 +671,4 @@ Files to modify:
 Verification:
 
 - [ ] `pytest dimos/robot/test_all_blueprints_generation.py` passes (regenerates `all_blueprints.py`)
-- [ ] `dimos run coordinator-yourarm` starts successfully
+- [ ] `dimos run coordinator-yourarm --yourarmconnection.address 192.168.1.100` starts on the arm

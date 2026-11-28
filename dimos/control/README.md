@@ -29,14 +29,45 @@ Centralized control system for multi-arm robots with per-joint arbitration.
 
 ## Quick Start
 
+Start a mock coordinator in one terminal (`coordinator-xarm7` connects to a real arm at `--xarmconnection.ip`; pass `--choice arm=mock` without hardware):
+
 ```bash
 # Terminal 1: Run coordinator
 dimos run coordinator-mock          # Single 7-DOF mock arm
 dimos run coordinator-dual-mock     # Dual arms (7+6 DOF)
 dimos run coordinator-xarm7 --xarmconnection.ip 192.168.1.185  # Real arm
+```
 
-# Terminal 2: Control via CLI
-python -m dimos.manipulation.control.coordinator_client
+In a second terminal, connect from Python (or run `dimos shell`, which preloads `app`) and send a trajectory that names the target joints:
+
+```python skip
+import time
+
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.porcelain.dimos import Dimos
+
+app = Dimos.connect()
+try:
+    joints = app.ControlCoordinator.list_joints()
+    q = app.ControlCoordinator.get_joint_positions()
+    start = [q[name] for name in joints]
+    goal = [start[0] + 0.2, *start[1:]]
+    print(
+        app.ControlCoordinator.execute_trajectory(
+            JointTrajectory(
+                joint_names=joints,
+                points=[
+                    TrajectoryPoint(time_from_start=0.0, positions=start),
+                    TrajectoryPoint(time_from_start=1.0, positions=goal),
+                ],
+            )
+        )
+    )
+    time.sleep(1.2)
+    print(app.ControlCoordinator.get_joint_positions())
+finally:
+    app.stop()
 ```
 
 ## Core Concepts

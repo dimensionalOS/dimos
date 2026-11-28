@@ -16,11 +16,11 @@ Start with the OpenYAM hand-teaching tutorial or choose a guide for your task.
 Each blueprint launches the full stack: keyboard UI, mock controller, IK solver, and Drake visualization:
 
 ```bash
-dimos run openarm-planner-coordinator # OpenArm bimanual 2x(7-DOF + gripper)
-dimos run seeed-b601-dm-planner-coordinator # Seeed reBot B601-DM 6-DOF + gripper
+dimos --simulation run openarm-planner-coordinator # OpenArm bimanual 2x(7-DOF + gripper)
+dimos --simulation run seeed-b601-dm-planner-coordinator # Seeed reBot B601-DM 6-DOF + gripper
 dimos run r1pro-planar-preview # R1 Pro mobile bimanual planning preview + fake hardware
 dimos --simulation run keyboard-teleop-piper # Piper 6-DOF + gripper, in MuJoCo
-dimos run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper
+dimos --simulation run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper
 dimos run keyboard-teleop-xarm6 --choice arm=mock  # XArm6 6-DOF, mock arm
 dimos run keyboard-teleop-xarm7 --choice arm=mock  # XArm7 7-DOF, mock arm
 ```

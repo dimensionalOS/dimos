@@ -73,7 +73,12 @@ The Lite6 commands above use a mock when no arm address is configured.
 
 ## Using ManipulationModule
 
+Deploy `ManipulationModule.blueprint(...)` alongside a `ControlCoordinator` so its input streams and trajectory execution connect:
+
 ```python skip
+import time
+
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -81,37 +86,52 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.manipulators.common.mock import coordinator_mock
+from dimos.robot.manipulators.xarm.config import xarm_model
 
+joints = [f"arm/joint{i}" for i in range(1, 8)]
 config = RobotModelConfig(
-    model=RobotModel.from_file("/path/to/xarm7.urdf"),
+    model=xarm_model("xarm7", gripper=None, robot="arm").with_default_joint_acceleration_limit(2.0),
     base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
-    joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
+    joint_names=joints,
     base_link="link_base",
     planning_groups=[
         PlanningGroupDefinition(
             name="arm",
-            joint_names=("joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"),
+            joint_names=tuple(joints),
             base_link="link_base",
             tip_link="link7",
         )
     ],
+    auto_convert_meshes=True,
 )
 
-module = ManipulationModule(
-    model=config,
-    planning_timeout=10.0,
-    visualization={"backend": "meshcat"},  # or "viser"
-    world_backend="drake",                # RoboPlan is the default
-    planner={"backend": "rrt_connect"},    # RoboPlan is the default
-    trajectory_parametrization={"backend": "simple_trapezoid"},
-    kinematics={"backend": "drake_optimization"}, # Or "jacobian" / "pink"
+blueprint = autoconnect(
+    ManipulationModule.blueprint(
+        model=config,
+        planning_timeout=10.0,
+        visualization={"backend": "meshcat"},  # or "viser"
+        world_backend="drake",                # RoboPlan is the default
+        planner={"backend": "rrt_connect"},    # RoboPlan is the default
+        trajectory_parametrization={"backend": "simple_trapezoid"},
+        kinematics={"backend": "drake_optimization"}, # Or "jacobian" / "pink"
+    ),
+    coordinator_mock,
 )
-module.start()
-module.plan_to_joints(
-    {"arm": JointState(position=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])}
-)
-module.execute()  # Sends to coordinator
+
+if __name__ == "__main__":
+    coordinator = blueprint.build()
+    try:
+        module = coordinator.get_instance(ManipulationModule)
+        while module.get_state().groups["arm"].joints is None:
+            time.sleep(0.05)
+        planned = module.plan_to_joints(
+            {"arm": JointState(position=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])}
+        )
+        if planned.succeeded and planned.plan is not None:
+            print(module.execute(plan_id=planned.plan.plan_id))
+    finally:
+        coordinator.stop()
 ```
 
 ## Planar Mobile Bases
