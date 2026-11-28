@@ -60,7 +60,7 @@ from dimos.cli.commands.bake import bake
 from dimos.cli.commands.cameracalibrate import cameracalibrate
 from dimos.cli.commands.data import data_app
 from dimos.cli.commands.docs import docs
-from dimos.cli.commands.global_options import create_dynamic_callback
+from dimos.cli.commands.global_options import GlobalOptionsGroup, create_dynamic_callback
 from dimos.cli.commands.graph import graph
 from dimos.cli.commands.host import host_app
 from dimos.cli.commands.imitation import imitation_app
@@ -77,6 +77,7 @@ from dimos.cli.vqa import app as vqa_app
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 
 main = typer.Typer(
+    cls=GlobalOptionsGroup,
     help="Dimensional CLI",
     no_args_is_help=True,
 )

@@ -117,7 +117,8 @@ Deployment = Literal["python", "docker"]
 
 
 class ModuleConfig(BaseConfig):
-    rpc_transport: type[RPCSpec] = Field(default_factory=rpc_backend)
+    g: GlobalConfig = Field(default_factory=lambda: global_config.model_copy(deep=True))
+    rpc_transport: type[RPCSpec] = Field(default_factory=lambda values: rpc_backend(values["g"]))
     default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
     rpc_timeouts: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_RPC_TIMEOUTS))
     frame_id_prefix: str | None = None
@@ -128,7 +129,6 @@ class ModuleConfig(BaseConfig):
     # Optional RPC alias in a blueprint. The coordinator passes the resolved
     # wire address to the module, independently of its instance and stream names.
     rpc_name: str | None = None
-    g: GlobalConfig = global_config
 
 
 ModuleConfigT = TypeVar("ModuleConfigT", bound=ModuleConfig, default=ModuleConfig)

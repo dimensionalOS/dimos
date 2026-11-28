@@ -84,6 +84,8 @@ web viewer listeners. They bind to all interfaces because the pinned SDK has
 no bind address option. See [Network exposure](/docs/usage/visualization.md#network-exposure)
 for firewall guidance and how to disable the Rerun bridge.
 
+Global settings are validated when a command runs, after its flags are applied. If the shell exports an invalid `N_WORKERS`, `dimos --help` still opens and `dimos --n-workers 3 show-config` displays the corrected value. Without a valid override, the command identifies the setting and exits with status 2.
+
 ## Migrating former global settings
 
 The former global names have been removed. Update CLI arguments, `.env`, JSON `g` sections, and Python `.global_config(...)` calls. Unknown fields in `g` are rejected. For environment variables and `.env` entries, `dimos run` and `dimos rerun-bridge` require migration of old credentials and hardware addresses, naming their replacements. Other former names produce a warning and are ignored. `MCP_TIMEOUT` is ignored without a migration warning; use `dimos mcp call --timeout` for each call.

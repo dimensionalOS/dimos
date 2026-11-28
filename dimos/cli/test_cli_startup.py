@@ -19,9 +19,12 @@ startup time balloons from <2s to >5s, which is a terrible UX.
 """
 
 import os
+from pathlib import Path
 import subprocess
 import sys
 import threading
+
+import pytest
 
 # CI runners are slower — give generous headroom but still catch gross regressions.
 HELP_TIMEOUT_SECONDS = 8
@@ -144,3 +147,123 @@ def test_go2_blueprint_import_does_not_pull_heavy_deps() -> None:
         env=env,
     )
     assert leaked == []
+
+
+@pytest.mark.parametrize(
+    ("setting", "command", "exit_code", "expected"),
+    [
+        ("N_WORKERS=[bad", "--help", 0, "Usage"),
+        ("N_WORKERS=[bad", "mcp status --help", 0, "Usage"),
+        ("N_WORKERS=[bad", "bake --help", 0, "Arguments"),
+        ("N_WORKERS=[bad", "top -- --help", 0, "dtop"),
+        ("N_WORKERS=[bad", "--n-workers 3 show-config", 0, "n_workers: 3"),
+        ("N_WORKERS=[bad", "evals list", 2, "n_workers"),
+        ("N_WORKERS=[bad", "rerun-bridge --n-workers 3 --help", 0, "Blueprint"),
+        ("N_WORKERS=[bad", "run coordinator-basic --help", 0, "Blueprint"),
+        ("G__N_WORKERS=oops", "run coordinator-basic --help", 0, "Blueprint"),
+        ("RECORD=mcap", "run coordinator-basic --help", 0, "Blueprint"),
+        ("N_WORKERS=[bad", "run rerun-bridge-module --n-workers 3 --help", 0, "Blueprint"),
+        ("SIMULATION=mujco", "--simulation dimsim show-config", 0, "simulation: dimsim"),
+    ],
+)
+def test_cli_validates_environment_after_options(
+    setting: str, command: str, exit_code: int, expected: str, tmp_path: Path
+) -> None:
+    key, value = setting.split("=", 1)
+    result = subprocess.run(
+        [sys.executable, "-c", "from dimos.cli.entry import main; main()", *command.split()],
+        env={**os.environ, key: value},
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == exit_code, output
+    assert expected in output
+
+
+def test_rerun_bridge_uses_corrected_worker_count(tmp_path: Path) -> None:
+    code = """
+from dimos.cli.entry import main
+from dimos.core.global_config import global_config
+from dimos.visualization.rerun import bridge
+
+def report(**options):
+    print(global_config.n_workers, options["memory_limit"])
+
+bridge.run_bridge = report
+main()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code, "--n-workers", "4", "rerun-bridge", "--memory-limit", "4GB"],
+        env={**os.environ, "N_WORKERS": "oops"},
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "4 4GB" in result.stdout.splitlines()
+
+
+@pytest.mark.parametrize(("args", "expected"), [([], 2), (["--n-workers", "3"], 0)])
+def test_standalone_bridge_validates_project_environment(tmp_path: Path, args, expected) -> None:
+    (tmp_path / ".env").write_text("N_WORKERS=oops\n")
+    env = dict(os.environ)
+    env.pop("PYTEST_VERSION", None)
+    env.pop("N_WORKERS", None)
+    script = """
+from dimos.cli.entry import main
+from dimos.core.global_config import global_config
+from dimos.visualization.rerun import bridge
+bridge.run_bridge = lambda **options: print(f"bridge workers={global_config.n_workers}")
+main()
+"""
+    # A console script has a real __main__.__file__, unlike python -c.
+    launcher = tmp_path / "bridge_cli.py"
+    launcher.write_text(script)
+    result = subprocess.run(
+        [sys.executable, str(launcher), "rerun-bridge", *args],
+        env=env,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == expected, result.stderr
+    if expected:
+        assert "n_workers" in result.stderr and "Traceback" not in result.stderr
+    else:
+        assert "bridge workers=3" in result.stdout
+
+
+def test_graph_child_uses_effective_global_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Capture the Graphviz input so this checks the real blueprint in its child process.
+    dot = tmp_path / "dot"
+    dot.write_text('#!/bin/sh\ncat > "$3"\n')
+    dot.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+    monkeypatch.setenv("N_WORKERS", "oops")
+    monkeypatch.setenv("ROBOT_IPS", "")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "dimos.cli.dimos",
+            "--n-workers",
+            "3",
+            "--robot-ips",
+            "127.0.0.1",
+            "graph",
+            "unitree-go2-multi",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "GO2Connection" in (tmp_path / "unitree-go2-multi.svg").read_text()

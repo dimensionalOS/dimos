@@ -261,6 +261,7 @@ def run(
             config_path=config_path,
             environ=os.environ,
             global_overrides=global_option_overrides,
+            for_help=show_help,
         )
     except BlueprintConfigError as error:
         typer.echo(f"Error: {error}", err=True)

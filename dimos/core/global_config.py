@@ -18,7 +18,8 @@ Module and subsystem settings belong to their owners' configuration classes.
 """
 
 import os
-from typing import Literal, TypeAlias
+from threading import RLock
+from typing import Any, Literal, TypeAlias
 
 from pydantic import AliasChoices, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -37,6 +38,10 @@ ZenohProcessMode: TypeAlias = Literal["peer", "client"]
 # a developer's .env (ROBOT_IP, SIMULATION, ...); dimos/conftest.py exports the
 # LLM API keys itself.
 ENV_FILE = None if "PYTEST_VERSION" in os.environ else ".env"
+
+
+# Only the shared instance defers reading the environment.
+_pending_config: "GlobalConfig | None" = None
 
 
 class GlobalConfig(BaseSettings):
@@ -127,12 +132,33 @@ class GlobalConfig(BaseSettings):
             raise ValueError("--record-encoding-threads is valid only with --record-engine rust")
         return value
 
+    def __getattribute__(self, name: str) -> Any:
+        if self is _pending_config and name != "update":
+            get_global_config()
+        return super().__getattribute__(name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name not in type(self).model_fields:
+            super().__setattr__(name, value)
+            return
+        with _config_lock:
+            if self is _pending_config:
+                get_global_config(**{name: value})
+            else:
+                super().__setattr__(name, value)
+
     def update(self, **kwargs: object) -> None:
-        """Update config fields in place."""
-        for key, value in kwargs.items():
-            if key not in type(self).model_fields:
-                raise AttributeError(f"GlobalConfig has no field '{key}'")
-            setattr(self, key, value)
+        """Validate and publish overrides as a single update."""
+        with _config_lock:
+            for key in kwargs:
+                if key not in type(self).model_fields:
+                    raise AttributeError(f"GlobalConfig has no field '{key}'")
+            if self is _pending_config:
+                get_global_config(**kwargs)
+            elif kwargs:
+                updated = type(self).model_validate({**self.model_dump(), **kwargs})
+                self.__dict__.update(updated.__dict__)
+                self.model_fields_set.update(kwargs)
 
     @property
     def parsed_robot_ips(self) -> tuple[str, ...]:
@@ -147,7 +173,24 @@ class GlobalConfig(BaseSettings):
         return ips
 
 
-global_config = GlobalConfig()
+# Default arguments and existing imports all hold this same model instance.
+global_config = GlobalConfig.model_construct()
+_pending_config = global_config
+_config_lock = RLock()
+
+
+def get_global_config(**overrides: Any) -> GlobalConfig:
+    """Validate the shared settings in place when their effective values are known."""
+    global _pending_config
+    if _pending_config is not None or overrides:
+        with _config_lock:
+            if _pending_config is not None:
+                validated = GlobalConfig(**overrides)
+                GlobalConfig.__setstate__(global_config, validated.__getstate__())
+                _pending_config = None
+            elif overrides:
+                global_config.update(**overrides)
+    return global_config
 
 
 def require_robot_ips(ips: tuple[str, ...]) -> str | None:
