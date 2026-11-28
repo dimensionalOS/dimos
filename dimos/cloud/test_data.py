@@ -12,23 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+import contextlib
 import errno
 import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+from multiprocessing.pool import ThreadPool
 import os
 from pathlib import Path
 import shutil
+import socket
 import sqlite3
 import tarfile
 import tempfile
+import threading
 import time
 from typing import Any, Literal
+import urllib.error
+import urllib.request
 
 import pytest
+import requests
 import typer
 
 from dimos.cloud import cli, data as cd
+from dimos.cloud.cloud_request import PUT_BLOCK, HttpCloudRequest, UrlExpiredError, _Blocks
 from dimos.cloud.config import CloudConfig
 from dimos.cloud.data import CloudData, DataApi, MultipartBackend
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -46,6 +55,7 @@ class FakeTransport:
         self.epoch = 0  # presign generation; URLs from older epochs are expired
         self.expire_at = 0  # bump epoch before the Nth put, once
         self.previews: dict[str, dict[str, Any]] = {}
+        self.put_lock = threading.Lock()
 
     def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         if path.endswith("/uploads") and method == "POST":
@@ -111,18 +121,19 @@ class FakeTransport:
             "quota": {"state": "ok"},
         }
 
-    def put(self, url: str, body: bytes) -> None:
+    def put(self, url: str, body: bytes | memoryview) -> None:
         path, _, epoch = url.partition("?e=")
         uid, n = path.split("/")
-        if self.expire_at and len(self.parts[uid]) + 1 == self.expire_at:
-            self.expire_at = 0
-            self.epoch += 1
-        if int(epoch) != self.epoch:
-            raise OSError("403 Forbidden: Request has expired")
-        if self.fail_at and len(self.parts[uid]) + 1 == self.fail_at:
-            self.fail_at = 0
-            raise OSError("link dropped")
-        self.parts[uid][int(n)] = body
+        with self.put_lock:
+            if self.expire_at and len(self.parts[uid]) + 1 == self.expire_at:
+                self.expire_at = 0
+                self.epoch += 1
+            if int(epoch) != self.epoch:
+                raise UrlExpiredError("403 Forbidden: Request has expired")
+            if self.fail_at and len(self.parts[uid]) + 1 == self.fail_at:
+                self.fail_at = 0
+                raise OSError("link dropped")
+            self.parts[uid][int(n)] = bytes(body)
 
     def download(
         self, url: str, dst: Path, progress: Callable[[int, int], None] | None = None
@@ -132,6 +143,12 @@ class FakeTransport:
         if progress:
             progress(len(blob) // 2, len(blob))
             progress(len(blob), len(blob))
+
+
+def parts_file(cloud: CloudData, t: FakeTransport, dir_: Path) -> Path:
+    raw = dir_ / "parts.lz4"  # carries the codec suffix, so it uploads as-is
+    raw.write_bytes(os.urandom(cloud.backend.parallel_parts * t.part_size))
+    return raw
 
 
 def recording(dir_: Path, age_s: float = 3600) -> Path:
@@ -153,7 +170,8 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CloudData, Fak
     monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
     monkeypatch.setattr(cd, "DOWNLOADS_DIR", tmp_path)
     monkeypatch.setattr(cd.time, "sleep", lambda s: None)
-    cloud = CloudData(MultipartBackend(DataApi(t), "lz4", None, retries=1))
+    monkeypatch.setattr(cd, "BYTES_PER_CONNECTION", t.part_size)  # a connection per part
+    cloud = CloudData(MultipartBackend(DataApi(t), "lz4", None, retries=1, parallel_parts=4))
     return cloud, t, recording(tmp_path)
 
 
@@ -236,7 +254,9 @@ def test_directory_upload_cleans_up_after_tar_write_failure(
     (tree / "file").write_bytes(b"data")
     staging = tmp_path / "staging"
     transport = FakeTransport()
-    cloud = CloudData(MultipartBackend(DataApi(transport), "", staging, retries=0))
+    cloud = CloudData(
+        MultipartBackend(DataApi(transport), "", staging, retries=0, parallel_parts=4)
+    )
 
     def disk_usage(path: Path) -> Any:
         assert path.is_relative_to(staging)
@@ -257,7 +277,7 @@ def test_directory_upload_cleans_up_after_tar_write_failure(
 def test_resume_sends_only_missing_parts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     t = FakeTransport()
     monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
-    cloud = CloudData(MultipartBackend(DataApi(t), "lz4", None, retries=0))
+    cloud = CloudData(MultipartBackend(DataApi(t), "lz4", None, retries=0, parallel_parts=1))
     db = recording(tmp_path)
     t.fail_at = 2
     with pytest.raises(RuntimeError, match="failed after"):
@@ -267,7 +287,7 @@ def test_resume_sends_only_missing_parts(tmp_path: Path, monkeypatch: pytest.Mon
     sent: list[int] = []
     real_put = t.put
 
-    def spying_put(url: str, body: bytes) -> None:
+    def spying_put(url: str, body: bytes | memoryview) -> None:
         sent.append(int(url.split("/")[1].partition("?")[0]))
         real_put(url, body)
 
@@ -276,14 +296,156 @@ def test_resume_sends_only_missing_parts(tmp_path: Path, monkeypatch: pytest.Mon
     assert before and set(sent).isdisjoint(before)
 
 
-def test_upload_refreshes_expired_part_urls(env: tuple[CloudData, FakeTransport, Path]) -> None:
-    """An upload slower than the presign TTL: URLs from create die mid-run; the
-    client must re-create (same sha256 -> fresh URLs) and finish, not abort."""
+def test_parallel_upload_sends_each_part_once(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
     cloud, t, db = env
-    t.expire_at = 2  # URLs signed at create expire before part 2 lands
+    sent: list[int] = []
+    completed: list[int] = []
+    real_put, real_request = t.put, t.request
+
+    def spying_put(url: str, body: bytes | memoryview) -> None:
+        sent.append(int(url.split("/")[1].partition("?")[0]))
+        real_put(url, body)
+
+    def spying_request(
+        method: str, path: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if path.endswith("/complete"):
+            assert body
+            completed.extend(p["part_number"] for p in body["parts"])
+        return real_request(method, path, body)
+
+    monkeypatch.setattr(t, "put", spying_put)
+    monkeypatch.setattr(t, "request", spying_request)
     r = cloud.upload(db)
+    assert len(sent) > 1 and sorted(sent) == completed == list(range(1, len(sent) + 1))
+    out = cloud.pull(r["upload_id"], dest=db.parent / "back.db")
+    assert out.read_bytes() == db.read_bytes()
+
+
+def test_upload_refreshes_expired_part_urls(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An upload slower than the presign TTL: URLs from create die mid-run. The
+    client must re-create (same sha256 -> fresh URLs) and finish, not abort.
+    The parts in flight hit the expiry together and share one re-create."""
+    cloud, t, db = env
+    cloud.backend.retries = 0
+    raw = parts_file(cloud, t, db.parent)
+    t.expire_at = 1  # URLs signed at create expire before any part lands
+    in_flight = threading.Barrier(cloud.backend.parallel_parts)
+    creates: list[str] = []
+    real_put, real_request = t.put, t.request
+
+    def put_together(url: str, body: bytes | memoryview) -> None:
+        if url.endswith("?e=0"):
+            in_flight.wait(timeout=5)
+        real_put(url, body)
+
+    def counting_request(
+        method: str, path: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if method == "POST" and path.endswith("/uploads"):
+            creates.append(path)
+        return real_request(method, path, body)
+
+    monkeypatch.setattr(t, "put", put_together)
+    monkeypatch.setattr(t, "request", counting_request)
+    r = cloud.upload(raw)
     assert r["state"] == "complete" and not r["skipped"]
     assert t.epoch == 1  # completed on re-signed URLs, not the originals
+    assert len(creates) == 2  # the create, then one re-sign shared by every part
+
+
+def test_resign_finding_the_upload_complete_reports_it_skipped(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The URLs expire and the re-create answers that the upload is already complete,
+    as when another run finished it."""
+    cloud, t, db = env
+    cloud.backend.retries = 0
+    t.expire_at = 1
+    real_request = t.request
+
+    def completing_request(
+        method: str, path: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if method == "POST" and path.endswith("/uploads"):
+            for u in t.uploads.values():
+                u["state"] = "complete"
+        return real_request(method, path, body)
+
+    monkeypatch.setattr(t, "request", completing_request)
+    r = cloud.upload(db)
+    assert r["skipped"] and r["state"] == "complete"
+
+
+def test_failed_part_abandons_the_parts_in_flight(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Part 1 fails for good while the others are mid-send. The upload raises without
+    waiting for them, and when their link drops too they do not try again."""
+    cloud, t, db = env
+    raw = parts_file(cloud, t, db.parent)
+    in_flight = threading.Barrier(cloud.backend.parallel_parts)
+    release = threading.Event()
+    attempts: list[str] = []
+    waited_out: list[str] = []
+
+    def put(url: str, body: bytes | memoryview) -> None:
+        attempts.append(url)
+        if attempts.count(url) == 1:
+            in_flight.wait(timeout=5)
+        if "/1?" not in url and not release.wait(timeout=5):
+            waited_out.append(url)
+        raise OSError("link dropped")
+
+    monkeypatch.setattr(t, "put", put)
+    before = set(threading.enumerate())
+    with pytest.raises(RuntimeError, match="part 1 failed after 2 attempts: link dropped"):
+        cloud.upload(raw)
+    release.set()
+    for worker in set(threading.enumerate()) - before:
+        worker.join(timeout=5)
+    assert not waited_out
+    in_flight_urls = {url for url in attempts if "/1?" not in url}
+    assert len(in_flight_urls) == cloud.backend.parallel_parts - 1
+    assert all(attempts.count(url) == 1 for url in in_flight_urls)
+
+
+def test_empty_file_uploads_with_no_parts(env: tuple[CloudData, FakeTransport, Path]) -> None:
+    cloud, t, db = env
+    empty = db.parent / "empty.lz4"  # carries the codec suffix, so it uploads as-is
+    empty.write_bytes(b"")
+    r = cloud.upload(empty)
+    assert r["state"] == "complete" and t.uploads[r["upload_id"]]["blob"] == b""
+
+
+def test_unset_chunk_size_asks_for_one_part_up_to_the_single_part_limit(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cloud, t, db = env
+    monkeypatch.setattr(cd, "SINGLE_PART_MAX", 2 * t.part_size)
+    monkeypatch.setattr(cd, "DEFAULT_PART_SIZE", t.part_size)
+    at_limit, over_limit = db.parent / "at_limit.lz4", db.parent / "over_limit.lz4"
+    at_limit.write_bytes(os.urandom(2 * t.part_size))
+    over_limit.write_bytes(os.urandom(2 * t.part_size + 1))
+    asked = [t.uploads[cloud.upload(p)["upload_id"]]["part_size"] for p in (at_limit, over_limit)]
+    assert asked == [2 * t.part_size, t.part_size]
+
+
+def test_upload_opens_a_connection_per_share_of_the_file(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Four parts that fill two connections between them go out over two."""
+    cloud, t, db = env
+    raw = parts_file(cloud, t, db.parent)
+    pools: list[int] = []
+    monkeypatch.setattr(cd, "BYTES_PER_CONNECTION", 2 * t.part_size)
+    monkeypatch.setattr(cd, "ThreadPool", lambda n: pools.append(n) or ThreadPool(n))
+    assert cloud.upload(raw)["state"] == "complete"
+    assert pools == [2]
 
 
 @pytest.mark.parametrize(
@@ -381,7 +543,7 @@ def test_pull_with_cross_filesystem_staging(
     monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
     staging = tmp_path / "otherfs"
     staging.mkdir()
-    cloud = CloudData(MultipartBackend(DataApi(t), "lz4", staging, retries=0))
+    cloud = CloudData(MultipartBackend(DataApi(t), "lz4", staging, retries=0, parallel_parts=4))
     db = recording(tmp_path)
     r = cloud.upload(db)
 
@@ -405,7 +567,7 @@ def test_pull_with_cross_filesystem_staging(
 def test_codecs_interchangeable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, algo: str) -> None:
     t = FakeTransport()
     monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
-    cloud = CloudData(MultipartBackend(DataApi(t), algo, None, retries=0))
+    cloud = CloudData(MultipartBackend(DataApi(t), algo, None, retries=0, parallel_parts=4))
     db = recording(tmp_path)
     r = cloud.upload(db)
     assert t.uploads[r["upload_id"]]["content_encoding"] == algo
@@ -461,7 +623,7 @@ def test_pull_refuses_when_disk_is_full(
 
 def test_missing_staging_dir_is_created(tmp_path: Path) -> None:
     where = tmp_path / "scratch" / "deeper"
-    b = MultipartBackend(DataApi(FakeTransport()), "lz4", where, retries=0)
+    b = MultipartBackend(DataApi(FakeTransport()), "lz4", where, retries=0, parallel_parts=4)
     with b._staging(tmp_path):
         assert where.is_dir()
 
@@ -485,10 +647,6 @@ def test_transport_maps_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     names the endpoint and status, and a 401 says how to fix it."""
     from email.message import Message
     import io
-    import urllib.error
-    import urllib.request
-
-    from dimos.cloud.cloud_request import HttpCloudRequest
 
     t = HttpCloudRequest("https://api.test", "dimos_sk_x", timeout=1)
 
@@ -504,6 +662,103 @@ def test_transport_maps_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(urllib.request, "urlopen", raise_http(401))
     with pytest.raises(RuntimeError, match="dimos login"):
         t.request("POST", "/v1/data/uploads", {})
+
+
+class PartStore(BaseHTTPRequestHandler):
+    """Takes part PUTs over HTTP/1.1, which keeps the connection open between them."""
+
+    protocol_version = "HTTP/1.1"
+    server: "PartStoreServer"
+
+    def do_PUT(self) -> None:
+        body = self.rfile.read(int(self.headers["Content-Length"]))
+        self.server.puts.append((self.client_address, self.headers["Transfer-Encoding"], body))
+        reply = b""
+        if "stalled" in self.path:
+            reply = b"<Error><Code>RequestTimeout</Code><Message>Idle connections will be closed.</Message></Error>"
+        self.send_response(403 if "expired" in self.path else 400 if reply else 200)
+        self.send_header("Content-Length", str(len(reply)))
+        self.end_headers()
+        self.wfile.write(reply)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        pass
+
+
+class PartStoreServer(ThreadingHTTPServer):
+    def __init__(self) -> None:
+        super().__init__(("127.0.0.1", 0), PartStore)
+        self.puts: list[tuple[Any, str | None, bytes]] = []
+        self.connections: list[socket.socket] = []
+
+    def get_request(self) -> tuple[socket.socket, Any]:
+        connection, address = super().get_request()
+        self.connections.append(connection)
+        return connection, address
+
+
+@pytest.fixture
+def part_store() -> Iterator[PartStoreServer]:
+    server = PartStoreServer()
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield server
+    server.shutdown()
+    server.server_close()
+    for connection in server.connections:  # ends the threads serving open connections
+        with contextlib.suppress(OSError):
+            connection.shutdown(socket.SHUT_RDWR)
+
+
+def test_put_sends_blocks_over_one_connection(
+    part_store: PartStoreServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The timeout bounds each socket send, so a part sent whole is cut off after that
+    long even while data is moving. A thread's parts all go over one connection."""
+    sent: list[list[int]] = []
+    real_send = requests.Session.send
+
+    def spying_send(
+        session: requests.Session, request: requests.PreparedRequest, **kwargs: Any
+    ) -> requests.Response:
+        body: object = request.body  # the stubs only know of a bytes or str body
+        assert isinstance(body, _Blocks)
+        sent.append([len(block) for block in body])
+        return real_send(session, request, **kwargs)
+
+    monkeypatch.setattr(requests.Session, "send", spying_send)
+    t = HttpCloudRequest("https://api.test", "dimos_sk_x", timeout=5)
+    url = f"http://127.0.0.1:{part_store.server_address[1]}/part"
+    body = os.urandom(2 * PUT_BLOCK + 123)
+    t.put(url, memoryview(body))
+    t.put(url, memoryview(body))
+    assert sent == [[PUT_BLOCK, PUT_BLOCK, 123]] * 2
+    (first, encoding, received), (second, _, _) = part_store.puts
+    assert first == second and encoding is None and received == body
+
+
+def test_put_errors_leave_out_the_signed_url(part_store: PartStoreServer) -> None:
+    """An expired URL raises its own type, and no error names the signed URL."""
+    t = HttpCloudRequest("https://api.test", "dimos_sk_x", timeout=5)
+    signed = "X-Amz-Signature=a403b"
+    with pytest.raises(UrlExpiredError, match="HTTP Error 403: Forbidden") as expired:
+        t.put(f"http://127.0.0.1:{part_store.server_address[1]}/expired?{signed}", b"x")
+    assert signed not in str(expired.value)
+    with socket.socket() as unused:
+        unused.bind(("127.0.0.1", 0))
+        closed_port = unused.getsockname()[1]
+    with pytest.raises(OSError, match="Connection refused") as refused:
+        t.put(f"http://127.0.0.1:{closed_port}/part?{signed}", b"x")
+    assert signed not in str(refused.value)
+
+
+def test_put_errors_keep_the_s3_error_code(part_store: PartStoreServer) -> None:
+    """S3 gives the reason a part failed only in its XML error body."""
+    t = HttpCloudRequest("https://api.test", "dimos_sk_x", timeout=5)
+    with pytest.raises(
+        OSError,
+        match=r"^HTTP Error 400: Bad Request \(RequestTimeout: Idle connections will be closed\.\)$",
+    ):
+        t.put(f"http://127.0.0.1:{part_store.server_address[1]}/stalled", b"x")
 
 
 @pytest.mark.parametrize(

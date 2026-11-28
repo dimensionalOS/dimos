@@ -16,31 +16,58 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 import json
 from pathlib import Path
+import re
 import shutil
+import sys
+import threading
 from typing import Any, Protocol, cast
 import urllib.error
 import urllib.request
+
+import requests
+
+# split each part into blocks of this size
+PUT_BLOCK = 1 << 20
+
+
+class UrlExpiredError(OSError):
+    """A presigned URL was refused with a 403, which is how S3 answers an expired one."""
 
 
 class CloudRequest(Protocol):
     def request(
         self, method: str, path: str, body: dict[str, Any] | None = None
     ) -> dict[str, Any]: ...
-    def put(self, url: str, body: bytes) -> None: ...
+    def put(self, url: str, body: bytes | memoryview) -> None: ...
     def download(
         self, url: str, dst: Path, progress: Callable[[int, int], None] | None = None
     ) -> None: ...
 
 
+class _Blocks:
+    """A PUT body that requests can size and send one block at a time."""
+
+    def __init__(self, body: bytes | memoryview) -> None:
+        self.view = memoryview(body)
+
+    def __len__(self) -> int:
+        return len(self.view)
+
+    def __iter__(self) -> Iterator[memoryview]:
+        # split the body in to blocks so each gets its own timeout
+        return (self.view[i : i + PUT_BLOCK] for i in range(0, len(self.view), PUT_BLOCK))
+
+
 class HttpCloudRequest:
-    """urllib + Bearer key. 401 and network faults surface as RuntimeError with a
-    message the CLI can print verbatim."""
+    """API calls (Bearer key) and downloads go over urllib, presigned PUTs over requests. 401
+    and network faults on API calls surface as RuntimeError the CLI can print verbatim."""
 
     def __init__(self, base_url: str, key: str, timeout: float) -> None:
         self.base_url, self.key, self.timeout = base_url.rstrip("/"), key, timeout
+        self.put_sessions = threading.local()
 
     def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         req = urllib.request.Request(
@@ -59,15 +86,35 @@ class HttpCloudRequest:
         except (urllib.error.URLError, TimeoutError) as e:
             raise RuntimeError(f"{method} {path}: {e}") from e
 
-    def put(self, url: str, body: bytes) -> None:
-        with urllib.request.urlopen(
-            # urllib's default form content-type makes some S3-compatible servers parse the body
-            urllib.request.Request(
-                url, data=body, method="PUT", headers={"Content-Type": "application/octet-stream"}
-            ),
-            timeout=self.timeout,
-        ):
-            pass
+    def put(self, url: str, body: bytes | memoryview) -> None:
+        # one session per thread, so an upload worker sends all its parts over one connection
+        session = getattr(self.put_sessions, "session", None)
+        if session is None:
+            session = self.put_sessions.session = requests.Session()
+            # an auth that does nothing keeps requests from adding netrc credentials
+            session.auth = lambda r: r
+        # an error the caller is already handling would end the chain walked below
+        handled = sys.exc_info()[1]
+        try:
+            r = session.put(
+                url,
+                data=cast("Iterable[bytes]", _Blocks(body)),
+                headers={"Content-Type": "application/octet-stream"},
+                timeout=self.timeout,
+            )
+        except requests.RequestException as e:
+            # requests puts the signed URL in its message, so report the error underneath
+            cause: BaseException = e
+            while cause.__context__ is not None and cause.__context__ is not handled:
+                cause = cause.__context__
+            raise OSError(f"PUT failed: {cause}") from e
+        if not r.ok:
+            # S3 names the reason in an XML body; the rest of it can hold signing details
+            code = re.search(r"<Code>(.*?)</Code>", r.text)
+            message = re.search(r"<Message>(.*?)</Message>", r.text)
+            detail = f" ({code[1]}: {message[1] if message else ''})"[:300] if code else ""
+            error = UrlExpiredError if r.status_code == 403 else OSError
+            raise error(f"HTTP Error {r.status_code}: {r.reason}{detail}")
 
     def download(
         self, url: str, dst: Path, progress: Callable[[int, int], None] | None = None

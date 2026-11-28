@@ -17,12 +17,13 @@ dimos data quota
 
 ## Uploads
 
-Any file type is accepted. Kind is inferred: a mem2 SQLite store (has a `_streams` table) or `.mcap` is a `recording`, anything else a `blob`. Override it with `--kind`. `--robot` tags a robot id, `--chunk` sets the multipart part size in MB.
+Any file type is accepted. Kind is inferred: a mem2 SQLite store (has a `_streams` table) or `.mcap` is a `recording`, anything else a `blob`. Override it with `--kind`. `--robot` tags a robot id, `--chunk` sets the multipart part size in MiB.
 
 `dimos data upload PATH` also accepts a directory and uploads it as a `.tar` archive, including hidden files. `dimos data pull` downloads the `.tar` without unpacking it; extract it yourself with `tar -xf ARCHIVE.tar`.
 
 - Files are compressed before transfer (lz4 by default, see below), sha256-verified server-side, and deduplicated by content: re-uploading the same bytes reports `already uploaded`.
 - Interrupted uploads resume: the server's part listing is the only resume state, so a killed upload re-sends only the missing parts.
+- Parts are sent over several connections at once, one per 32 MiB still to send, up to `upload_parallel_parts`, so a large upload is limited by the uplink and not by one connection. Each connection stays open and sends one part after another.
 - Recordings carry a manifest: the stream list from `_streams` plus the blueprint name parsed from the `<stamp>-<blueprint>` run directory. `dimos data ls` shows both.
 - Discovery modes (no argument, `--since`) skip files modified within the last `upload_quiet_s` seconds (default 30) so a store that is still being written is not shipped mid-run. Naming a path or `latest` is explicit intent and uploads immediately.
 - Compression stages next to the source file (not `/tmp`), with a free-space check first; point `staging_dir` at a bigger partition if needed.
@@ -69,7 +70,8 @@ These fields belong to [`CloudConfig`](/dimos/cloud/config.py). Prefix the upper
 | `url` | `https://api.dimensional.org` | API host |
 | `api_key` | `None` | Overrides the stored `dimos login` credential (`DIMOS_CLOUD_API_KEY` for CI) |
 | `upload_codec` | `lz4` | `lz4`, `gzip`, `bz2`, `xz`, or `""` for no compression |
-| `upload_chunk_mb` | `None` | Multipart part size in MB (`--chunk`); server default 64 |
+| `upload_chunk_mb` | `None` | Multipart part size in MiB (`--chunk`). Unset sends a file up to 64 MiB as one part, else 8 MiB parts |
+| `upload_parallel_parts` | `32` | Most multipart parts sent at once; `1` sends them one after another |
 | `upload_retries` | `2` | Per-part retries for transfers |
 | `upload_quiet_s` | `30.0` | Discovery skips files modified this recently |
 | `http_timeout` | `60.0` | Seconds per API request |

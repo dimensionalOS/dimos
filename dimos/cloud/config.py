@@ -32,6 +32,7 @@ class CloudConfig(BaseSettings):
     upload_codec: str = "lz4"
     upload_retries: int = 2
     upload_chunk_mb: int | None = None
+    upload_parallel_parts: int = Field(default=32, ge=1)
     upload_quiet_s: float = 30.0
     staging_dir: Path | None = None
 

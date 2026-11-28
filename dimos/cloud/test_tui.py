@@ -50,7 +50,7 @@ def _seeded_cloud() -> tuple[CloudData, bytes]:
         sha256="y",
         manifest={"streams": [{"name": "/global_costmap_updates_throttled_full"}]},
     )
-    return CloudData(MultipartBackend(DataApi(t), "", None, retries=1)), blob
+    return CloudData(MultipartBackend(DataApi(t), "", None, retries=1, parallel_parts=4)), blob
 
 
 async def test_browser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

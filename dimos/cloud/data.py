@@ -26,6 +26,9 @@ from datetime import datetime
 import functools
 import hashlib
 import json
+import math
+import mmap
+from multiprocessing.pool import ThreadPool
 import os
 from pathlib import Path
 import shutil
@@ -33,18 +36,39 @@ import sqlite3
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 from typing import Any
 
 from dimos.cli.cloud import api_key
 from dimos.cloud import codecs, preview
-from dimos.cloud.cloud_request import CloudRequest, HttpCloudRequest
+from dimos.cloud.cloud_request import CloudRequest, HttpCloudRequest, UrlExpiredError
 from dimos.cloud.config import CloudConfig
 from dimos.constants import DOWNLOADS_DIR, RECORDINGS_DIR
 from dimos.core.run_registry import blueprint_from_run_id
 from dimos.memory.cli.dataset import open_store
 
 Progress = Callable[[str, int, int], None]  # (phase, done_bytes, total_bytes)
+
+# an upload opens one connection per this much data, since each new one starts slow
+BYTES_PER_CONNECTION = 32 << 20
+# small files don't need multiple connections because that just adds overhead
+SINGLE_PART_MAX = 64 << 20
+# large files reuse many connections and use smaller parts
+DEFAULT_PART_SIZE = 8 << 20
+# long enough to outlast a brief stall on the network or at S3
+RETRY_WAIT_S = 10
+
+
+class _AlreadyCompleteError(Exception):
+    """A re-sign found the upload already complete."""
+
+    def __init__(self, upload: dict[str, Any]) -> None:
+        self.upload = upload
+
+
+class _AbandonedError(Exception):
+    """The upload ended while this part was still being sent."""
 
 
 class DataApi:
@@ -81,7 +105,7 @@ class DataApi:
     def confirm_video(self, upload_id: str) -> dict[str, Any]:
         return self.t.request("POST", f"{self.PREFIX}/uploads/{upload_id}/preview/video")
 
-    def put_part(self, url: str, chunk: bytes) -> None:
+    def put_part(self, url: str, chunk: bytes | memoryview) -> None:
         self.t.put(url, chunk)
 
     def fetch(
@@ -94,22 +118,33 @@ class MultipartBackend:
     """Blob artifacts via /v1/data: presigned multipart to S3, server-side part
     listing as the only resume state, sha256-verified pulls."""
 
-    def __init__(self, api: DataApi, codec_id: str, staging_dir: Path | None, retries: int) -> None:
-        self.api, self.codec_id, self.staging_dir, self.retries = (
+    def __init__(
+        self,
+        api: DataApi,
+        codec_id: str,
+        staging_dir: Path | None,
+        retries: int,
+        parallel_parts: int,
+    ) -> None:
+        self.api, self.codec_id, self.staging_dir, self.retries, self.parallel_parts = (
             api,
             codec_id,
             staging_dir,
             retries,
+            parallel_parts,
         )
 
     def _retry(self, fn: Any, what: str) -> Any:
         for attempt in range(1, self.retries + 2):
             try:
                 return fn()
+            except UrlExpiredError:
+                # only a re-sign helps, which is the caller's to do
+                raise
             except (OSError, RuntimeError) as e:
                 if attempt > self.retries:
                     raise RuntimeError(f"{what} failed after {attempt} attempts: {e}") from e
-                time.sleep(attempt)
+                time.sleep(RETRY_WAIT_S)
 
     def _staging(
         self, beside: Path, *, outside: Path | None = None
@@ -156,6 +191,8 @@ class MultipartBackend:
             else:
                 artifact = path
             size = artifact.stat().st_size
+            if part_size is None:
+                part_size = size if size <= SINGLE_PART_MAX else DEFAULT_PART_SIZE
             spec = dict(
                 filename=artifact.name,
                 size=size,
@@ -178,37 +215,8 @@ class MultipartBackend:
                     else None,
                 }
             uid = create["upload_id"]
-            have = {p["part_number"] for p in self.status(uid)["parts"]}
-            ps = create["part_size"]
-            done = min(len(have) * ps, size)
-            tick("upload", done, size)
-            urls = {p["part_number"]: p["url"] for p in create["part_urls"]}
-            with artifact.open("rb") as f:
-                for n in sorted(urls):
-                    if n in have:
-                        continue
-                    f.seek((n - 1) * ps)
-                    chunk = f.read(ps)
-                    try:
-                        self._retry(
-                            functools.partial(self.api.put_part, urls[n], chunk), f"part {n}"
-                        )
-                    except RuntimeError as e:
-                        if "403" not in str(e):
-                            raise
-                        # Part URLs are presigned at create and share one expiry
-                        # clock; an upload slower than the TTL outlives them and
-                        # S3 answers 403. create is idempotent by sha256 and
-                        # re-signs every URL.
-                        fresh = self.api.create(**spec)
-                        if fresh["state"] == "complete":
-                            return {**fresh, "skipped": True}
-                        urls = {p["part_number"]: p["url"] for p in fresh["part_urls"]}
-                        self._retry(
-                            functools.partial(self.api.put_part, urls[n], chunk), f"part {n}"
-                        )
-                    done += len(chunk)
-                    tick("upload", done, size)
+            if finished := self._send_parts(artifact, spec, create, tick):
+                return {**finished, "skipped": True}
             parts = sorted(self.status(uid)["parts"], key=lambda p: p["part_number"])
             done = self.api.complete(uid, parts)
             return {
@@ -219,6 +227,65 @@ class MultipartBackend:
                 if kind_of(path) == "recording"
                 else None,
             }
+
+    def _send_parts(
+        self, artifact: Path, spec: dict[str, Any], create: dict[str, Any], tick: Progress
+    ) -> dict[str, Any] | None:
+        """Send the parts the server lacks, up to `parallel_parts` at a time. Returns
+        the upload if a re-sign finds it already complete."""
+        size, ps = spec["size"], create["part_size"]
+        uploaded = {p["part_number"] for p in self.status(create["upload_id"])["parts"]}
+        done = sum(min(ps, size - (n - 1) * ps) for n in uploaded)
+        tick("upload", done, size)
+        urls = {p["part_number"]: p["url"] for p in create["part_urls"]}
+        resign_lock = threading.Lock()
+        abandoned = threading.Event()
+        with artifact.open("rb") as f:
+            # Never closed, because an interrupted part may still be sending a slice.
+            # An empty file can't be mapped.
+            data = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) if size else b""
+
+        def send(n: int) -> int:
+            chunk = memoryview(data)[(n - 1) * ps : n * ps]
+
+            def put(url: str) -> None:
+                if abandoned.is_set():
+                    raise _AbandonedError
+                self.api.put_part(url, chunk)
+
+            url = urls[n]
+            try:
+                self._retry(functools.partial(put, url), f"part {n}")
+            except UrlExpiredError:
+                # Part URLs share one presign expiry, so a slow upload gets 403 from S3.
+                # create is idempotent by sha256 and re-signs every URL. The first part
+                # to notice re-signs and the rest reuse its URLs.
+                with resign_lock:
+                    if urls[n] == url and not abandoned.is_set():
+                        fresh = self.api.create(**spec)
+                        if fresh["state"] == "complete":
+                            raise _AlreadyCompleteError(fresh) from None
+                        urls.update({p["part_number"]: p["url"] for p in fresh["part_urls"]})
+                self._retry(functools.partial(put, urls[n]), f"part {n}")
+            return len(chunk)
+
+        missing = [n for n in sorted(urls) if n not in uploaded]
+        # one connection per BYTES_PER_CONNECTION still to send
+        wanted = math.ceil((size - done) / BYTES_PER_CONNECTION)
+        # capped at the configured maximum
+        connections = max(1, min(wanted, self.parallel_parts))
+        try:
+            # daemon workers, so the process can exit immediately instead
+            # of waiting for the parts in flight.
+            with ThreadPool(connections) as pool:
+                for sent in pool.imap_unordered(send, missing):
+                    done += sent
+                    tick("upload", done, size)
+        except _AlreadyCompleteError as e:
+            return e.upload
+        finally:
+            abandoned.set()
+        return None
 
     def _preview(self, upload_id: str, path: Path, tmp: Path) -> str:
         """The console's spatial preview, built here while the recording is at hand.
@@ -313,6 +380,7 @@ class CloudData:
                 self.config.upload_codec,
                 self.config.staging_dir,
                 self.config.upload_retries,
+                self.config.upload_parallel_parts,
             )
         self.backend = backend
 
