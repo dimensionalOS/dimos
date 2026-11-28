@@ -73,6 +73,9 @@ WORKER_SHUTDOWN_TIMEOUT = 10.0
 # Cover both worker waits plus escalation and coordinator cleanup before killing the run.
 RUN_SHUTDOWN_TIMEOUT = 2 * WORKER_SHUTDOWN_TIMEOUT + 10.0
 
+# When a test gives up waiting and fails. Well under pytest's 600 s timeout, which kills the whole worker.
+HUNG_TEST_TIMEOUT = 30.0
+
 DEFAULT_BUILD_NATIVE = False
 
 # streaming compression libraries sharing the open(path, mode) API: id -> (module, suffix)

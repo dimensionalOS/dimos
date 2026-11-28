@@ -156,3 +156,8 @@ def stream_payload_types(store: Store) -> dict[str, type]:
         except (ImportError, AttributeError) as e:
             print(f"  skip {name}: payload type unavailable ({e})")
     return out
+
+
+def resolve_db_path(dataset: str | Path) -> Path:
+    """Resolve a recording, trying the exact input before appending ``.db``."""
+    return resolve_dataset(dataset, suffix=".db")
