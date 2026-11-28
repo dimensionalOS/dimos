@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, TypedDict
 
 from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
