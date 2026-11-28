@@ -30,14 +30,12 @@ from dimos.core.stream import In
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.assets.model import UsdModel
-from dimos.sim2.assets.logistics import Logistics
-from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.imu import SimImu
 from dimos.sim2.l1 import SimL1
 from dimos.sim2.livox import LivoxSim
 from dimos.sim2.mujoco.sim import MujocoSim
-from dimos.sim2.sim import on_mount, sim
-from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.scene import Logistics, toy_robot
+from dimos.sim2.sim import SimulatedRobot, on_mount, sim
 
 pytest.importorskip("pxr")
 

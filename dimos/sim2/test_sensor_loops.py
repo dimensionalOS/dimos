@@ -319,11 +319,15 @@ def _toy_world(sensor: Any, mount: str, monkeypatch: pytest.MonkeyPatch) -> Any:
 
     from dimos.robot.assets.model import UsdModel
     from dimos.robot.assets.usd_utils.layers import usd_under_namespace
-    from dimos.sim2.assets.toy import toy_robot
-    from dimos.sim2.sim import compose_usds, fetched_usd
-    from dimos.sim2.spec import ODOM_FRAME, ROBOT
-    from dimos.sim2.usd_layer import layer_file
-    from dimos.sim2.world_observations import WorldMirror, WorldWriter
+    from dimos.sim2.scene import layer_file, toy_robot
+    from dimos.sim2.sim import (
+        ODOM_FRAME,
+        ROBOT,
+        WorldMirror,
+        WorldWriter,
+        compose_usds,
+        fetched_usd,
+    )
 
     scene = Path(__file__).parent / "mujoco" / "assets" / "scene.usda"
     room = UsdModel.from_file(scene).with_frames(
@@ -433,12 +437,12 @@ def test_an_l1_in_a_world_far_off_wall_time_sends_nothing(monkeypatch: pytest.Mo
 def test_a_reading_off_wall_time_by_more_than_its_tolerance_is_dropped_and_warned_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dimos.sim2 import sensor
+    from dimos.sim2 import sim
     from dimos.sim2.imu import SimImu
 
     imu = SimImu(instance_name="dog/imu/simimu", attached_to="imu")
     warned: list[str] = []
-    monkeypatch.setattr(sensor.logger, "warning", warned.append)
+    monkeypatch.setattr(sim.logger, "warning", warned.append)
     period = 1 / imu.config.rate_hz
     try:
         now = time.time()

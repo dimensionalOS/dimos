@@ -25,11 +25,8 @@ from dimos_lcm.world_msgs import WorldObservations
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.robot.assets.model import UsdModel
-from dimos.sim2.actions import Action, JointCommand
 from dimos.sim2.mujoco.backend import MujocoBackend
-from dimos.sim2.sim import SimWorld
-from dimos.sim2.spec import SimulatedRobot
-from dimos.sim2.world_observations import merged
+from dimos.sim2.sim import Action, JointCommand, SimulatedRobot, SimWorld, merged
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

@@ -28,7 +28,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.sim2.mujoco.renders import RenderQuality
 from dimos.sim2.mujoco.sensor_mount import SensorMount
 from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids
-from dimos.sim2.sensor import SimSensor
+from dimos.sim2.sim import SimSensor
 
 
 class ViewSensor(SimSensor):

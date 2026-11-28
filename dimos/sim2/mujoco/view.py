@@ -40,7 +40,7 @@ from dimos.sim2.mujoco.ray_scene import RayScene
 from dimos.sim2.mujoco.renders import RenderProcess, RenderQuality, Renders
 from dimos.sim2.mujoco.sensor_mount import SensorMount, mount_sensor
 from dimos.sim2.mujoco.world import USD_SUFFIXES, compile_world
-from dimos.sim2.world_observations import WORLD, Entity, WorldMirror
+from dimos.sim2.sim import WORLD, Entity, WorldMirror
 
 # Standard gravity in world axes (z up): an accelerometer at rest reads its negative.
 _GRAVITY = np.array([0.0, 0.0, -9.81])
