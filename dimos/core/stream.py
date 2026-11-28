@@ -94,6 +94,8 @@ class Transport(Resource, ObservableMixin[T]):
     # config class; the blueprint config flow picks them up automatically. None
     # means "no overridable config" (LCM transports).
     _config_cls: type[BaseModel] | None = None
+    # Some transports also accept an explicitly selected provider without a default.
+    _explicit_config_type: type[BaseModel] | None = None
 
     # used by any local publishing stream (Out/IO); selfstream is None when
     # publishing without a source stream
@@ -146,7 +148,10 @@ class TransportSpec:
         """The selected config schema for transports that accept runtime overrides."""
         default = self.cls._config_cls
         config = self.kwargs.get("config")
-        if default is not None and isinstance(config, BaseModel):
+        explicit = self.cls._explicit_config_type
+        if isinstance(config, BaseModel) and (
+            default is not None or (explicit and isinstance(config, explicit))
+        ):
             return type(config)
         return default
 

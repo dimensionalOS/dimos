@@ -26,18 +26,17 @@ from dimos.core.coordination.blueprints import (
     Blueprint,
     BlueprintAtom,
     HostedPlacement,
+    transport_config_name,
 )
 from dimos.core.coordination.module_coordinator import (
     resolve_module_refs,
     stream_name_types,
     verify_no_name_conflicts,
 )
+from dimos.core.stream import TransportSpec
 from dimos.hosted.fragment import HostFragment, PythonFragmentPayload, RemoteModuleReference
 from dimos.hosted.protocol import HostDescriptor, run_module_rpc_name
 from dimos.hosted.tags import missing
-
-# Config sections every fragment keeps; the others are module names.
-_SHARED_SECTIONS = ("g", "transports")
 
 
 def compile_fragments(
@@ -52,7 +51,7 @@ def compile_fragments(
     """One immutable fragment per Host in ``assignments`` (module name -> Host ID).
 
     ``overrides`` is the blueprint root's explicit configuration by section; each fragment
-    gets its own modules' sections plus the shared ones.
+    gets global settings and only the module and transport sections it uses.
     """
     if not run_id:
         raise ValueError("run_id must not be empty")
@@ -100,8 +99,21 @@ def compile_fragments(
         local_overrides = {
             section: values
             for section, values in (overrides or {}).items()
-            if section in local_names or section in _SHARED_SECTIONS
+            if section == "g" or section in local_names
         }
+        if overrides and "transports" in overrides:
+            providers = {
+                transport_config_name(spec.config_cls)
+                for spec in local_blueprint.active_transport_map.values()
+                if isinstance(spec, TransportSpec) and spec.config_cls is not None
+            }
+            transport_values = {
+                name: values
+                for name, values in overrides["transports"].items()
+                if name in providers
+            }
+            if transport_values:
+                local_overrides["transports"] = transport_values
         fragments[host_id] = HostFragment.create(
             run_id=run_id,
             host_id=host_id,

@@ -62,6 +62,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.encode.cbor import decode, encode
+from dimos.protocol.pubsub.impl.webrtc.providers.cloudflare import CloudflareConfig
 import dimos.robot.get_all_blueprints as resolver
 from dimos.spec.utils import Spec
 
@@ -1421,18 +1422,42 @@ def test_disabled_hosted_module_releases_its_broker_key_requirement() -> None:
 
 def test_hosted_transport_uses_the_executing_hosts_environment() -> None:
     bp = (
-        SourceModule.blueprint()
-        .transports({("color_image", Data1): CloudflareTransport.spec("state_reliable_back")})
-        .hosted(host="robot")
+        autoconnect(
+            SourceModule.blueprint().hosted(host="robot"),
+            TargetModule.blueprint().hosted(host="desk"),
+        )
+        .solidify()
+        .transports(
+            {
+                ("color_image", Data1): CloudflareTransport.spec("state_reliable_back"),
+                ("remapped_data", Data1): CloudflareTransport.spec(
+                    "events",
+                    config=CloudflareConfig(app_id="dummy-app", app_secret="dummy-default"),
+                ),
+            }
+        )
     )
-    root = BlueprintConfigParser(bp).parse(["--transports.broker.robot-name", "camera"], environ={})
-    fragment = compile_fragments(
+    root = BlueprintConfigParser(bp).parse(
+        [
+            "--transports.broker.robot-name",
+            "camera",
+            "--transports.cloudflare.app-secret",
+            "dummy-override",
+        ],
+        environ={},
+    )
+    fragments = compile_fragments(
         bp,
-        {SourceModule.name: "robot"},
+        {SourceModule.name: "robot", TargetModule.name: "desk"},
         run_id="run-1",
         revision="rev",
         overrides=root.file_and_cli,
-    )["robot"].load_payload()
+    )
+    desk = fragments["desk"].load_payload()
+    assert desk.overrides["transports"] == {"cloudflare": {"app_secret": "dummy-override"}}
+    BlueprintConfigParser(desk.blueprint).parse(environ={}, overrides=desk.overrides)
+    fragment = fragments["robot"].load_payload()
+    assert fragment.overrides["transports"] == {"broker": {"robot_name": "camera"}}
     parser = BlueprintConfigParser(fragment.blueprint)
     with pytest.raises(BlueprintConfigError, match="api_key"):
         parser.parse(environ={}, overrides=fragment.overrides)

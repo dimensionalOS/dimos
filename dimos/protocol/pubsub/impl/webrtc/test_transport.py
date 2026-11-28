@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import struct
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 import pytest
@@ -31,7 +31,9 @@ from dimos.core.transport import (
     CloudflareAudioTransport,
     CloudflareTransport,
     CloudflareVideoTransport,
+    WebRTCAudioTransport,
     WebRTCTransport,
+    WebRTCVideoTransport,
 )
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.protocol.encode.cbor import decode, encode
@@ -47,7 +49,7 @@ from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
 
-    from dimos.core.stream import TransportSpec
+    from dimos.core.stream import Transport, TransportSpec
 
 
 # ─── Mock provider ───────────────────────────────────────────────────
@@ -392,10 +394,21 @@ def test_direct_cloudflare_credentials(field: str) -> None:
         CloudflareConfig.model_validate({**values, field: "  "})
 
 
-def test_selected_direct_provider_uses_its_own_credentials() -> None:
+@pytest.mark.parametrize(
+    "transport,args",
+    [
+        (CloudflareTransport, ("events",)),
+        (WebRTCTransport, ("events",)),
+        (WebRTCAudioTransport, ()),
+        (WebRTCVideoTransport, ()),
+    ],
+)
+def test_selected_direct_provider_uses_its_own_credentials(
+    transport: type[Transport[Any]], args: tuple[str, ...]
+) -> None:
     config = CloudflareConfig(app_id="fixture-app", app_secret="fixture-secret")
     bp = Blueprint(blueprints=()).transports(
-        {("events", bytes): CloudflareTransport.spec("events", config=config)}
+        {("events", bytes): transport.spec(*args, config=config)}
     )
     parser = BlueprintConfigParser(bp)
     assert config.app_secret not in parser.format_help()
