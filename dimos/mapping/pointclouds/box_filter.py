@@ -72,6 +72,22 @@ def inside_boxes(
     return inside
 
 
+def check_box(name: str, size: Vector3) -> None:
+    """Raise ValueError for an empty name, or an edge that is not positive and finite."""
+    if not name:
+        raise ValueError("Box name must not be empty")
+    if any(edge <= 0.0 or not math.isfinite(edge) for edge in size.to_tuple()):
+        raise ValueError("Box size must have three positive, finite edges")
+
+
+def kept(cloud: PointCloud2, keep: NDArray[np.bool_]) -> PointCloud2:
+    """The cloud with only the points where ``keep`` is True, every field and its stamp kept."""
+    filtered = PointCloud2(frame_id=cloud.frame_id, ts=cloud.ts, seq=cloud.seq)
+    for name, values in cloud.pointcloud_tensor.point.items():
+        filtered.pointcloud_tensor.point[name] = values[keep]
+    return filtered
+
+
 class PointCloudBoxFilterConfig(ModuleConfig):
     # Points farther than this (metres) from keep_within_frame's origin are left out.
     keep_within_m: float | None = None
@@ -120,10 +136,7 @@ class PointCloudBoxFilter(Module):
             size: Full edge lengths along the box's own axes, metres.
             frame_id: The frame the box is fixed in, or None for the cloud's frame.
         """
-        if not name:
-            raise ValueError("Box name must not be empty")
-        if any(edge <= 0.0 or not math.isfinite(edge) for edge in size.to_tuple()):
-            raise ValueError("Box size must have three positive, finite edges")
+        check_box(name, size)
         with self._lock:
             self._boxes[name] = Box(pose, size, frame_id)
             self._resend()
@@ -157,10 +170,7 @@ class PointCloudBoxFilter(Module):
         if center is not None and self.config.keep_within_m is not None:
             offsets = np.asarray(points, dtype=np.float64) - center
             keep &= np.einsum("ij,ij->i", offsets, offsets) <= self.config.keep_within_m**2
-        filtered = PointCloud2(frame_id=cloud.frame_id, ts=cloud.ts, seq=cloud.seq)
-        for name, values in cloud.pointcloud_tensor.point.items():
-            filtered.pointcloud_tensor.point[name] = values[keep]
-        return filtered
+        return kept(cloud, keep)
 
     def _workspace_center(self, cloud: PointCloud2) -> NDArray[np.float64] | None:
         """The workspace's centre in the cloud's frame; None keeps every distance."""
