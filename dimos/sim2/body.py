@@ -41,11 +41,14 @@ from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.frames import usd_frame_pose
 from dimos.robot.assets.usd_utils.lfs import pull_model_assets
 from dimos.robot.assets.usd_utils.pxr import Prim, layer_from, load_pxr
-from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.mujoco.drives import usd_drives
-from dimos.sim2.sim import SimulatedWorldSpec
-from dimos.sim2.spec import SimulatedRobot
-from dimos.sim2.world_observations import WorldMirror
+from dimos.sim2.sim import (
+    JointCommand,
+    SimulatedRobot,
+    SimulatedWorldSpec,
+    WorldMirror,
+    world_action,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

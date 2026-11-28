@@ -28,8 +28,8 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.sim2.mujoco.renders import RenderQuality
 from dimos.sim2.mujoco.sensor_mount import SensorMount
-from dimos.sim2.sensor import SimSensorConfig
 from dimos.sim2.sensor_usd import OPTICAL_FRAME, camera_usd
+from dimos.sim2.sim import SimSensorConfig
 from dimos.sim2.view_sensor import ViewSensor
 from dimos.spec import perception
 

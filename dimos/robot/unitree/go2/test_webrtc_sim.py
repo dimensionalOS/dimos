@@ -37,13 +37,10 @@ from dimos.robot.unitree.go2.webrtc_sim import (
     Go2WebRtcSimConfig,
     go2_usd,
 )
-from dimos.sim2.actions import JointCommand
-from dimos.sim2.assets.logistics import LOGISTICS
 from dimos.sim2.mujoco.backend import MujocoBackend
 from dimos.sim2.mujoco.drives import usd_drives
-from dimos.sim2.scene import scene_usd
-from dimos.sim2.sim import compose_usds
-from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.scene import LOGISTICS, scene_usd
+from dimos.sim2.sim import JointCommand, SimulatedRobot, compose_usds
 
 pytest.importorskip("pxr")
 

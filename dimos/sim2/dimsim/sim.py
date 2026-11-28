@@ -23,8 +23,7 @@ from dimos.msgs.files.File import File
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.assets.model import UsdModel
 from dimos.sim2.dimsim.backend import DimSimBackend
-from dimos.sim2.sim import SimWorld
-from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.sim import SimulatedRobot, SimWorld
 from dimos.sim2.world_files import WorldFiles
 
 

@@ -20,8 +20,8 @@ from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.robot.assets.model import UsdModel
 from dimos.sim2.mujoco.sensor_mount import SensorMount
-from dimos.sim2.sensor import SimSensorConfig
 from dimos.sim2.sensor_usd import frame_usd
+from dimos.sim2.sim import SimSensorConfig
 from dimos.sim2.view_sensor import ViewSensor, imu_message
 
 

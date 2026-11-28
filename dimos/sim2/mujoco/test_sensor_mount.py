@@ -20,12 +20,10 @@ import pytest
 
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.layers import usd_under_namespace
-from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.mujoco.sensor_mount import SensorMount, mount_sensor
 from dimos.sim2.mujoco.world import compile_world
-from dimos.sim2.sim import compose_usds
-from dimos.sim2.spec import SimulatedRobot
-from dimos.sim2.usd_layer import usd_layer
+from dimos.sim2.scene import toy_robot, usd_layer
+from dimos.sim2.sim import SimulatedRobot, compose_usds
 
 SCENE = Path(__file__).parent / "assets" / "scene.usda"
 

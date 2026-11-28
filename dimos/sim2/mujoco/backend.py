@@ -22,13 +22,20 @@ from dimos_lcm.world_msgs import WorldObservations
 import mujoco
 import numpy as np
 
-from dimos.sim2.actions import Action, CborKeyValueCommand, JointCommand
 from dimos.sim2.mujoco.drives import usd_with_mjc_servos
 from dimos.sim2.mujoco.names import resolve, resolved, short_names
 from dimos.sim2.mujoco.world import compile_world
-from dimos.sim2.spec import ODOM_FRAME, ROBOT, SimulatedRobot
-from dimos.sim2.usd_layer import usd_layer
-from dimos.sim2.world_observations import REFUSED, WorldWriter
+from dimos.sim2.scene import usd_layer
+from dimos.sim2.sim import (
+    ODOM_FRAME,
+    REFUSED,
+    ROBOT,
+    Action,
+    CborKeyValueCommand,
+    JointCommand,
+    SimulatedRobot,
+    WorldWriter,
+)
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
