@@ -119,8 +119,6 @@ class SimBodyConfig(HardwareModuleConfig):
     kd: tuple[float, ...] | None = None
     # The IMU's site on its root link (a prim path of its USD), or None for a body without one.
     imu_site: str | None = None
-    # How often it reads its joints and IMU out of the world.
-    publish_rate_hz: float = 500.0
     # How often its odometry and moving joints go out on tf.
     tf_rate_hz: float = 50.0
     # The frame its odometry is in, under its namespace, which its mount holds; an OdomTf beside it publishes odom -> body.
@@ -229,11 +227,16 @@ class SimBody(HardwareModule):
         super().start()
 
     async def main(self) -> AsyncIterator[None]:
+        imu_in_body = (
+            None
+            if self.config.imu_site is None
+            else await asyncio.to_thread(lambda: self._imu_in_body)
+        )
+        # Read on every frame of the world as it comes, so no timer (which macOS lets a background process oversleep) makes a reading late.
+        self._world.on_frame(lambda _: self._publish_reading(imu_in_body))
         self._world.subscribe(self.world_observations, self.world.snapshot)
-        reading = asyncio.create_task(self._read())
         posing = asyncio.create_task(self._pose())
         yield
-        reading.cancel()
         posing.cancel()
 
     async def handle_position_command(self, command: JointState) -> None:
@@ -263,17 +266,8 @@ class SimBody(HardwareModule):
             )
         )
 
-    async def _read(self) -> None:
-        imu_in_body = (
-            None
-            if self.config.imu_site is None
-            else await asyncio.to_thread(lambda: self._imu_in_body)
-        )
-        async for _ in self._world.ticks(self.config.publish_rate_hz):
-            self._publish_reading(imu_in_body)
-
     def _publish_reading(self, imu_in_body: NDArray[np.float64] | None) -> None:
-        """Its joint states, and what its IMU reads, from the world as it is now."""
+        """Its joint states, and what its IMU reads, from the world as its latest frame has it."""
         world = self._world
         with world.lock:
             names, rows = world.joints(self.namespace)
