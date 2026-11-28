@@ -20,6 +20,8 @@ import uuid
 import numpy as np
 import pytest
 
+pytest.importorskip("pxr")
+
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
@@ -38,8 +40,6 @@ from dimos.sim2.livox import LivoxSim
 from dimos.sim2.mujoco.sim import MujocoSim
 from dimos.sim2.scene import Logistics, toy_robot
 from dimos.sim2.sim import SimulatedRobot, on_mount, sim
-
-pytest.importorskip("pxr")
 
 L1_PERIOD = 0.13
 RATES = {
