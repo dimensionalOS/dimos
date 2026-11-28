@@ -32,9 +32,8 @@ from dimos.sim2.camera import SimCamera
 from dimos.sim2.livox import LivoxSim
 from dimos.sim2.mujoco.sim import MujocoSim
 from dimos.sim2.odom_tf import OdomTf
-from dimos.sim2.scene import SpawnMounts, scene_usd
+from dimos.sim2.scene import SpawnMounts, scene_usd, spawn_frames_in_file
 from dimos.sim2.sim import on_mount, sim
-from dimos.sim2.spawn import spawn_frames_in_file
 from dimos.simulation.scenes.office_555.room import SCENE, Office555, Office555Config
 
 # A room camera (x forward) off the spots' corner, turned to see all three apart and 22 degrees down at their waists.
