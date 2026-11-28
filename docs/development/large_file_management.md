@@ -203,7 +203,7 @@ When running from:
 
 ### A Data Directory Without a Repository
 
-Set `DIMOS_DATA_DIR` to the unpacked assets shipped with an installation. dimOS can look up those assets offline. Individual blueprints can have additional dependencies. For example, Alfred obtains its OpenArm description from a separate Git asset cache.
+Set `DIMOS_DATA_DIR` to the unpacked assets shipped with an installation. dimOS can look up those assets offline. Individual blueprints can have additional dependencies. For example, Alfred obtains its OpenArm description from a separate Git asset cache. An installation can ship those descriptions too, see [`DIMOS_ROBOT_ASSETS_DIR`](/dimos/robot/assets/README.md#descriptions-shipped-with-an-installation).
 
 ```sh skip
 DIMOS_DATA_DIR=/opt/dimos/data dimos --simulation run unitree-go2

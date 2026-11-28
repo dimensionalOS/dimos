@@ -1,0 +1,9 @@
+url	ref	licence	robots
+https://github.com/xArm-Developer/xarm_ros2	5bb832f72ca665f1236a9d8ed1c3a82f308db489	BSD-3-Clause	xArm 6 and xArm 7. Keep the UFACTORY LICENSE file of the checkout.
+https://github.com/agilexrobotics/agx_arm_urdf	f6642ce0d7872c686f29c99e9e10cd23d1d49313	MIT	Piper. Keep the LICENSE file of the checkout.
+https://github.com/enactic/openarm_description	1fba2cbc05001f05b4514120b70130b4ac06f409	Apache-2.0	OpenArm, and the arms of Alfred. Keep LICENSE.txt of the checkout.
+https://github.com/adob/a750_description	3e4b7fe6ea0550e1f13d3dbd62f8d800ef348b14	MIT	A750. Keep the LICENSE file of the checkout.
+https://github.com/Seeed-Projects/reBot-DevArm	8494bdfa91f4e3712bb7e7743e7bbcc63b01b9af	CERN-OHL-W-2.0 (hardware), Apache-2.0 (software)	Seeed B601 DM. The README says which licence covers which part. Keep the LICENSE file of the checkout.
+https://github.com/userguide-galaxea/URDF	2e5d31e1784481a34d178006c0d0e18e0a84a82a	licence unspecified	Galaxea A1Z and R1 Pro. The repository has no licence file.
+https://github.com/makermods-robotics/metal-python-ros	bccf3c82a21453a7b1784a94966456e16ff0f008	licence unspecified	Makermods Metal. The repository has no licence file. The package.xml of metal_description says "Business".
+https://github.com/dimensionalOS/dim_description	f9853344bbc9fa00aade6ff3ffb7db6532d185e1	licence unspecified	OpenYAM. A Dimensional repository without a licence file.
