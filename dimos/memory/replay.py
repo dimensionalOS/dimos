@@ -22,7 +22,6 @@ order, at its recorded offset from the first frame, and none is dropped.
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
 import heapq
 from pathlib import Path
 import threading
@@ -220,25 +219,10 @@ class ReplayStream(Generic[T]):
         return self._decode(obs)
 
 
-@dataclass(frozen=True)
-class _Frame:
-    ts: float  # recording seconds, plus the loop passes before this one
-    name: str
-    value: Any
-
-
-@dataclass(frozen=True)
-class _Ended:
-    name: str
-
-
-_END = object()  # a stream's last row has been read
-
-
-@dataclass(frozen=True)
-class _Failed:
-    name: str  # the stream that could not be read or decoded
-    error: Exception
+# A buffered item is (ts, stream name, value): ts is recording seconds plus the loop passes
+# before it, and value is a decoded frame or one of these.
+_END = object()  # the stream has no more frames
+_FAILED = object()  # the stream could not be read or decoded; Playback._error says why
 
 
 class _Buffer:
@@ -246,11 +230,11 @@ class _Buffer:
 
     def __init__(self, size: int, stopped: threading.Event) -> None:
         self._size = size
-        self._items: deque[_Frame | _Ended | _Failed] = deque()
+        self._items: deque[tuple[float, str, Any]] = deque()
         self._stopped = stopped
         self._changed = threading.Condition()
 
-    def put(self, item: _Frame | _Ended | _Failed) -> bool:
+    def put(self, item: tuple[float, str, Any]) -> bool:
         """False once stopped, without adding *item*."""
         with self._changed:
             self._changed.wait_for(lambda: len(self._items) < self._size or self._stopped.is_set())
@@ -260,7 +244,7 @@ class _Buffer:
             self._changed.notify_all()
             return True
 
-    def get(self) -> _Frame | _Ended | _Failed | None:
+    def get(self) -> tuple[float, str, Any] | None:
         """None once stopped."""
         with self._changed:
             self._changed.wait_for(lambda: self._items or self._stopped.is_set())
@@ -315,6 +299,7 @@ class Playback:
         self._read_done = threading.Event()
         self._loaded = threading.Event()
         self._publisher: threading.Thread | None = None
+        self._error: Exception | None = None
 
     def add(self, stream: ReplayStream[T]) -> Observable[T]:
         """Put *stream* on the timeline. Its frames complete when it ends (never, with ``loop``)."""
@@ -367,7 +352,7 @@ class Playback:
             # A looping stream never ends on its own: end them all once the recording runs dry.
             if self._read_passes() and self._replay.config.loop:
                 for name in self._streams:
-                    if not self._buffer.put(_Ended(name)):
+                    if not self._buffer.put((0.0, name, _END)):
                         return
         finally:
             self._read_done.set()
@@ -381,11 +366,11 @@ class Playback:
             first = last = None
             try:
                 for ts, name, obs in heapq.merge(*rows, key=lambda row: row[0]):
-                    if isinstance(obs, _Failed):
-                        self._buffer.put(obs)
+                    if obs is _FAILED:
+                        self._buffer.put((ts, name, _FAILED))
                         return False
                     if obs is _END:
-                        if not self._buffer.put(_Ended(name)):
+                        if not self._buffer.put((ts, name, _END)):
                             return False
                         continue
                     first = ts if first is None else first
@@ -393,9 +378,10 @@ class Playback:
                     try:
                         value = self._streams[name]._decode(obs)
                     except Exception as error:
-                        self._buffer.put(_Failed(name, error))
+                        self._error = error
+                        self._buffer.put((ts, name, _FAILED))
                         return False
-                    if not self._buffer.put(_Frame(ts + offset, name, value)):
+                    if not self._buffer.put((ts + offset, name, value)):
                         return False
             finally:
                 for stream_rows in rows:
@@ -420,7 +406,8 @@ class Playback:
                 if close is not None:
                     close()
         except Exception as error:
-            yield float("-inf"), name, _Failed(name, error)
+            self._error = error
+            yield float("-inf"), name, _FAILED
             return
         if not self._replay.config.loop:
             yield ts, name, _END
@@ -435,16 +422,17 @@ class Playback:
             item = self._buffer.get()
             if item is None:
                 return
-            if isinstance(item, _Failed):
-                self._fail(item, ended)
+            ts, name, value = item
+            if value is _FAILED:
+                self._fail(name, ended)
                 return
-            if isinstance(item, _Ended):
-                ended.add(item.name)
-                self._deliver(item.name, self._subjects[item.name].on_completed)
+            if value is _END:
+                ended.add(name)
+                self._deliver(name, self._subjects[name].on_completed)
                 continue
             if first_ts is None:
-                first_ts = item.ts
-            due = wall_t0 + (item.ts - first_ts) / speed
+                first_ts = ts
+            due = wall_t0 + (ts - first_ts) / speed
             early = due - time.monotonic()
             if early > 0:
                 behind = False  # back on schedule
@@ -452,24 +440,19 @@ class Playback:
                     return
             elif -early > lag_warning and not behind:
                 behind = True
-                logger.warning(
-                    "Replay is behind schedule", lag_s=round(-early, 3), stream=item.name
-                )
-            self._deliver(item.name, self._subjects[item.name].on_next, item.value)
+                logger.warning("Replay is behind schedule", lag_s=round(-early, 3), stream=name)
+            self._deliver(name, self._subjects[name].on_next, value)
 
-    def _fail(self, failure: _Failed, ended: set[str]) -> None:
+    def _fail(self, failed: str, ended: set[str]) -> None:
         """A bad recording or a config that cannot decode it: stop, and error every stream."""
-        logger.error(
-            "Replay stopped: recording could not be read",
-            stream=failure.name,
-            exc_info=failure.error,
-        )
+        error = cast("Exception", self._error)
+        logger.error("Replay stopped: recording could not be read", stream=failed, exc_info=error)
         for name, subject in self._subjects.items():
             if name not in ended:
                 try:
-                    subject.on_error(failure.error)
+                    subject.on_error(error)
                 except Exception as raised:
-                    if raised is not failure.error:  # a subscriber without on_error re-raises it
+                    if raised is not error:  # a subscriber without on_error re-raises it
                         logger.exception("Replay subscriber failed", stream=name)
 
     @staticmethod
