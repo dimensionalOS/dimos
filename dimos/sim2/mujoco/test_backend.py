@@ -25,6 +25,9 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
+# linux-aarch64 has no usd-core wheel, and every scene here is a USD layer.
+pytest.importorskip("pxr")
+
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
@@ -33,10 +36,12 @@ from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mou
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.frames import usd_frame_names
 from dimos.robot.assets.usd_utils.layers import usd_under_namespace
+from dimos.sim2 import sim as sim_protocol
+from dimos.sim2.mujoco import sim as mujoco_sim
 from dimos.sim2.mujoco.backend import MujocoBackend
-from dimos.sim2.mujoco.sim import MujocoSim
+from dimos.sim2.mujoco.sim import MujocoSim, _LatestPublisher
 from dimos.sim2.mujoco.world import compile_world
-from dimos.sim2.scene import toy_robot, usd_layer
+from dimos.sim2.scene import LOGISTICS, layer_file, scene_usd, toy_robot, usd_layer
 from dimos.sim2.sim import (
     ODOM_FRAME,
     ROBOT,
@@ -51,9 +56,6 @@ from dimos.sim2.sim import (
     sim,
     world_action,
 )
-
-# linux-aarch64 has no usd-core wheel, and every scene here is a USD layer.
-pytest.importorskip("pxr")
 
 SCENE = Path(__file__).parent / "assets" / "scene.usda"
 # The toy's base sits here in its own USD, so a spot for it is offset by this much.
@@ -92,61 +94,47 @@ def world(robot_model: UsdModel) -> UsdModel:
     return _composed(_scene(dog=_spot(0.0, 0.0, 1.0)), {"dog": robot_model})
 
 
-def test_robots_mounted_in_a_scene_compile_into_one_world(robot_model: UsdModel) -> None:
+def test_robots_mounted_in_a_scene_compile_into_one_world_free_or_held_by_their_mount(
+    robot_model: UsdModel,
+) -> None:
     composed = _composed(
-        _scene(left=_spot(-1.0, 0.0, 0.3), right=_spot(1.0, 0.0, 0.3)),
-        {"left": robot_model, "right": robot_model},
+        _scene(free=_spot(-1.0, 0.0, 1.0), mounted=_spot(1.0, 0.0, 1.0)),
+        {"free": robot_model, "mounted": robot_model},
     )
-    robots = [SimulatedRobot("left", robot_model), SimulatedRobot("right", robot_model)]
+    robots = [
+        SimulatedRobot("free", robot_model),
+        SimulatedRobot("mounted", robot_model, free=False),
+    ]
     model = compile_world(usd_layer(composed), robots).compile()
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
-    assert data.body("left/base").xpos.tolist() == pytest.approx([-1, 0, 0.3])
-    assert data.body("right/base").xpos.tolist() == pytest.approx([1, 0, 0.3])
-    assert model.joint("right/neck") is not None
+    assert data.body("free/base").xpos.tolist() == pytest.approx([-1, 0, 1.0])
+    assert data.body("mounted/base").xpos.tolist() == pytest.approx([1, 0, 1.0])
+    assert model.joint("mounted/neck") is not None
     assert model.ncam == 0, "the physics world has no cameras; a camera renders its own copy"
+    for _ in range(300):
+        mujoco.mj_step(model, data)
+    assert data.body("free/base").xpos[2] < 0.5, "the free robot is welded to the room"
+    assert data.body("mounted/base").xpos[2] > 0.5, "the mounted robot fell off its mount"
 
-
-def test_a_robot_the_world_does_not_hold_is_refused(robot_model: UsdModel) -> None:
     with pytest.raises(ValueError, match=f"no body '{robot_model.root_link}' in the world"):
         compile_world(usd_layer(_scene()), [SimulatedRobot("dog", robot_model)])
+    # A spawn point's volume neither collides nor renders.
+    room = compile_world(layer_file(scene_usd(LOGISTICS).usd, "logistics"), ids=()).compile()
+    names = [room.geom(geom).name for geom in range(room.ngeom)]
+    assert names and not [name for name in names if "spawns" in name]
 
 
-def test_a_robot_mounted_in_a_scene_is_still_free_to_move(
-    world: UsdModel, robot_model: UsdModel
+def test_a_backend_runs_the_usd_it_was_given_and_reports_a_robot_at_its_base(
+    robot_model: UsdModel,
 ) -> None:
-    model = compile_world(usd_layer(world), [SimulatedRobot("dog", robot_model)]).compile()
-
-    data = mujoco.MjData(model)
-    mujoco.mj_forward(model, data)
-    started = data.body("dog/base").xpos[2]
-    for _ in range(300):
-        mujoco.mj_step(model, data)
-
-    assert data.body("dog/base").xpos[2] < started - 0.5, "the dog is welded to the room"
-
-
-def test_a_robot_that_is_not_free_stays_on_its_mount(
-    world: UsdModel, robot_model: UsdModel
-) -> None:
-    model = compile_world(
-        usd_layer(world), [SimulatedRobot("dog", robot_model, free=False)]
-    ).compile()
-
-    data = mujoco.MjData(model)
-    mujoco.mj_forward(model, data)
-    started = data.body("dog/base").xpos[2]
-    for _ in range(300):
-        mujoco.mj_step(model, data)
-
-    assert data.body("dog/base").xpos[2] > started - 0.5, "the dog fell off its mount"
-
-
-def test_a_robot_mounted_under_a_frame_still_reports_its_own_pose(robot_model: UsdModel) -> None:
-    """The frame a robot hangs off is jointed and shortens to the robot's name; it must not take the robot's place."""
     mount = 2.0
     composed = _composed(_scene(dog=(0.0, 0.0, mount)), {"dog": robot_model})
+    with pytest.raises(ValueError, match="duplicate simulated robot ids"):
+        MujocoBackend(composed, [SimulatedRobot("dog", robot_model)] * 2)
     backend = MujocoBackend(composed, [SimulatedRobot("dog", robot_model)])
+    assert backend.usd == composed.usd
+    # The frame a robot hangs off is jointed and shortens to its name; it must not take its place.
     base = backend.model.body("dog/base")
     held = backend.model.body(int(backend.model.body_rootid[base.id]))
     assert held.id != base.id, "the fixture is not composed; nothing holds the robot"
@@ -157,18 +145,6 @@ def test_a_robot_mounted_under_a_frame_still_reports_its_own_pose(robot_model: U
     assert dog.pose[:3] == pytest.approx(backend.data.xpos[base.id], abs=1e-6)
     assert backend.data.xpos[held.id][2] == pytest.approx(mount, abs=1e-6)
     assert dog.pose[2] != pytest.approx(mount, abs=1e-3)
-
-
-def test_the_world_the_backend_runs_is_the_usd_it_was_given(
-    world: UsdModel, robot_model: UsdModel
-) -> None:
-    backend = MujocoBackend(world, [SimulatedRobot("dog", robot_model)])
-    assert backend.usd == world.usd
-
-
-def test_two_robots_with_one_id_are_refused_by_name(world: UsdModel, robot_model: UsdModel) -> None:
-    with pytest.raises(ValueError, match="duplicate simulated robot ids"):
-        MujocoBackend(world, [SimulatedRobot("dog", robot_model)] * 2)
 
 
 class _RoomConfig(HardwareModuleConfig):
@@ -221,9 +197,6 @@ def test_the_sim_builds_its_world_from_the_blueprints_hardware() -> None:
 def test_the_world_usd_is_served_while_physics_is_still_compiling(
     world: UsdModel, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import dimos.sim2.mujoco.sim as mujoco_sim
-    import dimos.sim2.sim as sim_protocol
-
     compiling, compiled = threading.Event(), threading.Event()
 
     class _StillCompiling:
@@ -299,32 +272,11 @@ async def _ran_for(backend: MujocoBackend, published: _Collect, seconds: float) 
         await asyncio.sleep(backend.timestep)
 
 
-def test_backend_steps_physics_and_takes_commands(world: UsdModel, robot_model: UsdModel) -> None:
-    backend = MujocoBackend(world, [SimulatedRobot("dog", robot_model)])
-    published = _Collect()
-
-    async def run_briefly() -> None:
-        async with _looping(backend, published):
-            await _ran_for(backend, published, 0.05)
-            # The head is light: a bigger torque spins it up until the solver diverges.
-            backend.apply([JointCommand("dog", ("neck",), effort=(0.01,))])
-            await _ran_for(backend, published, 0.55)
-
-    asyncio.run(run_briefly())
-    world_seen = published.world
-    assert _pose(world_seen, "dog")[2] < 0.3
-    names, joints = world_seen.joints("dog")
-    assert names == ["neck"]
-    assert joints[0, 1] > 1.0
-    assert _seen(world_seen, "dog").velocity is not None
-
-
-def test_a_held_robot_stands_still_on_a_running_clock_until_it_is_commanded(
+def test_a_held_robot_stands_still_on_a_running_clock_until_commanded_then_moves(
     world: UsdModel, robot_model: UsdModel
 ) -> None:
     """A policy commands on fresh readings, which tick on wall time, so a held world keeps its clock running."""
-    held = SimulatedRobot("dog", robot_model, held_until_commanded=True)
-    backend = MujocoBackend(world, [held])
+    backend = MujocoBackend(world, [SimulatedRobot("dog", robot_model, held_until_commanded=True)])
     published = _Collect()
 
     async def hold_then_drive() -> tuple[float, float, float]:
@@ -334,7 +286,8 @@ def test_a_held_robot_stands_still_on_a_running_clock_until_it_is_commanded(
             standing = _pose(published.world, "dog")[2]
             await _ran_for(backend, published, 0.3)
             still = _pose(published.world, "dog")[2]
-            command = JointCommand("dog", ("neck",), effort=(0.0,))
+            # The head is light: a bigger torque spins it up until the solver diverges.
+            command = JointCommand("dog", ("neck",), effort=(0.01,))
             sim_module._on_actions(world_action(published.world, command))
             await _ran_for(backend, published, 0.85)
             return standing, still, _pose(published.world, "dog")[2]
@@ -342,29 +295,27 @@ def test_a_held_robot_stands_still_on_a_running_clock_until_it_is_commanded(
     standing, still, fallen = asyncio.run(hold_then_drive())
     assert still == pytest.approx(standing)
     assert fallen < 0.3
+    names, joints = published.world.joints("dog")
+    assert names == ["neck"]
+    assert joints[0, 1] > 1.0
+    assert _seen(published.world, "dog").velocity is not None
 
 
-def test_frames_report_robots_and_objects_and_actions_drive_them(
+def test_frames_announce_robots_and_moving_objects_and_actions_cross_the_wire_to_drive_them(
     world: UsdModel, robot_model: UsdModel
 ) -> None:
-    backend = MujocoBackend(world, [SimulatedRobot("dog", robot_model)])
-    backend.apply([JointCommand("dog", ("neck",), effort=(0.5,))])
-    backend._apply_pending()
+    backend = MujocoBackend(world, [SimulatedRobot("dog", robot_model, odom_frame="world")])
     seen = _Collect()
     seen.offer(backend.frame())
-    assert _seen(seen.world, "dog").cbor[ROBOT] is True
+    dog = _seen(seen.world, "dog")
+    assert dog.cbor[ROBOT] is True
+    assert dog.cbor[ODOM_FRAME] == "world"
     assert seen.world.joints("dog")[0] == ["neck"]
     assert _pose(seen.world, "crate")[:3] == pytest.approx([0, 2, 0.5])
     assert seen.world.time == pytest.approx(time.time(), abs=5.0)
-    assert backend.data.ctrl[backend.model.actuator("dog/neck").id] == 0.5
 
-
-def test_a_falling_crate_is_seen_falling_and_a_landed_one_still(
-    world: UsdModel, robot_model: UsdModel
-) -> None:
-    """Velocity and acceleration come from MuJoCo, linear then angular in world axes, without gravity."""
-    backend = MujocoBackend(world, [SimulatedRobot("dog", robot_model)])
-    model, data, seen = backend.model, backend.data, _Collect()
+    # Velocity and acceleration come from MuJoCo, linear then angular in world axes, without gravity.
+    model, data = backend.model, backend.data
     lifted = model.jnt_qposadr[model.body_jntadr[backend._roots["crate"]]] + 2
     data.qpos[lifted] += 1.0
     mujoco.mj_forward(model, data)
@@ -388,22 +339,18 @@ def test_a_falling_crate_is_seen_falling_and_a_landed_one_still(
     assert crate.velocity == pytest.approx(np.zeros(6), abs=1e-3)
     assert crate.acceleration == pytest.approx(np.zeros(6), abs=1e-2)
 
-
-def test_actions_cross_the_wire_by_id_and_cbor_keys_are_observed_back(
-    world: UsdModel, robot_model: UsdModel
-) -> None:
-    backend = MujocoBackend(world, [SimulatedRobot("dog", robot_model)])
-    seen = _Collect()
-    seen.offer(backend.frame())
     actions: list[JointCommand | CborKeyValueCommand] = [
-        JointCommand("dog", ("neck",), position=(0.2,), kp=(10.0,), kd=(1.0,)),
+        JointCommand("dog", ("neck",), effort=(0.5,)),
         CborKeyValueCommand("dog", "note", {"a": 1}),
     ]
-    assert read_actions(world_action(seen.world, *actions), backend.world) == actions
+    servo = JointCommand("dog", ("neck",), position=(0.2,), kp=(10.0,), kd=(1.0,))
+    on_the_wire = world_action(seen.world, servo, *actions)
+    assert read_actions(on_the_wire, backend.world) == [servo, *actions]
     backend.apply(actions)
     backend._apply_pending()
     seen.offer(backend.frame())
     assert _seen(seen.world, "dog").cbor["note"] == {"a": 1}
+    assert backend.data.ctrl[backend.model.actuator("dog/neck").id] == 0.5
 
 
 def _with_a_driven_neck(usd: str, kp: float, kd: float, target: float) -> str:
@@ -444,11 +391,7 @@ def test_a_motor_command_drives_a_servo_with_its_own_gains(robot_model: UsdModel
 
 
 def test_closing_the_publisher_while_a_frame_is_in_flight_does_not_wedge_it() -> None:
-    from threading import Event as ThreadEvent, Thread
-
-    from dimos.sim2.mujoco.sim import _LatestPublisher
-
-    started, release = ThreadEvent(), ThreadEvent()
+    started, release = threading.Event(), threading.Event()
 
     def publish(_frame: Any) -> None:
         started.set()
@@ -457,24 +400,18 @@ def test_closing_the_publisher_while_a_frame_is_in_flight_does_not_wedge_it() ->
     publisher = _LatestPublisher(publish)
     publisher.offer(cast("Any", object()))
     assert started.wait(5), "the publisher thread never picked the frame up"
-
-    closer = Thread(target=publisher.close)
+    closer = threading.Thread(target=publisher.close)
     closer.start()
     release.set()
     closer.join(5)
-
     assert not closer.is_alive(), "close() never returned: the publishing thread is wedged"
 
 
 def test_frames_offered_while_one_is_in_flight_are_merged_not_lost() -> None:
-    from threading import Event as ThreadEvent
-
-    from dimos.sim2.mujoco.sim import _LatestPublisher
-
     writer = WorldWriter()
     writer.add("crate")
     published: list[Any] = []
-    in_flight, release, followed = ThreadEvent(), ThreadEvent(), ThreadEvent()
+    in_flight, release, followed = threading.Event(), threading.Event(), threading.Event()
 
     def publish(frame: Any) -> None:
         published.append(frame)
@@ -502,12 +439,3 @@ def test_frames_offered_while_one_is_in_flight_are_merged_not_lost() -> None:
     assert len(published) == 2
     assert crate is not None and crate.cbor["note"] == {"a": 1}
     assert crate.pose is not None and crate.pose[:3] == pytest.approx([1.0, 0.0, 0.0])
-
-
-def test_a_robot_is_announced_with_the_frame_its_odometry_is_in(
-    world: UsdModel, robot_model: UsdModel
-) -> None:
-    backend = MujocoBackend(world, [SimulatedRobot("dog", robot_model, odom_frame="world")])
-    seen = _Collect()
-    seen.offer(backend.frame())
-    assert _seen(seen.world, "dog").cbor[ODOM_FRAME] == "world"
