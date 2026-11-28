@@ -250,3 +250,20 @@ def test_rtc_file_requires_local_file(tmp_path: Path, missing: bool) -> None:
     path = tmp_path / "missing.json" if missing else tmp_path
     with pytest.raises(ValidationError, match="rtc_file"):
         RelayBridgeConfig(rtc_file=str(path))
+
+
+def test_rtc_file_content_fails_before_startup(tmp_path: Path) -> None:
+    path = tmp_path / "rtc.json"
+    for invalid in (
+        "{}",
+        "not JSON",
+        '{"appId":"dummy", "appSecret":"dummy", "turnToken":"dummy"}',
+    ):
+        path.write_text(invalid)
+        with pytest.raises(ValidationError, match="rtc_file") as exc:
+            RelayBridgeConfig(rtc_file=str(path))
+        assert "dummy" not in str(exc.value)
+    path.write_text(
+        '{"appId":"dummy", "appSecret":"dummy", "turnKeyId":"dummy", "turnToken":"dummy"}'
+    )
+    assert RelayBridgeConfig(rtc_file=str(path)).rtc_file == str(path)

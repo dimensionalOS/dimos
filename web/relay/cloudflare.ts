@@ -4,6 +4,7 @@
 // is gone for good and must be re-provisioned, never retried. Response bodies
 // are never echoed into errors: an SDP carries ICE credentials.
 import type { IceServer } from "@dimos/shared";
+import rtcFields from "./rtc-fields.json" with { type: "json" };
 
 export interface RtcConfig {
   /** Realtime SFU app (dashboard: Realtime -> SFU): id and secret. */
@@ -244,7 +245,7 @@ export class CloudflareClient {
   }
 }
 
-const RTC_FILE_KEYS = new Set(["appId", "appSecret", "turnKeyId", "turnToken"]);
+const RTC_FILE_KEYS = new Set([...rtcFields.required, ...rtcFields.paired]);
 
 /** Errors name keys, never values: V8's JSON error message quotes file text. */
 export function parseRtcFile(text: string): RtcConfig {
@@ -260,23 +261,16 @@ export function parseRtcFile(text: string): RtcConfig {
   for (const key of Object.keys(data)) {
     if (!RTC_FILE_KEYS.has(key)) throw new Error(`rtc file: unknown key "${key}"`);
   }
-  const str = (key: string): string => {
-    const value = data[key];
-    if (typeof value !== "string" || value === "") {
+  const paired = rtcFields.paired.filter((key) => key in data);
+  if (paired.length && paired.length !== rtcFields.paired.length) {
+    throw new Error(`rtc file: ${rtcFields.paired.join(" and ")} must be given together`);
+  }
+  for (const key of [...rtcFields.required, ...paired]) {
+    if (typeof data[key] !== "string" || data[key] === "") {
       throw new Error(`rtc file: "${key}" must be a non-empty string`);
     }
-    return value;
-  };
-  const config: RtcConfig = { appId: str("appId"), appSecret: str("appSecret") };
-  const hasKey = "turnKeyId" in data;
-  if (hasKey !== "turnToken" in data) {
-    throw new Error("rtc file: turnKeyId and turnToken must be given together");
   }
-  if (hasKey) {
-    config.turnKeyId = str("turnKeyId");
-    config.turnToken = str("turnToken");
-  }
-  return config;
+  return data as unknown as RtcConfig;
 }
 
 export async function loadRtcFile(path: string): Promise<RtcConfig> {

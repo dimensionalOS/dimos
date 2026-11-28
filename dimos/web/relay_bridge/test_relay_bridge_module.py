@@ -38,6 +38,7 @@ import time
 from typing import Any
 import zlib
 
+import certifi
 import numpy as np
 from pydantic import ValidationError
 import pytest
@@ -172,6 +173,14 @@ def test_local_port_rejected_from_cli_and_json(tmp_path: Path, port: int, endpoi
     with pytest.raises(BlueprintConfigError, match=r"relaybridgemodule\.local_port"):
         parser.parse(config_path=config, environ={})
     assert RelayBridgeConfig(local_port=endpoint).local_port == endpoint
+
+
+@pytest.mark.parametrize("port", [True, False])
+def test_json_port_rejects_boolean(tmp_path: Path, port: bool) -> None:
+    config = tmp_path / "port.json"
+    config.write_text(json.dumps({"relaybridgemodule": {"local_port": port}}))
+    with pytest.raises(BlueprintConfigError, match="local_port"):
+        BlueprintConfigParser(RelayBridgeModule.blueprint()).parse(config_path=config, environ={})
 
 
 def test_start_registers_but_subscribes_nothing(bridge) -> None:
@@ -1014,7 +1023,7 @@ def test_discovered_ephemeral_cert_is_refused_off_loopback(monkeypatch) -> None:
 
 def test_relay_ca_reaches_discovery_and_connect(monkeypatch, tmp_path: Path) -> None:
     ca = str(tmp_path / "ca.pem")
-    Path(ca).touch()
+    Path(ca).write_bytes(Path(certifi.where()).read_bytes())
     seen: list[tuple[Any, ...]] = []
     client = FakeClient()
 
@@ -1269,6 +1278,9 @@ def test_relay_ca_must_be_an_existing_file_for_the_relay_it_is_used_with(tmp_pat
     with pytest.raises(BlueprintConfigError, match="relay_ca must be an existing file"):
         parser.parse(["--relay-ca", str(ca)], environ={}, global_overrides=external)
     ca.touch()
+    with pytest.raises(BlueprintConfigError, match="relay_ca"):
+        parser.parse(["--relay-ca", str(ca)], environ={}, global_overrides=external)
+    ca.write_bytes(Path(certifi.where()).read_bytes())
     parser.parse(["--relay-ca", str(ca)], environ={}, global_overrides=external)
 
 

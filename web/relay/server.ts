@@ -145,6 +145,7 @@ function resolveDirUrl(dir: string, label: string): URL {
   // resolves under it. Fail with a clear labeled error on a bad path: the
   // raw NotFound is cryptic, and a plain file would "start" fine and then
   // 404 every request.
+  if (dir === "") throw new Error(`${label} must not be empty`);
   let real: string;
   try {
     real = Deno.realPathSync(dir);
@@ -211,7 +212,6 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     throw new RangeError("--port must be an integer between 0 and 65535");
   }
-  installUnhandledRejectionGuard();
   const host = options.host ?? "127.0.0.1";
   const loopback = LOOPBACK_HOSTS.has(host);
   const secured = options.cert !== undefined && options.key !== undefined &&
@@ -234,9 +234,13 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
 
   // Resolve the served roots before binding anything so a bad path fails
   // fast, without a QUIC endpoint or timer left behind.
-  const cockpitRoot = options.cockpitDir ? resolveDirUrl(options.cockpitDir, "cockpitDir") : null;
-  const sdkRoot = options.sdkDir ? resolveDirUrl(options.sdkDir, "sdkDir") : null;
-  const serveRoot = options.serveDir ? resolveDirUrl(options.serveDir, "serveDir") : null;
+  const cockpitRoot = options.cockpitDir !== undefined
+    ? resolveDirUrl(options.cockpitDir, "cockpitDir")
+    : null;
+  const sdkRoot = options.sdkDir !== undefined ? resolveDirUrl(options.sdkDir, "sdkDir") : null;
+  const serveRoot = options.serveDir !== undefined
+    ? resolveDirUrl(options.serveDir, "serveDir")
+    : null;
   // A user directory replaces the cockpit at /; /api/* and /sdk.js keep
   // precedence over it in handleHttp.
   const staticRoot = serveRoot ?? cockpitRoot;
@@ -326,6 +330,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     await httpServer?.shutdown();
     throw e;
   }
+  installUnhandledRejectionGuard();
   const quicPort = endpoint.addr.port;
   // 127.0.0.1 rather than localhost: Chrome resolves localhost to ::1 first
   // and the endpoint binds IPv4. Hash pinning replaces hostname verification.
