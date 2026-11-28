@@ -156,9 +156,11 @@ The `check` stage stops the build when:
 - the loader cannot resolve a native executable's libraries, a required wheel
   library is missing, or the tested Python packages or Numba's TBB backend fail to load,
 - `dimos --help`, `dimos list` or the relay with the cockpit do not run there, without
-  network.
+  network,
+- `dimos --simulation run unitree-go2` does not start there, without a window, a GPU
+  and network.
 
-The last two run in an `ubuntu:26.04` container ([`check_target.sh`](check_target.sh)).
+The last three run in an `ubuntu:26.04` container ([`check_target.sh`](check_target.sh)).
 
 ## The lists
 

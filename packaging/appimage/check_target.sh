@@ -61,3 +61,15 @@ echo "native executables and Python package loaders passed"
 echo "dimos --help and dimos list run"
 # Starts the relay from the installed wheel and fetches the cockpit from it.
 /app/AppRun bundle-exec python3 /wheel_smoke.py
+
+# Starts the simulation of the README without a window, then stops it. The start
+# returns when every module runs. By then MuJoCo has loaded the packaged scene, robot
+# and policy and has rendered a camera frame on the CPU. LCM gets an in-process URL:
+# the container has no multicast route, and the blueprint's file makes an LCM
+# transport when it is imported.
+if ! { LCM_DEFAULT_URL=memq:// timeout 300 /app/AppRun --viewer none --simulation run unitree-go2 --daemon &&
+  /app/AppRun stop; } > /tmp/simulation.log 2>&1; then
+  cat /tmp/simulation.log
+  exit 1
+fi
+echo "dimos --simulation run unitree-go2 starts and stops"
