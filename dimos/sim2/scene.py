@@ -57,6 +57,10 @@ class SpawnMounts(Mounts):
         self._read()
         return super().__iter__()
 
+    def roles(self) -> dict[str, str]:
+        self._read()
+        return super().roles()
+
 
 class SimSceneConfig(HardwareModuleConfig):
     """A scene's mounts have no reading to ride on: they go out on tf at static_tf_rate_hz."""

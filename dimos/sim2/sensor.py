@@ -54,7 +54,7 @@ class SimSensor(HardwareModule):
     @classmethod
     def attach(cls, mount: Mount, **kwargs: Any) -> "Blueprint":
         """This sensor on ``mount``, as HardwareModule.attach puts it, still reaching the one simulated world."""
-        return on_mount(cls.blueprint(**kwargs, attached_to=mount.frame), mount)
+        return on_mount(cls.blueprint(**kwargs, attached_to=mount.name), mount)
 
     @rpc
     def start(self) -> None:
