@@ -263,6 +263,9 @@ robots:
         unitree-go2-webrtc-keyboard-teleop:
           title: Go2 keyboard driving
           description: Drive a Go2 with this computer's keyboard, over WebRTC.
+        unitree-go2-sim-office:
+          title: Go2 in sim, office 555
+          description: A simulated Go2 in office 555 on MuJoCo, driven like a real one.
         unitree-go2-detection:
           title: Go2 with 3D detection
           description: Map and navigation plus 3D object detection on its camera.

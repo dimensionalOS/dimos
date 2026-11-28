@@ -198,6 +198,7 @@ all_blueprints = {
     "unitree-go2-rpp-benchmark": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_rpp_benchmark:unitree_go2_rpp_benchmark",
     "unitree-go2-rpp-controller": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_rpp_controller:unitree_go2_rpp_controller",
     "unitree-go2-security": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_security:unitree_go2_security",
+    "unitree-go2-sim-office": "dimos.robot.unitree.go2.blueprints.sim.unitree_go2_sim_office:unitree_go2_sim_office",
     "unitree-go2-spatial": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2_spatial:unitree_go2_spatial",
     "unitree-go2-temporal-memory": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_temporal_memory:unitree_go2_temporal_memory",
     "unitree-go2-typesafe": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_typesafe:unitree_go2_typesafe",
