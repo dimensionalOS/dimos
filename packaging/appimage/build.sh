@@ -124,7 +124,7 @@ stage_deps() {
   UV_LINK_MODE=copy uv pip install --python "$PY" --no-deps "$WHEELS"/*.whl
   relocate_scripts
   "$PY" -P -c 'import dimos.navigation.go2.replanning_a_star.min_cost_astar_ext'
-  "$REPO/bin/pyo3-extensions" --list | while read -r _ name; do "$PY" -P -c "import $name"; done
+  "$PY" "$REPO/bin/pyo3-extensions" --list | while read -r _ name; do "$PY" -P -c "import $name"; done
 }
 
 # Console scripts start with the build folder's absolute path. Make it relative, so

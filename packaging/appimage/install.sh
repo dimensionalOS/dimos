@@ -14,15 +14,17 @@ root=/opt/dimos
 
 mkdir -p "$root"
 cd "$root"
-rm -rf squashfs-root
 [ -x "$image" ] || chmod +x "$image"
-"$image" --appimage-extract > /dev/null
+# The version comes first, from one small file.
+rm -rf squashfs-root
+"$image" --appimage-extract dimos.desktop > /dev/null
 version="$(sed -n 's/^X-AppImage-Version=//p' squashfs-root/dimos.desktop)"
+rm -rf squashfs-root
 if [ -z "$version" ] || [ -e "$version" ]; then
-  rm -rf squashfs-root
   echo "install.sh: $root/${version:-<no version in the image>} is already there" >&2
   exit 1
 fi
+"$image" --appimage-extract > /dev/null
 mv squashfs-root "$version"
 ln -sfn "$version" current
 ln -sf "$root/current/AppRun" /usr/local/bin/dimos
