@@ -95,43 +95,55 @@ Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54
 Let's load a standard 2D detector module and hook it up to a camera.
 
 ```python skip ansi=false session=detection_module
-from dimos.perception.detection.module2D import Detection2DModule, Config
+from dimos.perception.detection.module2D import Detection2DModule
 print(Detection2DModule.io())
 ```
 
 ```results
  ├─ color_image: Image
+ ├─ tf: TFMessage
 ┌┴──────────────────┐
 │ Detection2DModule │
 └┬──────────────────┘
+ ├─ tf: TFMessage
  ├─ detections: Detection2DArray
- ├─ annotations: ImageAnnotations
  ├─ detected_image_0: Image
  ├─ detected_image_1: Image
  ├─ detected_image_2: Image
+ │
+ ├─ RPC get_config() -> dict
 ```
 
 {/* TODO: add easy way to print config */}
 
-Looks like the detector just needs an image input and outputs some sort of detection and annotation messages. Let's connect it to a camera.
+The detector takes images on a stream and needs the camera's `CameraInfo` at construction. The webcam publishes its configured intrinsics, or a nominal pinhole model based on frame size. This example uses the `perception` extra and the YOLO person detector from the `models_yolo` data bundle. The camera forwards images through the detector input's in-memory LCM transport.
+
+To try either camera example with recorded video, replace `WebcamModule()` with `WebcamModule(hardware={"camera_index": "/path/to/video.mp4"})`. Use a video long enough for the model to load and process frames.
 
 ```python skip ansi=false
-import time
-from dimos.perception.detection.module2D import Detection2DModule, Config
+from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import WebcamModule
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
+from dimos.perception.detection.module2D import Detection2DModule
 
 camera = WebcamModule()
-detector = Detection2DModule()
-
-detector.color_image.connect(camera.color_image)
-
-camera.start()
-detector.start()
-
-detector.detections.subscribe(print)
-time.sleep(3)
-detector.stop()
-camera.stop()
+detector = None
+try:
+    camera.start()
+    detector = Detection2DModule(
+        camera_info=camera.camera_info.get_next(),
+        detector=YoloPersonDetector,
+    )
+    detector.color_image.transport = LCMTransport("/camera/rgb", Image, url="memq://")
+    detector.color_image.connect(camera.color_image)
+    detector.start()
+    result = detector.detections.get_next(timeout=30)
+    print("People detected:", result.detections_length)
+finally:
+    camera.stop()
+    if detector is not None:
+        detector.stop()
 ```
 
 ## Distributed Execution
@@ -252,18 +264,20 @@ via `importlib.reload`, then redeploys it onto a fresh worker process while
 keeping its stream transports and reconnecting any other modules that held
 a reference to it.
 
+Save the `Counter` from [Sync input handlers](#sync-input-handlers) in `counter.py`,
+then run this script from the same directory:
+
 ```python skip
+from counter import Counter
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.global_config import GlobalConfig
-from dimos.hardware.sensors.camera.module import WebcamModule
 
-coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=0, viewer="none"))
-coordinator.start()
-coordinator.load_module(WebcamModule)
-
-# ... edit WebcamModule source on disk ...
-
-coordinator.restart_module(WebcamModule)
+if __name__ == "__main__":
+    coordinator = ModuleCoordinator.build(Counter.blueprint())
+    try:
+        input("Edit counter.py and press Enter to reload it: ")
+        coordinator.restart_module(Counter)
+    finally:
+        coordinator.stop()
 ```
 
 ## Async modules (lock-free state)
@@ -354,7 +368,7 @@ class NameSpec(Spec, Protocol):
 class StartModule(Module):
     _name_module: NameSpec
 
-    async def code():
+    async def code(self) -> None:
         await self._name_module.set_my_name("John")
         print(await self._name_module.say_hello("Bill"))
 ```
@@ -477,56 +491,65 @@ Most of the time this is a bad idea, but you can peak behind blueprints, autocon
 `camera_script.py`:
 
 ```python skip
-import time
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.msgs.sensor_msgs.Image import Image
 
 camera = WebcamModule()
 camera.color_image.transport = LCMTransport("/camera/rgb", Image)
+camera.camera_info.transport = LCMTransport("/camera/info", CameraInfo)
 
-camera.start()
-time.sleep(10)
-camera.stop()
+with camera:
+    input("Camera is publishing. Press Enter to stop.\n")
 ```
 
-`detector_script.py`:
+Leave the camera script running while `detector_script.py` receives its metadata and images.
 
 ```python skip
-import time
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.module2D import Detection2DModule
+from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 
-detector = Detection2DModule()
+with LCMTransport("/camera/info", CameraInfo) as metadata:
+    camera_info = metadata.get_next(timeout=10)
+
+detector = Detection2DModule(camera_info=camera_info, detector=YoloPersonDetector)
 detector.color_image.transport = LCMTransport("/camera/rgb", Image)
 
-detector.start()
-detector.detections.subscribe(print)
-time.sleep(10)
-detector.stop()
+with detector:
+    for _ in range(3):
+        result = detector.detections.get_next(timeout=30)
+        print("People detected:", result.detections_length)
 ```
 
-Run each in its own terminal and detections start printing as soon as both are up. The channel name and message type must match on both sides `LCMTransport("/camera/rgb", Image)` maps to the typed channel `/camera/rgb#sensor_msgs.Image`, which you can watch with `dimos spy` or `dimos topic echo /camera/rgb`.
+Run each script in its own terminal. Once both are running, the detector prints a count for each frame it processes. Both scripts use `LCMTransport("/camera/rgb", Image)`, which maps to the typed channel `/camera/rgb#sensor_msgs.Image`. To inspect the images in a third terminal, run `dimos --transport lcm topic echo /camera/rgb`.
 
 Available transports live in `dimos.core.transport` (`ZenohTransport`, `LCMTransport`, `ROSTransport`, ...); see [Transports](/docs/usage/transports/index.md) for choosing between them.
 
 ### Raw transports (no modules)
 
-A transport works on its own. Init one and send/receive from a plain script, no module or stream declarations needed:
+A transport works on its own. This script subscribes before publishing and prints the message it receives:
 
-```python skip
+```python
+from queue import Queue
+
 from dimos.core.transport import LCMTransport
 from dimos.msgs.std_msgs.String import String
 
-chat = LCMTransport("/chat", String)
-
-unsubscribe = chat.subscribe(print)     # receive
-chat.publish(String(data="hello"))      # send
-
-msg = chat.get_next()                   # or block for the next message
-chat.stop()
+received: Queue[String] = Queue()
+with LCMTransport("/chat", String) as chat:
+    unsubscribe = chat.subscribe(received.put)
+    try:
+        chat.publish(String(data="hello"))
+        print(received.get(timeout=10).data)
+    finally:
+        unsubscribe()
 ```
+
+For a one-shot listener, call `chat.get_next()` before another process publishes its message.
 
 Any other script (or module stream) on the same channel sees the traffic. This is handy for quick probes and debug scripts. For a robot system, prefer modules so the streams show up in blueprints and introspection.
 

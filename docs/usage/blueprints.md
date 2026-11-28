@@ -488,20 +488,23 @@ Blueprint configuration options:
 ```
 
 `parse()` combines a config file, recognized environment variables, programmatic
-overrides, and dynamic CLI flags. Pass its result directly to the coordinator:
+overrides, and dynamic CLI flags. To run the resulting configuration, save
+`base-blueprint-config.json` next to your script (use `{}` for defaults) and run it
+from that directory:
 
 ```python skip
 from pathlib import Path
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
-config_path = Path.home() / "base-blueprint-config.json"
-cli_args = ["--module1.arg1=5"]
-parsed = BlueprintConfigParser(concrete_blueprint).parse(
-    cli_args,
-    config_path=config_path,
-)
-coordinator = ModuleCoordinator.build(concrete_blueprint, parsed)
+if __name__ == "__main__":
+    config_path = Path("base-blueprint-config.json")
+    cli_args = ["--module1.arg1=5"]
+    parsed = BlueprintConfigParser(concrete_blueprint).parse(
+        cli_args,
+        config_path=config_path,
+    )
+    ModuleCoordinator.build(concrete_blueprint, parsed).loop()
 ```
 
 Note that `build()` resets the process-global `global_config` to the full parsed
@@ -603,31 +606,21 @@ class SomeSkill(Module):
 
 ## Building
 
-All you have to do to build a blueprint is call:
+`ModuleCoordinator.build()` deploys the modules, connects their streams and starts them.
+It returns the coordinator that owns the running modules.
+
+### Running and shutting down
+
+Save the `SomeSkill` definition above in `my_skill.py` and append the following code.
+Workers import the script during startup, so keep the module class at the top level and
+launch the coordinator inside the main guard.
 
 ```python skip session=blueprint-ex4
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
-module_coordinator = ModuleCoordinator.build(SomeSkill.blueprint())
-module_coordinator.stop()
+if __name__ == "__main__":
+    ModuleCoordinator.build(SomeSkill.blueprint()).loop()
 ```
 
-```results
-16:30:00.119 [inf][dination/module_coordinator.py] Building the blueprint
-16:30:00.133 [inf][dination/module_coordinator.py] Starting the modules
-16:30:01.320 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2
-16:30:01.321 [inf][ation/worker_manager_python.py] Shutting down all workers...
-16:30:01.480 [inf][ation/worker_manager_python.py] All workers shut down
-```
-
-This returns a `ModuleCoordinator` instance that manages all deployed modules.
-
-### Running and shutting down
-
-You can block the thread until it exits with:
-
-```python skip session=blueprint-ex4
-module_coordinator.loop()
-```
-
-This will wait for Ctrl+C and then automatically stop all modules and clean up resources.
+Run `python my_skill.py`. The coordinator serves the running modules until you press
+Ctrl+C, then `loop()` stops them and releases the workers.
