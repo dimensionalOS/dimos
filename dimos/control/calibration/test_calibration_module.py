@@ -76,11 +76,11 @@ def test_the_shell_runs_answers_and_aborts_the_deployed_calibration() -> None:
             )
             until(cal.status, lambda status: status.state == "waiting")
             assert cal.answer("go") == "ok"
-            until(cal.status, lambda status: "Move to rest" in (status.question or ""))
+            until(cal.status, lambda status: "Move to init" in (status.question or ""))
             assert cal.answer("go") == "ok"
             done = until(cal.status, lambda status: status.state == "done")
             assert done.summary.endswith("  summary: fake/calibration.json"), str(done)
-            assert done.message.endswith("\nParked at rest; you can stop the run."), str(done)
+            assert done.message.endswith("\nParked at init; you can stop the run."), str(done)
             assert "> go" in done.log
             assert done.file is not None and done.file.created == "2026-11-21T00:00:00+00:00"
         finally:

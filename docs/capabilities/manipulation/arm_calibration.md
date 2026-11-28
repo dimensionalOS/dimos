@@ -65,6 +65,8 @@ Stop `dimos run` with Ctrl-C in its terminal and start it again with `--calibrat
 7. **confirm_tracking.** Revisits some gravity poses with the new calibration and the proposed gains, and compares how far each joint rests from its target with the first visit. The gains are saved only if no joint stalls and each rests within 1.5 times its first visit or its rest limit; otherwise they are undone.
 8. **summary.** Shows the file the arm runs now.
 
+Once every step is done, the arm is home and the calibration asks to move to init, the pose the arm sat in when the run began. Start a run with the arm where it rests with its motors off, so it ends there.
+
 A hold ends once the arm has settled: one rest window of readings stays inside the noise measured in check. A hold also ends if it stops settling (it oscillates in place) or has not settled after 5 s, and that counts as a failure. A motion stops with an error if a joint falls behind its target by more than its motor can push through, or the arm reaches the table or the other arm's side.
 
 The calibration moves the arm only by streaming targets to its connection, one per reading. While it waits for you or computes a fit, it sends the arm nothing, so the connection holds the arm where it is and undoes any temporary gain change or limp joint. The same happens if the calibration stops.
