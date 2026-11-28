@@ -25,15 +25,14 @@ from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.usd_utils.frames import usd_frame_names, usd_with_frames
 from dimos.robot.assets.usd_utils.from_urdf import urdf_to_usd
 from dimos.robot.assets.usd_utils.layers import usd_under_namespace
-from dimos.sim2 import scene
-from dimos.sim2.scene import overlay_usds
 
 # Before importing the sim, whose spawn points register a USD schema on import.
 pytest.importorskip("pxr")
 
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.robot.assets.model import UsdModel
-from dimos.sim2.scene import SimScene, SimSceneConfig, SpawnMounts, scene_usd
+from dimos.sim2 import scene
+from dimos.sim2.scene import SimScene, SimSceneConfig, SpawnMounts, overlay_usds, scene_usd
 
 
 def _spot(name: str, translate: str, size: str = "1, 1, 2") -> str:
