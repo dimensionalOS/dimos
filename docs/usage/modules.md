@@ -525,7 +525,7 @@ with detector:
         print("People detected:", result.detections_length)
 ```
 
-Run each in its own terminal and detections start printing as soon as both are up. The channel name and message type must match on both sides `LCMTransport("/camera/rgb", Image)` maps to the typed channel `/camera/rgb#sensor_msgs.Image`, which you can watch with `dimos spy` or `dimos topic echo /camera/rgb`.
+Run each script in its own terminal. Once both are running, the detector prints a count for each frame it processes. Both scripts use `LCMTransport("/camera/rgb", Image)`, which maps to the typed channel `/camera/rgb#sensor_msgs.Image`. To inspect the images in a third terminal, run `dimos --transport lcm topic echo /camera/rgb`.
 
 Available transports live in `dimos.core.transport` (`ZenohTransport`, `LCMTransport`, `ROSTransport`, ...); see [Transports](/docs/usage/transports/index.md) for choosing between them.
 
