@@ -55,7 +55,15 @@ from dimos.navigation.bench.runner import (
 )
 from dimos.navigation.bench.scorer import Commands, Poses, Recording, score
 from dimos.navigation.bench.snapshot import BACKGROUND, SNAPSHOT_PX, snapshot_path
-from dimos.navigation.bench.suite import Case, Level, Manifest, Rules, Split
+from dimos.navigation.bench.suite import (
+    HIDDEN_POLE,
+    Case,
+    Level,
+    Manifest,
+    Rules,
+    Split,
+    freeze_probe,
+)
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.go2_sim.world import GO2, SHAPE
 from dimos.simulation.scenes.procedural import Params, block, office
@@ -188,6 +196,39 @@ def test_provenance_names_the_commit_and_notices_uncommitted_changes(
     assert _provenance(tmp_path) == {"commit": None, "dirty": None}
     (tmp_path / ".git").mkdir()
     assert _provenance(tmp_path) == {"commit": None, "dirty": None}
+
+
+def test_run_checks_drift_only_for_selected_cases(tmp_path: Path) -> None:
+    # Frozen here, so each case carries every fingerprint this checkout compares.
+    manifest = freeze_probe(replace(HIDDEN_POLE, seeds=(3,), levels=(0.02, 0.04), control=None))
+    selected, other = manifest.cases
+    # A pole of another width stands in for a generator that drifted since the freeze.
+    drifted: Params = {"pole_width": 0.08}
+    stale = replace(other, params=drifted)
+    held_out = replace(selected, id=f"{selected.id}-held-out", split="held_out", params=drifted)
+    cases = [selected, stale, held_out]
+    suite = tmp_path / "suite.json"
+    replace(manifest, cases=cases).save(suite)
+    script = tmp_path / "fake.py"
+    script.write_text(FAKE_BLUEPRINT)
+    config = RunConfig(
+        suite=suite,
+        cases=(selected.id,),
+        out_dir=tmp_path / "run",
+        procs=1,
+        min_free_gb=0,
+        command=(sys.executable, str(script)),
+        overrides=(f"--fake-recordings={tmp_path / 'recordings'}",),
+    )
+    dest = run(config)
+    result = json.loads((dest / RESULTS_FILE).read_text())
+    assert (result["case_id"], result["outcome"]) == (selected.id, "success")
+    assert Manifest.load(dest / SUITE_FILE).cases == cases
+
+    refused = tmp_path / "refused"
+    with pytest.raises(RuntimeError, match=stale.id):
+        run(replace(config, split=stale.split, cases=(stale.id,), out_dir=refused))
+    assert not refused.exists()
 
 
 def test_run_scores_every_episode_and_rescores_the_same(

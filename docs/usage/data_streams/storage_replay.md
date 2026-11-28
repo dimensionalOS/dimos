@@ -176,7 +176,7 @@ finally:
 
 ## Usage: Replay Instead of Hardware
 
-The Go2's [`ReplayConnection`](/dimos/robot/unitree/go2/connection.py) stands in for the robot by playing a recorded dataset from the memory store. `GO2Connection` uses it when replay is on, which runs the full perception pipeline against recorded data:
+[`Go2Replay`](/dimos/robot/unitree/go2/replay.py) stands in for the robot by playing a recorded dataset from the memory store. With replay on, `GO2Connection.blueprint()` gives a `Go2Replay` instead, which runs the full perception pipeline against recorded data:
 
 ```bash skip
 dimos --replay run unitree-go2

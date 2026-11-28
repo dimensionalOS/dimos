@@ -120,7 +120,7 @@ def _read_version(pyproject: Path) -> tuple[bool, str | None]:
         project = tomllib.loads(pyproject.read_text()).get("project", {})
     except (OSError, tomllib.TOMLDecodeError):
         return False, None
-    if project.get("name") != "dimos":
+    if not isinstance(project, dict) or project.get("name") != "dimos":
         return False, None
     version = project.get("version")
     return True, str(version) if version else None

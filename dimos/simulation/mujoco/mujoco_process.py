@@ -40,7 +40,6 @@ from dimos.simulation.mujoco.constants import (
 )
 from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud, voxel_down_sample
 from dimos.simulation.mujoco.model import load_model, load_scene_xml
-from dimos.simulation.mujoco.person_on_track import PersonPositionController
 from dimos.simulation.mujoco.shared_memory import ShmReader
 from dimos.utils.logging_config import setup_logger
 
@@ -130,8 +129,6 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
     camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "head_camera")
     lidar_camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_front_camera")
 
-    person_position_controller = PersonPositionController(model)
-
     if config.shadows == "off" or (
         config.shadows == "auto" and _shadow_render_is_slow(model, data)
     ):
@@ -210,8 +207,6 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
             for _ in range(config.steps_per_frame):
                 mujoco.mj_step(model, data)
 
-            person_position_controller.tick(data)
-
             if m_viewer is not None:
                 m_viewer.sync()
 
@@ -284,8 +279,6 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
             time_until_next_step = model.opt.timestep - (time.time() - step_start)
             if time_until_next_step > 0:
                 time.sleep(time_until_next_step)
-
-        person_position_controller.stop()
 
 
 if __name__ == "__main__":
