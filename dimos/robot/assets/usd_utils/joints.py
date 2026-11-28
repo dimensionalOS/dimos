@@ -107,12 +107,8 @@ def _unused_name(base: str, taken: set[str]) -> str:
 
 
 def _joints_of(pxr: Pxr, prim: Prim, taken: set[str], world: str | None) -> list[JointDescription]:
-    """One USD joint as joints whose frame is the child's: itself, or itself and a weld off its anchor.
-
-    UsdPhysics puts the joint at localPose0 in body0 and at localPose1 in body1, so at rest the child sits at
-    parent_from_joint * inverse(child_from_joint). A moving joint anchored off the child's origin turns about the
-    anchor, so it ends at a frame on the anchor (oriented like the child) and the child is welded off that.
-    """
+    """One USD joint as joints whose frame is the child's: itself, plus a weld off its anchor when a moving joint sits off the child's origin."""
+    # UsdPhysics puts the joint at localPose0 in body0 and localPose1 in body1, so at rest child = parent_from_joint * inv(child_from_joint).
     joint = pxr.UsdPhysics.Joint(prim)
     named = _body_name(prim, "physics:body0")
     parent = named or world
