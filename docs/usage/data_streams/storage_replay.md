@@ -154,6 +154,8 @@ frame = replay.find_closest(timestamp, tolerance=0.1)
 ### Observable Stream
 
 The `.stream()` method returns an Observable that emits frames with original timing.
+With `loop=True`, the `TimedSensorReplay` adapter waits 50 ms between passes,
+even for a one-frame clip. Frames with equal timestamps in one pass are emitted together.
 `subscribe()` delivers the first frame before returning; subsequent frames arrive
 on timer threads. Keep the program alive while listening, and dispose the
 subscription when finished. For finite playback in a script, use the blocking

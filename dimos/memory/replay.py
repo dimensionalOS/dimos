@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
-_LOOP_GAP = 0.05  # min wall-time gap inserted between loop wraps (seconds)
+_LOOP_GAP = 0.05  # recording seconds, scaled by replay speed
 _LATE_TOLERANCE = 0.05  # don't skip frames within this many seconds of "now"
 
 

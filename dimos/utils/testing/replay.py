@@ -41,6 +41,7 @@ from reactivex.scheduler import TimeoutScheduler
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.data import get_data
 from dimos.utils.testing.legacy_pickle import LegacyPickleStore
+from dimos.utils.timeseries.base import LOOP_GAP, playback_frames
 
 T = TypeVar("T")
 
@@ -85,13 +86,16 @@ def timed_playback(
     source: Callable[[], Iterator[tuple[float, T]]],
     speed: float = 1.0,
     detect_loop: bool = True,
+    *,
+    loop: bool = False,
 ) -> Observable[T]:
     """Replay a ``(ts, data)`` iterator as an Observable at real-time speed.
 
     Anchors on the first timestamp and schedules subsequent emissions with
     ``scheduler.schedule_relative`` at ``anchor + (ts - first_ts) / speed``.
     When ``detect_loop`` is set, a backwards-going timestamp re-anchors — use
-    this when the source iterator loops.
+    this for sources that already loop. Pass a finite source and ``loop=True``
+    to repeat it with a 50 ms gap, including a single-timestamp pass.
 
     ``source`` is a factory: called fresh on each subscription so the same
     Observable can be re-subscribed without iterator collisions.
@@ -112,7 +116,7 @@ def timed_playback(
         disp = SerialDisposable()
         disposed = threading.Event()
         emission_lock = threading.RLock()
-        iterator = source()
+        iterator = playback_frames(source, loop)
         iterator_disposable = Disposable(getattr(iterator, "close", None))
 
         def dispose() -> None:
@@ -131,7 +135,7 @@ def timed_playback(
                 observer.on_error(error)
 
         try:
-            first_ts, first_data = next(iterator)
+            first_ts, first_data, _ = next(iterator)
         except StopIteration:
             terminate()
             return Disposable()
@@ -159,26 +163,31 @@ def timed_playback(
                 return
             schedule_emission(message)
 
-        def schedule_emission(message: tuple[float, T]) -> None:
+        def schedule_emission(message: tuple[float, T, bool]) -> None:
             nonlocal start_local_time, start_replay_time, prev_ts
 
             if disposed.is_set():
                 return
 
-            ts, data = message
+            ts, data, wrapped = message
 
-            if detect_loop and ts < prev_ts:
-                start_local_time = time.time()
-                start_replay_time = ts
+            if wrapped:
+                delay = LOOP_GAP
+            else:
+                now = time.time()
+                if detect_loop and ts < prev_ts:
+                    start_local_time, start_replay_time = now, ts
+                target_time = start_local_time + (ts - start_replay_time) / speed
+                delay = max(0.0, target_time - now)
             prev_ts = ts
 
-            target_time = start_local_time + (ts - start_replay_time) / speed
-            delay = max(0.0, target_time - time.time())
-
             def emit(_scheduler: SchedulerBase, _state: object) -> DisposableBase | None:
+                nonlocal start_local_time, start_replay_time
                 with emission_lock:
                     if disposed.is_set():
                         return None
+                    if wrapped:
+                        start_local_time, start_replay_time = time.time(), ts
                     observer.on_next(data)
                     advance()
                 return None
@@ -225,18 +234,14 @@ class MemoryReplayAdapter(Generic[T]):
             data = self._autocast(data)
         return cast("T", data)
 
-    def iterate_ts(
-        self,
-        seek: float | None = None,
-        duration: float | None = None,
-        from_timestamp: float | None = None,
-        loop: bool = False,
-    ) -> Iterator[tuple[float, T]]:
+    def _clip_rows(
+        self, seek: float | None, duration: float | None, from_timestamp: float | None
+    ) -> Callable[[], Iterator[tuple[float, T]]]:
         s = self._stream
 
         first_ts = self.first_timestamp()
         if first_ts is None:
-            return
+            return lambda: iter(())
 
         start: float | None = None
         if from_timestamp is not None:
@@ -261,13 +266,18 @@ class MemoryReplayAdapter(Generic[T]):
         else:
             bound = s
 
-        while True:
-            emitted = False
-            for obs in bound:
-                emitted = True
-                yield (obs.ts, self._decode(obs))
-            if not loop or not emitted:
-                break
+        return lambda: ((obs.ts, self._decode(obs)) for obs in bound)
+
+    def iterate_ts(
+        self,
+        seek: float | None = None,
+        duration: float | None = None,
+        from_timestamp: float | None = None,
+        loop: bool = False,
+    ) -> Iterator[tuple[float, T]]:
+        rows = self._clip_rows(seek, duration, from_timestamp)
+        for ts, data, _ in playback_frames(rows, loop):
+            yield ts, data
 
     def iterate(self) -> Iterator[T]:
         for _, data in self.iterate_ts():
@@ -328,11 +338,10 @@ class MemoryReplayAdapter(Generic[T]):
         loop: bool = False,
     ) -> Observable[T]:
         """Real-time scheduled playback as an RxPY Observable."""
-        return timed_playback(
-            lambda: self.iterate_ts(
-                seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
-            ),
-            speed=speed,
+        return rx.defer(
+            lambda _: timed_playback(
+                self._clip_rows(seek, duration, from_timestamp), speed=speed, loop=loop
+            )
         )
 
 

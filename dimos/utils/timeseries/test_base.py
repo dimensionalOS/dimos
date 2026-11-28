@@ -14,12 +14,18 @@
 """Tests for TimeSeriesStore implementations."""
 
 from dataclasses import dataclass
+from itertools import islice
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from pytest_mock import MockerFixture
 from reactivex import operators as ops
+from reactivex.testing import TestScheduler
 
 from dimos.types.timestamped import Timestamped
-from dimos.utils.timeseries.base import TimeSeriesStore
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
+from dimos.utils.timeseries.base import TimeSeriesStore, playback_frames
 from dimos.utils.timeseries.inmemory import InMemoryStore
 
 
@@ -388,3 +394,41 @@ class TestCollectionAPI:
         # [2.0, 4.0) should include b, c
         result = store.slice_by_time(2.0, 4.0)
         assert result == [SampleData("b", 2.0), SampleData("c", 3.0)]
+
+
+@pytest.mark.parametrize("backend", ["memory", "pickle"])
+def test_single_frame_clip_waits_between_passes(
+    backend: str, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    store: TimeSeriesStore[SampleData] = (
+        InMemoryStore() if backend == "memory" else LegacyPickleStore(tmp_path)
+    )
+    store.save(SampleData("before", 9), SampleData("selected", 10))
+    clock = TestScheduler()
+    mocker.patch("dimos.utils.testing.replay.time", SimpleNamespace(time=lambda: clock.clock))
+    events = []
+    with (
+        store.stream(seek=1, speed=2, loop=True)
+        .pipe(ops.take(3))
+        .subscribe(lambda frame: events.append((clock.clock, frame.ts)), scheduler=clock)
+    ):
+        clock.advance_to(1)
+    assert events == [(0, 10), (0.05, 10), (0.1, 10)]
+
+
+def test_realtime_iterator_waits_between_single_frame_passes(mocker: MockerFixture) -> None:
+    store = make_in_memory_store()
+    store.save(SampleData("before", 9), SampleData("selected", 10))
+    sleep = mocker.patch("dimos.utils.timeseries.base.time.sleep")
+    frames = store.iterate_realtime(seek=1, duration=0.1, loop=True)
+    assert next(frames).ts == 10
+    store.save(SampleData("late arrival", 8))
+    assert [frame.ts for frame in islice(frames, 2)] == [10, 10]
+    assert [call.args[0] for call in sleep.call_args_list] == pytest.approx([0.05, 0.05])
+
+
+def test_playback_frames_marks_repeated_passes_and_stops_after_an_empty_one() -> None:
+    clip = [(10.0, "a"), (10.5, "b")]
+    passes = iter([clip, clip, []])
+    frames = list(playback_frames(lambda: iter(next(passes)), loop=True))
+    assert frames == [(10.0, "a", False), (10.5, "b", False), (10.0, "a", True), (10.5, "b", False)]

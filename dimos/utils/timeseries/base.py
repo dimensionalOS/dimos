@@ -23,13 +23,38 @@ import reactivex as rx
 from reactivex import operators as ops
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from reactivex.observable import Observable
 
     from dimos.types.timestamped import Timestamped
 
 T = TypeVar("T", bound="Timestamped")
+U = TypeVar("U")
+
+LOOP_GAP = 0.05  # wall seconds between passes of timed playback
+
+
+def playback_frames(
+    source: Callable[[], Iterator[tuple[float, U]]], loop: bool
+) -> Iterator[tuple[float, U, bool]]:
+    """Yield recorded frames and mark the first frame of each repeated pass."""
+    wrapped = False
+    while True:
+        rows = source()
+        emitted = False
+        try:
+            for ts, data in rows:
+                emitted = True
+                yield ts, data, wrapped
+                wrapped = False
+        finally:
+            close = getattr(rows, "close", None)
+            if close is not None:
+                close()
+        if not loop or not emitted:
+            return
+        wrapped = True
 
 
 class TimeSeriesStore(Generic[T], ABC):
@@ -216,17 +241,13 @@ class TimeSeriesStore(Generic[T], ABC):
             return data
         return None
 
-    def iterate_items(
-        self,
-        seek: float | None = None,
-        duration: float | None = None,
-        from_timestamp: float | None = None,
-        loop: bool = False,
-    ) -> Iterator[tuple[float, T]]:
-        """Iterate over (timestamp, data) tuples with optional seek/duration."""
+    def _clip_rows(
+        self, seek: float | None, duration: float | None, from_timestamp: float | None
+    ) -> Callable[[], Iterator[tuple[float, T]]]:
+        """Resolve the bounds once and reopen just these rows for each pass."""
         first = self.first_timestamp()
         if first is None:
-            return
+            return lambda: iter(())
 
         if from_timestamp is not None:
             start = from_timestamp
@@ -240,10 +261,19 @@ class TimeSeriesStore(Generic[T], ABC):
             start_ts = start if start is not None else first
             end = start_ts + duration
 
-        while True:
-            yield from self._iter_items(start=start, end=end)
-            if not loop:
-                break
+        return lambda: self._iter_items(start=start, end=end)
+
+    def iterate_items(
+        self,
+        seek: float | None = None,
+        duration: float | None = None,
+        from_timestamp: float | None = None,
+        loop: bool = False,
+    ) -> Iterator[tuple[float, T]]:
+        """Iterate over (timestamp, data) tuples with optional seek/duration."""
+        rows = self._clip_rows(seek, duration, from_timestamp)
+        for ts, data, _ in playback_frames(rows, loop):
+            yield ts, data
 
     def iterate(
         self,
@@ -267,12 +297,12 @@ class TimeSeriesStore(Generic[T], ABC):
         loop: bool = False,
     ) -> Iterator[T]:
         """Iterate data, sleeping to match original timing."""
+
+        items = self._clip_rows(seek, duration, from_timestamp)
         prev_ts: float | None = None
-        for ts, data in self.iterate_items(
-            seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
-        ):
+        for ts, data, wrapped in playback_frames(items, loop):
             if prev_ts is not None:
-                delay = (ts - prev_ts) / speed
+                delay = LOOP_GAP if wrapped else (ts - prev_ts) / speed
                 if delay > 0:
                     time.sleep(delay)
             prev_ts = ts
@@ -292,10 +322,11 @@ class TimeSeriesStore(Generic[T], ABC):
         """
         from dimos.utils.testing.replay import timed_playback
 
-        return timed_playback(
-            lambda: self.iterate_items(
-                seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
-            ),
-            speed=speed,
-            detect_loop=loop,
+        return rx.defer(
+            lambda _: timed_playback(
+                self._clip_rows(seek, duration, from_timestamp),
+                speed=speed,
+                loop=loop,
+                detect_loop=loop,
+            )
         )
