@@ -27,6 +27,17 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
+def recording_start(store: Store) -> float | None:
+    """The earliest timestamp of any non-empty stream: what seek and duration count from."""
+    starts: list[float] = []
+    for name in store.list_streams():
+        try:
+            starts.append(float(store.stream(name).order_by("ts").first().ts))
+        except (LookupError, ImportError, AttributeError):
+            continue
+    return min(starts, default=None)
+
+
 @dataclass(frozen=True)
 class RecordingWindow:
     """Absolute interval [start, end) that every stream of a recording is cut to."""
@@ -36,10 +47,10 @@ class RecordingWindow:
 
     @classmethod
     def from_store(cls, store: Store, seek: float, duration: float | None) -> RecordingWindow:
-        """Measure seek and duration from the recording start, as ``Store.replay`` does."""
+        """Measure seek and duration from the recording start."""
         if not seek and duration is None:
             return cls()
-        first_ts = store.replay().first_ts()
+        first_ts = recording_start(store)
         if first_ts is None:
             return cls()
         start = first_ts + seek

@@ -183,6 +183,18 @@ def test_restart_preserves_parsed_instance_config(fleet_coordinator: ModuleCoord
     assert restarted_sensor.get_sensitivity() == 2.0
 
 
+def test_restart_with_config_changes_only_that_instance(fleet_coordinator: ModuleCoordinator):
+    fleet_coordinator.restart_module_by_name(
+        "robot0/sensor", reload_source=False, config={"sensitivity": 7.5}
+    )
+
+    assert fleet_coordinator.get_instance("robot0/sensor").get_sensitivity() == 7.5
+    assert fleet_coordinator.get_instance("robot1/sensor").get_sensitivity() != 7.5
+    # kept for the next restart
+    fleet_coordinator.restart_module("robot0/sensor", reload_source=False)
+    assert fleet_coordinator.get_instance("robot0/sensor").get_sensitivity() == 7.5
+
+
 def test_load_blueprint_accepts_parsed_module_config() -> None:
     blueprint = Sensor.blueprint()
     parsed = _parsed_config(blueprint, {"sensor": {"sensitivity": 3.0}})

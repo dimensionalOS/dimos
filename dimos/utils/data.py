@@ -268,18 +268,25 @@ def _decompress_archive(filename: str | Path) -> Path:
 
 
 def _pull_lfs_archive(filename: str | Path) -> Path:
-    # Find repository root
     repo_root = get_project_root()
-
-    # Construct path to test data file
     file_path = _get_lfs_dir() / (str(filename) + ".tar.gz")
 
-    # Check if file exists
-    if not file_path.exists():
-        raise FileNotFoundError(
-            f"Test file '{filename}' not found at {file_path}. "
-            f"Make sure the file is committed to Git LFS in the tests/data directory."
+    # A wheel upgrade can request an archive added after its data checkout was cloned.
+    if not file_path.exists() and repo_root != DIMOS_PROJECT_ROOT:
+        refresh = subprocess.run(
+            ["git", "pull", "--ff-only", "origin", "main"],
+            cwd=repo_root,
+            env={**os.environ, "GIT_LFS_SKIP_SMUDGE": "1"},
+            capture_output=True,
+            text=True,
         )
+        if refresh.returncode:
+            raise FileNotFoundError(
+                f"Missing archive {file_path}. Git refresh failed: {refresh.stderr.strip()}"
+            )
+
+    if not file_path.exists():
+        raise FileNotFoundError(f"Missing data archive: {file_path}")
 
     # If it's an LFS pointer file, ensure LFS is set up and pull the file
     if _is_lfs_pointer_file(file_path):
@@ -339,9 +346,15 @@ def get_data(name: str | Path) -> Path:
     archive_name = path_parts[0]
     nested_path = Path(*path_parts[1:]) if len(path_parts) > 1 else None
 
-    # Parallel callers (threads, pytest-xdist workers) must not extract the
-    # same archive at once: a reader would see half-written files.
-    with FileLock(data_dir / f".{archive_name}.lock"):
+    # A refresh can replace other archives while they are being read. Serialize
+    # cache fills in the managed checkout. Source checkouts only need per-archive locks.
+    repo_root = get_project_root()
+    lock_path = (
+        data_dir / f".{archive_name}.lock"
+        if repo_root == DIMOS_PROJECT_ROOT
+        else repo_root.parent / "repo.lock"
+    )
+    with FileLock(lock_path):
         if not (data_dir / archive_name).exists():
             _decompress_archive(_pull_lfs_archive(archive_name))
     archive_path = data_dir / archive_name
