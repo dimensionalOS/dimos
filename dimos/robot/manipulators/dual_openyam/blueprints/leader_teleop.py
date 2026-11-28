@@ -15,7 +15,9 @@
 """Two YAM leader arms drive the dual OpenYAM.
 
 The leaders' Feetech connection publishes the arms' joint targets and jaw
-openings; the coordinator's trajectory and gripper tasks follow them.
+openings; the coordinator's trajectory and gripper tasks follow them. In the
+impedance variant a ``joint_impedance`` task follows them instead, so the
+follower arms give way on contact.
 """
 
 from dataclasses import replace
@@ -39,6 +41,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
+    DamiaoMotorCommandCoordinator,
     arm_connection,
     arm_declaration,
     arm_remaps,
@@ -46,6 +49,7 @@ from dimos.robot.manipulators.damiao.damiao_blueprint import (
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_ARM_LEADERS,
     DUAL_OPENYAM_HOME_PER_ARM,
+    DUAL_OPENYAM_KD,
     DUAL_OPENYAM_LEADERS,
     DUAL_OPENYAM_SIDES,
     dual_openyam_arm_joints,
@@ -78,6 +82,16 @@ DUAL_OPENYAM_LEADER_JOINTS = [
     f"arm/{motor.joint}" for bus in DUAL_OPENYAM_LEADERS.buses for motor in bus.motors
 ]
 
+# Impedance teleop settings for joints 1 to 6 of each arm, first-try values for the bench.
+# Spring strength, in Nm/rad: about a third of the configured kp, so the arm gives on contact.
+DUAL_OPENYAM_IMPEDANCE_STIFFNESS = (25.0, 25.0, 25.0, 3.0, 3.0, 3.0)
+# Damper strength, in Nm·s/rad: the configured kd, so the arm does not swing about its target.
+DUAL_OPENYAM_IMPEDANCE_DAMPING = tuple(DUAL_OPENYAM_KD)
+# The most each spring pushes, in Nm: under a third of the motor's peak (DM4340 27 Nm for
+# joints 1-3, DM4310 7 Nm for 4-6), and more than the joint needs to move freely while the
+# robot cancels gravity.
+DUAL_OPENYAM_IMPEDANCE_MAX_TORQUE_NM = (8.0, 8.0, 8.0, 1.5, 1.5, 1.5)
+
 
 class DualOpenYamLeaderCoordinator(DamiaoCoordinator):
     """The dual OpenYAM coordinator, plus the port the leader arms' joint targets arrive on."""
@@ -85,6 +99,15 @@ class DualOpenYamLeaderCoordinator(DamiaoCoordinator):
     # The 100 Hz tick loop must not share a Python process with cameras, Viser
     # and recorders: on a Jetson that cost a quarter of its ticks and the arm
     # moved in steps.
+    dedicated_worker: ClassVar[bool] = True
+
+    leader_joint_command: In[JointState]
+
+
+class DualOpenYamImpedanceLeaderCoordinator(DamiaoMotorCommandCoordinator):
+    """Like ``DualOpenYamLeaderCoordinator``, but it also sends the arms stiffness and damping."""
+
+    # Its own process, for the same reason as DualOpenYamLeaderCoordinator.
     dedicated_worker: ClassVar[bool] = True
 
     leader_joint_command: In[JointState]
@@ -99,6 +122,30 @@ def dual_openyam_leader_velocity_limits() -> dict[str, float]:
         )
         for joint in DUAL_OPENYAM_LEADER_JOINTS
     }
+
+
+def dual_openyam_leader_impedance_task() -> TaskConfig:
+    """A ``joint_impedance`` task that follows the leaders softly, on the leader port."""
+
+    def per_joint(values: tuple[float, ...]) -> dict[str, float]:
+        return {
+            f"arm/{joint}": value
+            for side in DUAL_OPENYAM_SIDES
+            for joint, value in zip(dual_openyam_arm_joints(side), values, strict=True)
+        }
+
+    return TaskConfig(
+        name="leader_impedance",
+        type="joint_impedance",
+        joint_names=DUAL_OPENYAM_LEADER_JOINTS,
+        params={
+            "stiffness": per_joint(DUAL_OPENYAM_IMPEDANCE_STIFFNESS),
+            "damping": per_joint(DUAL_OPENYAM_IMPEDANCE_DAMPING),
+            "max_torque": per_joint(DUAL_OPENYAM_IMPEDANCE_MAX_TORQUE_NM),
+            "velocity_limits": dual_openyam_leader_velocity_limits(),
+        },
+        stream_bind={"joint_command": "leader_joint_command"},
+    )
 
 
 class DualOpenYamLeaderConnectionConfig(FeetechConnectionConfig):
@@ -215,21 +262,33 @@ def dual_openyam_leaders(
     ).remappings([(connection, "joint_state", "leader_joint_command")])
 
 
-def dual_openyam_leader_control() -> MetaBlueprint:
-    """The trajectory task fed by the leader port, plus a jaw per side, over the two-bus connection."""
+def dual_openyam_leader_control(*, impedance: bool = False) -> MetaBlueprint:
+    """The arm task fed by the leader port, plus a jaw per side, over the two-bus connection.
+
+    Args:
+        impedance: Follow the leaders with ``dual_openyam_leader_impedance_task``
+            instead of the trajectory task, so the follower arms give way on contact.
+    """
+    coordinator: type[DamiaoCoordinator | DamiaoMotorCommandCoordinator]
+    if impedance:
+        coordinator = DualOpenYamImpedanceLeaderCoordinator
+        arm_task = dual_openyam_leader_impedance_task()
+    else:
+        coordinator = DualOpenYamLeaderCoordinator
+        # The trajectory task follows the leader's targets instead of joint_command.
+        arm_task = replace(
+            joint_trajectory_task(
+                DUAL_OPENYAM_LEADER_JOINTS,
+                velocity_limits=dual_openyam_leader_velocity_limits(),
+            ),
+            stream_bind={"joint_command": "leader_joint_command"},
+        )
     return autoconnect(
-        DualOpenYamLeaderCoordinator.blueprint(
+        coordinator.blueprint(
             instance_name="ControlCoordinator",
-            connections=[arm_declaration(DualOpenYamConnection)],
+            connections=[arm_declaration(DualOpenYamConnection, motor_command=impedance)],
             tasks=[
-                # The trajectory task follows the leader's targets instead of joint_command.
-                replace(
-                    joint_trajectory_task(
-                        DUAL_OPENYAM_LEADER_JOINTS,
-                        velocity_limits=dual_openyam_leader_velocity_limits(),
-                    ),
-                    stream_bind={"joint_command": "leader_joint_command"},
-                ),
+                arm_task,
                 *[
                     TaskConfig(
                         name=f"{side}_arm_gripper",
@@ -244,8 +303,8 @@ def dual_openyam_leader_control() -> MetaBlueprint:
             ],
             zero_stiffness_joints=[],
         ),
-        arm_connection(DualOpenYamConnection),
-    ).remappings(arm_remaps(DualOpenYamConnection, DualOpenYamLeaderCoordinator))
+        arm_connection(DualOpenYamConnection, motor_command=impedance),
+    ).remappings(arm_remaps(DualOpenYamConnection, coordinator, motor_command=impedance))
 
 
 def _manipulation() -> Blueprint:
@@ -260,6 +319,11 @@ def _manipulation() -> Blueprint:
 # the leaders too when no serial port is given.
 dual_openyam_leader_teleop = autoconnect(
     dual_openyam_leaders(), dual_openyam_leader_control(), _manipulation()
+)
+
+# The same, but the follower arms give way on contact; see DUAL_OPENYAM_IMPEDANCE_*.
+dual_openyam_impedance_leader_teleop = autoconnect(
+    dual_openyam_leaders(), dual_openyam_leader_control(impedance=True), _manipulation()
 )
 
 # Leaders without trigger servos; Joy-Cons drive the jaws and pause following.
