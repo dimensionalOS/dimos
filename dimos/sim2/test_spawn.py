@@ -16,6 +16,9 @@ from __future__ import annotations
 
 import pytest
 
+# Before importing the sim, whose spawn points register a USD schema on import.
+pytest.importorskip("pxr")
+
 from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 from dimos.sim2.assets.logistics import LOGISTICS
 from dimos.sim2.assets.toy import toy_robot
@@ -23,8 +26,6 @@ from dimos.sim2.scene import scene_usd
 from dimos.sim2.sim import compose_usds
 from dimos.sim2.spawn import scene_spawn_points, spawn_frames_in_file, spawn_volume_paths
 from dimos.simulation.scenes.office_555.room import SCENE
-
-pytest.importorskip("pxr")
 
 _SPOT = "logistics/spawns/go2"
 
