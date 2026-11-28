@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import math
 from typing import Any
 
 import mujoco
@@ -27,6 +28,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
 from dimos.robot.assets.usd_utils.layers import usd_under_namespace
+from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
 from dimos.robot.unitree.go2.body_sim import GO2_BODY, GO2_JOINT_NAMES, Go2BodySim
 from dimos.sim2.body import is_site
 from dimos.sim2.mujoco.backend import MujocoBackend
@@ -46,12 +48,8 @@ def go2() -> Any:
 def _world(go2: Go2BodySim) -> MujocoBackend:
     usd = go2.config.usd
     served = usd_under_namespace(resolve_usd_assets(usd.usd, str(usd.asset_root)), _SPOT)
-    world = compose_usds(
-        [
-            (resolve_usd_assets(scene_usd(LOGISTICS).usd, str(LOGISTICS.parent)), None),
-            (served, _SPOT),
-        ]
-    )
+    room = resolve_usd_assets(scene_usd(LOGISTICS).usd, str(LOGISTICS.parent))
+    world = compose_usds([(room, None), (served, _SPOT)])
     return MujocoBackend(world, [go2.simulated_robot()])
 
 
@@ -63,9 +61,9 @@ def _step(backend: MujocoBackend, go2: Go2BodySim, seconds: float) -> None:
     go2._world.apply(backend.frame())
 
 
-def test_its_lidar_and_camera_mounts_and_its_imu_are_isaac_sim_sites(go2: Go2BodySim) -> None:
-    from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
-
+def test_its_mounts_and_imu_are_isaac_sim_sites_and_its_odometry_holds_its_body(
+    go2: Go2BodySim,
+) -> None:
     usd = go2.config.usd
     pxr = load_pxr()
     stage = pxr.Usd.Stage.Open(layer_from(pxr, usd.usd, "a robot", usd.asset_root))
@@ -73,18 +71,15 @@ def test_its_lidar_and_camera_mounts_and_its_imu_are_isaac_sim_sites(go2: Go2Bod
         assert is_site(stage.GetPrimAtPath(f"/{frame}")), frame
     assert go2.frame.lidar == f"{_SPOT}/lidar"
     assert go2.frame.camera == f"{_SPOT}/camera"
-
-
-def test_its_odometry_holds_its_body_and_nothing_static_places_it(go2: Go2BodySim) -> None:
+    # Nothing static places its body: its odometry does.
     static = {(t.frame_id, t.child_frame_id) for t in go2.static_transforms()}
-
     assert go2.body_frame == go2.tf_frames[GO2_BODY] == f"{_SPOT}/base_link"
     assert (_SPOT, go2.attach_frame) in static
     assert not any(child == go2.body_frame for _, child in static)
     assert (go2.body_frame, f"{_SPOT}/camera") in static
 
 
-def test_a_position_command_is_a_world_action_on_its_joints_with_its_usd_s_gains(
+def test_held_at_its_standing_pose_by_world_actions_it_stands_and_reads_its_joints_and_gravity(
     go2: Go2BodySim,
 ) -> None:
     backend = _world(go2)
@@ -95,24 +90,17 @@ def test_a_position_command_is_a_world_action_on_its_joints_with_its_usd_s_gains
     assert sent == [], "it commands nothing before the world shows it"
     go2._world.apply(backend.frame())
     asyncio.run(go2.handle_position_command(command))
-
+    # A position command is a world action on its joints with its USD's gains.
     [action] = read_actions(sent[0], backend.world)
     assert action.entity == _SPOT
     assert action.names == ("FL_calf_joint",)
     assert action.position == (-1.2,)
     assert (action.kp, action.kd) == ((20.0,), (0.5,))
 
-
-def test_held_at_its_standing_pose_it_stands_and_reads_its_joints_and_gravity(
-    go2: Go2BodySim,
-) -> None:
-    backend = _world(go2)
-    go2._world.apply(backend.frame())
     standing = JointState(
         name=list(GO2_JOINT_NAMES), position=[0.0, 0.8, -1.5] * 4, velocity=[0.0] * 12
     )
-    sent: list[Any] = []
-    go2.world_actions.publish = lambda message: sent.append(message) or backend.apply(  # type: ignore[method-assign,assignment,func-returns-value]
+    go2.world_actions.publish = lambda message: backend.apply(  # type: ignore[method-assign,assignment,func-returns-value]
         read_actions(message, backend.world)
     )
     base = backend.model.body(f"{_SPOT}/base_link").id
@@ -146,8 +134,6 @@ def test_held_at_its_standing_pose_it_stands_and_reads_its_joints_and_gravity(
 def test_its_odometry_starts_on_its_mount_and_its_twist_is_in_its_body_s_frame(
     go2: Go2BodySim,
 ) -> None:
-    import math
-
     standing = go2._body_on_mount[:3, 3]
     # Where it stood when the world first showed it: its odom's origin is its mount.
     start = np.array([5.0, 3.0, 0.0, 0.0, 0.0, 0.0, 1.0])
