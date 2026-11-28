@@ -15,6 +15,8 @@ root=/opt/dimos
 mkdir -p "$root"
 exec 9<"$root"
 flock 9
+# The lock is held, so a staging folder that is still there is from a killed install.
+rm -rf "$root"/.install.*
 stage="$(mktemp -d "$root/.install.XXXXXXXX")"
 trap 'rm -rf -- "$stage"' EXIT
 trap 'exit 1' HUP INT TERM
