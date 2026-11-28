@@ -61,6 +61,11 @@ def test_rust_struct_has_every_config_key() -> None:
     assert declared == _wire_fields()
 
 
+def test_infinite_replay_rate_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="replay_rate"):
+        Mid360Config(pcap="capture.pcap", replay_rate=float("inf"))
+
+
 def test_empty_pcap_is_rejected() -> None:
     with pytest.raises(ValidationError, match="DIMOS_MID360_PCAP"):
         Mid360Config(pcap="")

@@ -42,6 +42,7 @@ from dimos.navigation.bench.suite import Manifest
 from dimos.simulation.scenes.procedural import Scene
 from dimos.simulation.sim_world.world import ROOT_QUAT, load_display_spec, open_viewer, scene_model
 from dimos.utils.executable import find_executable
+from dimos.utils.timeseries.base import validate_replay_speed
 
 # Sims and drivers publish joint_state, a ControlCoordinator publishes coordinator_joint_state.
 JOINT_STREAMS = ("joint_state", "coordinator_joint_state")
@@ -167,6 +168,7 @@ def open_rerun(replay: Path) -> subprocess.Popen[bytes]:
 
 def play(episode_dir: Path, speed: float = 1.0, loop: bool = True, rerun: bool = True) -> None:
     """Move the recorded body through the episode's scene, with its replay open in Rerun."""
+    speed = validate_replay_speed(speed)
     robot = episode_dir / ROBOT_FILE
     if not robot.exists():
         raise FileNotFoundError(

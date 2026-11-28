@@ -39,6 +39,7 @@ from dimos.memory.store.base import Store
 from dimos.memory.tap import check_topics, matching
 from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.timeseries.base import ReplaySpeed
 
 if TYPE_CHECKING:
     from reactivex import Observable
@@ -52,7 +53,7 @@ logger = setup_logger()
 class ReplayModuleConfig(ModuleConfig):
     dataset: str = ""
     topics: str = "*"
-    speed: float = 1.0
+    speed: ReplaySpeed = 1.0
     loop: bool = False
     seek: float | None = None
     duration: float | None = None

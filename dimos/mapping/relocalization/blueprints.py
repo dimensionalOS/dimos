@@ -37,6 +37,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import resolve_named_path
+from dimos.utils.timeseries.base import ReplaySpeed
 from dimos.visualization.vis_module import vis_module
 
 WORLD = "odom"
@@ -45,7 +46,7 @@ WORLD = "odom"
 class RecordingPlayerConfig(ModuleConfig):
     dataset: str = "go2_mid360_sf_office_outdoors_2026-05-29"  # recording stem or path; `.db`, LFS-fetched on miss
     stream: str = "pointlio_lidar"
-    speed: float = 1.0
+    speed: ReplaySpeed = 1.0
     seek: float | None = None
     duration: float | None = None
 
