@@ -73,15 +73,21 @@ def test_module_publishes_recorded_messages(recording: str) -> None:
     assert [round(t, 3) for t in got["goal"]] == [1.05]
 
 
-def test_starting_twice_plays_once(recording: str) -> None:
+def test_starting_twice_at_once_plays_once(recording: str) -> None:
     module = replay_module(recording)(dataset=recording)
     got: list[float] = []
     module.outputs["odom"].subscribe(lambda m: got.append(m.ts))
+
+    def twice_at_once(call: Any) -> None:
+        threads = [threading.Thread(target=call) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(HUNG_TEST_TIMEOUT)
+
     try:
-        module.start()
-        module.start()
-        module.on_system_modules_ready([])
-        module.on_system_modules_ready([])
+        twice_at_once(module.start)
+        twice_at_once(lambda: module.on_system_modules_ready([]))
         assert module.replay_done.wait(HUNG_TEST_TIMEOUT)
     finally:
         module.stop()

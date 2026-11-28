@@ -28,7 +28,7 @@ import heapq
 from math import inf
 from pathlib import Path
 import sys
-from threading import Condition, Event, Thread, current_thread
+from threading import Condition, Event, Lock, Thread, current_thread
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -133,6 +133,8 @@ class ReplayModule(Module):
         super().__init__(**kwargs)
         self._rows: dict[str, Stream[Any]] = {}
         self._stopped = Event()
+        # RPCs run on their own threads, so start() and on_system_modules_ready() take turns.
+        self._start_lock = Lock()
         self._buffer = _Buffer(self.config.buffer_size, self._stopped)
         self._reader: Thread | None = None
         self._read_done = Event()
@@ -153,8 +155,12 @@ class ReplayModule(Module):
 
     @rpc
     def start(self) -> None:
-        if self._store is not None:
-            return  # already started
+        with self._start_lock:
+            if self._store is None:  # a second start() does nothing
+                self._start()
+
+    def _start(self) -> None:
+        """Open the recording and fill the playback buffer; runs once, under the start lock."""
         super().start()
         if not self.config.dataset:
             raise ValueError("no recording: pass --replay-db <memory.db>")
@@ -208,8 +214,12 @@ class ReplayModule(Module):
     @rpc
     def on_system_modules_ready(self, _modules: list[RPCClient]) -> None:
         # Every module has started, so every subscriber is listening for the first frame.
-        if self._reader is None or self._publisher is not None or self._stopped.is_set():
-            return  # not started, already playing, or stopped
+        with self._start_lock:
+            if self._reader is None or self._publisher is not None or self._stopped.is_set():
+                return  # not started, already playing, or stopped
+            self._play()
+
+    def _play(self) -> None:
         for port, msg in self._static:
             self.register_disposable(interval(1.0).subscribe(partial(_republish, port, msg)))
         self._static = []
