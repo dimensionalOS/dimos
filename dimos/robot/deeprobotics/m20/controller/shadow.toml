@@ -1,0 +1,106 @@
+# m20_shadow: the controller in dry-run next to rl_deploy on AOS (see src/shadow/mod.rs and SPEC.md). It never sends.
+
+# the ecan_tap.so shim (installed into rl_deploy by ecan_capture/record.sh install) streams here while it exists
+tap_socket = "/var/opt/robot/data/ecan_capture/live.sock"
+log_dir = "/var/opt/robot/data/m20_shadow"
+file_mb = 200
+max_total_mb = 6000
+lookahead_s = 1.0
+state_lag = 1
+# lo carries the IMU (rl_deploy's own DDS, loopback); the 10.21.31/33 networks carry the commands from NOS
+sniff_interfaces = ["lo", "eth0", "eth2"]
+# the body IMU sample: stamp, roll / pitch / yaw (deg), gyro (rad/s), accel (m/s^2)
+imu_port = 7441
+dds_port_range = [7400, 7700]
+max_pending_cycles = 20000
+imu_sample_bytes = 56
+command_timeout_s = 0.15
+journal_unit = "rl_deploy"
+rl_log = "/var/opt/robot/log/{date}/rl_deploy.{date}.log"
+utc_offset_s = 28800
+enable_word = 2
+stand_in_gait = 0xf001
+finetune_height_gait = 0x3004
+cpus = [1, 2, 3]
+nice = 10
+status_every = 10000
+# IMU / steer history kept (s); a segment's state is the journal's last word up to state_lookup_slack_s past its
+# first enable frame; at most max_catchup_ticks control ticks for cycles the shim missed
+keep_s = 30.0
+state_lookup_slack_s = 0.01
+max_catchup_ticks = 50
+# longest wait on a silent shim stream (stop latency, last cycles); lines of history read from journal / rl_deploy log
+tap_idle_timeout_ms = 200
+journal_history_lines = 5000
+rl_log_history_lines = 20000
+
+# the guard (deploy/shadow/guard.sh) stops the shadow when rl_deploy's "send Data update timeout" count rises faster
+# than guard_factor x its background (counted over guard_baseline_s before the guard starts, or after a restart's
+# settle), never below guard_per_hour, + guard_slack; a restart's first guard_settle_s are not counted. Measured
+# 2026-11-20: 8-11 per 10 min before 18:53, then 6-30 per minute after that restart with no shadow running
+guard_per_hour = 90
+guard_factor = 1.5
+guard_baseline_s = 600
+guard_log = "/var/opt/robot/data/m20_shadow/log/guard.log"
+guard_slack = 5
+guard_settle_s = 120
+
+# /NAV_CMD from NOS (m/s, rad/s) and the charge manager's steer (normalized x, y, z, roll, pitch, yaw)
+[[command_writers]]
+entity = "00000503"
+x = 0
+y = 1
+yaw = 2
+metric = true
+
+[[command_writers]]
+entity = "00000803"
+x = 0
+y = 1
+yaw = 5
+z = 2
+roll = 3
+pitch = 4
+metric = false
+
+# rl_deploy HandlerSteer: the stand gaits read the steer as pose inputs
+[[pose_inputs]]
+gait = 0xf001
+param = "yaw"
+axis = "yaw"
+scale = 1.0
+[[pose_inputs]]
+gait = 0xf001
+param = "dx"
+axis = "x"
+scale = -1.0
+[[pose_inputs]]
+gait = 0xf001
+param = "dy"
+axis = "y"
+scale = -1.0
+[[pose_inputs]]
+gait = 0xf001
+param = "roll"
+axis = "roll"
+scale = 1.0
+[[pose_inputs]]
+gait = 0xf001
+param = "pitch"
+axis = "pitch"
+scale = 1.0
+[[pose_inputs]]
+gait = 0x3004
+param = "yaw"
+axis = "yaw"
+scale = 7.0
+[[pose_inputs]]
+gait = 0x3004
+param = "dx"
+axis = "x"
+scale = -24.0
+[[pose_inputs]]
+gait = 0x3004
+param = "dy"
+axis = "y"
+scale = -18.0

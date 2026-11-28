@@ -347,6 +347,26 @@ mod tests {
     }
 
     #[test]
+    fn each_cloud_is_traced_from_its_own_sensor_origin() {
+        // Clouds from two sensors interleave on one input; each pose is that cloud's frame at its stamp.
+        let at = |x: f32| Pose {
+            position: (x, 0.0, 0.0),
+            orientation: IDENTITY,
+        };
+        let wall = (5.5, 0.5, 0.5);
+        for (origin, cleared) in [(10.0, true), (0.0, false)] {
+            let mut mapper = Mapper::new(config());
+            mapper.add_frame(vec![wall], at(0.0));
+            // a return at world (2.5, 0.5, 0.5): from x = 10 the ray crosses the wall's voxel, from x = 0 it does not
+            mapper.add_frame(vec![(2.5 - origin, 0.5, 0.5)], at(origin));
+            assert_eq!(mapper.last_origin(), (origin, 0.0, 0.0));
+            let global = mapper.global_points();
+            let has_wall = global.chunks(3).any(|p| (p[0], p[1], p[2]) == wall);
+            assert_eq!(has_wall, !cleared, "sensor at x = {origin}: {global:?}");
+        }
+    }
+
+    #[test]
     fn world_frame_add_skips_registration() {
         let mut mapper = Mapper::new(config());
         mapper.add_frame_world(vec![(5.5, 0.5, 0.5)], (0.0, 0.0, 0.0));

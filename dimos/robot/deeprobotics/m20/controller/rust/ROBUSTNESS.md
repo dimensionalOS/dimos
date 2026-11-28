@@ -1,0 +1,129 @@
+# M20 controller: does any command make the robot freak out?
+
+**0 of 2523 sim cases freak out with ours (rl_deploy's behavior: 265).** The Rust controller and its policies against
+the MuJoCo sim (`tests/robustness.rs`, lockstep, one tick of policy latency):
+
+- every gait code (17 + 0x1005 + 0x9999) to every other, standing still (306)
+- every runner to every other (+ 0x9999) switched at the stop from walking fast / slow, backward, strafing, turning
+  hard (2.5 s each; moving again 0.1 s after the switch), and with another switch 50 ms in flight (936)
+- every code while lying, right as the 0x1001 stand-in hands over, and resent through the stand-in (57)
+- stand, lie down, passive, damping, RL control, align (0xf003) from still / fast / backward / strafe / turn /
+  mid-switch, every runner (432)
+- A -> B -> A within 50 ms (132), stand / lie / RL spam every 0.1 s, gait spam every 50 ms (still and walking)
+- axes at +-1, +-10, NaN, inf, a +1 -> -1 reversal, /REAL_STEER 100 m/s and NaN, pose params +-5 / NaN / inf, mode 5,
+  each pose input alone at either end (348)
+- a 10 and a 15 deg slope, facing up and across: standing, lie-down, damping, a switch, every runner (192)
+- the operator falling silent while fast / turning / strafing (36); usage mode 1 -> 0 / 2 through basic_server's
+  layer (48)
+
+Each case starts standing on navi_charge (forced rl_control, 1 s), switches to its source gait, sets its start state
+from 3 s, does the event at 5.5 s and is scored from then on. `M20_ROBUSTNESS_FULL=1` starts from lying instead
+(stand-up, the 0x1001 stand-in, basic_flat, then the source gait): 0 of 1194 (gait from still, every motion command,
+baselines, slopes, extremes standing).
+
+## Freak-out
+
+Scored in rl_control after the event: fell (tilt > 1 rad, or the trunk on the ground while held), a fault or joint
+damping nobody asked for, a non-finite command, tilt > 30 deg, a leg joint within 0.01 rad of its stop, a leg target
+jumping > 1.5 rad between ticks (calm walking: up to 0.76), a leg torque-saturated 100 ms in a row, body rate
+> 6 rad/s (calm walking: 3.1), and a lie-down or damping that never lies down. Every baseline (each runner still and
+at each moving start state's speed) is calm.
+
+## Results
+
+| family | rl_deploy's behavior | ours |
+|---|---|---|
+| gait switches | 133 / 1227 | 0 / 1227 |
+| extreme commands | 100 / 348 | 0 / 348 |
+| toggles / spam | 19 / 168 | 0 / 168 |
+| motion commands | 11 / 432 | 0 / 432 |
+| slopes | 2 / 192 | 0 / 192 |
+| stale, usage mode, baseline | 0 / 156 | 0 / 156 |
+| **total** | **265 / 2523** | **0 / 2523** |
+
+Every row (`zcat`): `ROBUSTNESS.tsv.gz` (ours), `ROBUSTNESS_vendor.tsv.gz` (`M20_ROBUSTNESS_VENDOR=1`,
+Config::rl_deploy), `ROBUSTNESS_full.tsv.gz` (ours from lying). Rebuild: `cargo test --release --test robustness --
+--ignored matrix --nocapture` (~17 min on 14 sims; M20_SIM_PYTHON, M20_ROBUSTNESS_FILTER).
+
+## What freaked out, why, and what we do instead
+
+Each is a switch in `m20_controller.toml` defaulting to ours; `Config::rl_deploy()` turns them all off (the recording
+replays and the golden test run on it).
+
+| what (rl_deploy) | why | ours (toml) |
+|---|---|---|
+| basic_flat -> navi_flat / navi_orienteer: 2-3.7 rad target jump, hr_hipy past its limit (the robot faulted there too) | basic_flat's tall stance is outside their training distribution | `safe_switch.bridge_pairs`: run `bridge` (the 1.5 s six_axis_stand stand-in rl_deploy runs before 0x3001) first |
+| to / from basic_backknee and height_gap, to step_move: falls, 9-17 rad/s flails, 1.6 rad jumps | backknee's hind knees bend the other way; height_gap's stance is far from the rest; step_move steps from its first step | bridged |
+| a switch to a stand gait at the stop from 1-2 m/s: 40 falls | rl_deploy switches once the *command* is still; the body still rolls | `safe_switch.still` (wheels' mean rim speed, body rate), or `settle_below_m_s` / `settle_decel_m_s2`: the wheels no longer slowing under 0.3 m/s (a slope, a drift) |
+| every runner switch: 1.0-1.4 rad first-step jumps | the new runner's first targets replace the last at once | `safe_switch.blend_s` 0.1 s |
+| lie-down from 1-2 m/s or mid-step (extre, navi_flat, basic_plat, step_move) tipped over | rl_deploy lies down at once | `lie_down_when_still`: command zeroed, lies once settled with the legs under `lie_leg_rad_s`; step_move (`lie_bridge_from`) stands on the bridge first |
+| joint damping while strafing tipped basic_flat / plat / stair over | damping drops the legs at once | `joint_damping.lie_down_first(_on_command)`: the operator's damping and every fault the motors can act on stop and lie down first, then damp; a driver status-word fault damps at once; the hardware e-stop is not this path |
+| a gait sent during a stand-in is lost | the stand-in writes 0xf001 over the gait slot | `safe_switch.keep_gait_during_stand_in` |
+| NaN axes / velocity: NaN targets, NaN fault | the runner's clamp keeps NaN | `safety.finite_commands` |
+| pose params out of range / NaN, extre mode 5; all pose inputs at +-1 together: hipx on its stop 3 s | ours are params, not clipped axes | `param_limits`, `param_budget` (roll, pitch, yaw, dx, dy share one range) |
+| extre / basic_flat / step_move at the full axes: 1.6-1.9 rad steps, saturation; basic_plat's +1 -> -1 reversal tipped 51 deg | command_max up to 3.9 m/s; no slew on most runners | `safety.command_limit` (basic_server.toml's 2.0 / 1.0 / 1.0), step_move and height_gap tighter; `default_command_slew` = basic_stair's |
+
+## Faults the stop cannot trust
+
+A lie-down first stops the robot with the policy and the sensors; when they are what faulted it lies down at once
+(`joint_damping.sensor_fault_lies_down`; false: damps at once): joint data (NaN, frozen, out of range), the tilt, a
+stalled IMU (`safety.imu_timeout_s` 0.1 s: rl_deploy only sets a status bit past 20 ms), the motor board missing
+`safety.missed_replies` 50 replies in a row (rl_deploy's "joint data not updated for 50 ms"), a policy error or a
+policy thread silent for `safety.policy_missed_steps` 5 periods. Only a temperature fault stops first; a driver
+status-word fault damps at once. rl_deploy has none of the three new faults (Config::rl_deploy turns them off).
+
+## Around the walking (ours; rl_deploy() turns each off)
+
+- Docking (`dock.sequence.abort_on_fault`): charge_manager has no fault input, so after a fault a retry or an undock
+  would stand the robot up unasked; a controller fault or a joint damping docking did not ask for ends docking in its
+  error state (0x10f0, ours), passive, charging excepted; nothing stands until the operator asks.
+- A start with the legs up (`stand_up.lie_down_at_start_when_up`): rl_deploy's start-up state sends zero gains, so a
+  restart while the motors hold a stand drops it; ours lies down from the current pose (sim: lies without tilting).
+- A panic in the tick: the loop catches it and sends joint_damping's gains for the shutdown's damping ticks.
+- Battery (`[battery]`, IsBatteryNormal 0x174e30's levels in controller_report): rl_deploy only reports them; at the
+  error level (every pack under 6 %, or at 54 V until 58 V) ours refuses stand-ups and lies a standing robot down.
+- The gait clocks (`timing.gait_clock_wrap`): rl_deploy's f32 step counter grows while it stands until +1 is lost at
+  2^24 steps (93 h) and the clock freezes; ours restarts it at each period's wrap (the same values until then).
+
+## height_gap
+
+Its height map was the sim's guess (it fell walking on its own). rl_deploy's HeightsSubCallback (0x176bf0) and the
+EcanHardwareInterface ctor (0x1801c8) give the convention: h = terrain relative to the base, v = -(h + 0.46), a gap
+(v > 0.18) in rows 0-19 is 0.6, the last row repeats, out column by column from the last (SPEC "HeightGap height
+map"). With it height_gap stands and walks in every baseline; its 280 cases are all calm. Still [U]: the grid spacing
+and which way the rows run (the sim's 0.05 m, row 0 in front).
+
+## Drift
+
+At a zero command the policies' wheel targets carry a common-mode bias, so rl_deploy's robot creeps (sim: 0.84 m in
+15 s on navi_orienteer; basic_stair +0.04 m/s, basic_backknee +0.09). Ours (`[states.rl_control.zero_command]
+cancel_wheel_drift`): while the operator's command and the runner's ramped command are both zero the four wheel
+targets' mean is subtracted, the differential kept for balance (`tests/drift.rs`): 15 s still on 0x3003 / 0x3005 /
+0x1004 moves 1.6-18 mm (under 1 mm/s); a 0.2 m/s shove rolls 3 cm and stops; after a 0.5 m/s walk the hold moves 6 mm;
+a command from rest starts as rl_deploy's does (within 5 mm/s at every instant).
+
+On a slope the wheels, velocity-only (kp 0), roll with any along-heading gravity: across 15 deg basic_stair rolled
+10-23 cm in 15 s, navi_flat 20-38, navi_orienteer 15-21 (sim). Ours (`hold_kp`, `hold = "common"`): at the same zero
+command the 4 wheels' mean position springs back (kp 10) to where it was when the command stopped, the differential
+left to the policy; every rolling gait (0x1001 / 1002 / 3003 / 1004 / 3002 / 3005 / 5001) moves under 1.2 cm in 15 s
+across 10-15 deg and facing up 15 deg (`a_zero_command_holds_on_a_slope`), and a command on the slope starts as it does
+without the hold. A hold of each wheel or of each side made navi_flat / basic_plat slide or turn 1-10 cm. These sims
+use MuJoCo's noslip contact: its default soft contact lets a held wheel creep 4 cm in 15 s on 15 deg with no
+controller at all (the earlier "the hold is worse facing up" was that creep).
+
+navi_charge steps in place at a zero command and extre re-poses its legs (into a lopsided stance, one wheel nearly
+unloaded) and brakes with the wheels' common mode, so neither takes the cancel or the hold (`off_runners`; sim: the
+cancel slid navi_charge 23 cm in 15 s, 3.5 without, and kept extre rolling 1.2 m after a 0.75 m/s stop that rl_deploy
+ends in 0.2 s; no cancel, hold, per-wheel hold or cycle-averaged cancel kept extre from rolling 0.1-2.7 m, and the
+per-wheel hold tilted it 45 deg across a slope). Once still (`safe_switch.still`) at a zero command extre stands on
+safe_switch's bridge until the next command or gait (`stand_runners`): 15 s on 0x2001-0x2004 moves 1-3 mm on flat and
+across 15 deg, and a stop from 0.75 m/s ends 6.5 cm on and moves under 1 cm after (`tests/drift.rs`). A command from the stand restarts
+extre: its 37-step warm-up holds it 0.74 s before it moves. navi_charge still drifts as rl_deploy's does (3.5 cm in
+15 s on flat, 8.7 cm across 15 deg): standing it on the bridge held it to 0-3 mm, but then every switch out of it
+starts from the bridge (navi_flat slid 48 cm across 15 deg after one), and docking stands and steers on it.
+
+## Not covered
+
+Steps, stairs and gaps (all flat or sloped ground), payloads, IMU / joint noise and bus dropouts, the real robot's
+numbers for `still` and `settle_*`, docking during these events, recovery after a fall, the hardware e-stop, and
+navi_charge's zero-command drift (3.5 cm in 15 s on flat, 8.7 cm across 15 deg in the sim).

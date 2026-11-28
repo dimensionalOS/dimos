@@ -24,16 +24,14 @@ from dimos.navigation.embodiment.m20 import M20
 from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
 from dimos.navigation.global_planner.viz import render_goal, render_path
 from dimos.navigation.local_planner.viz import motion_visual_override
-from dimos.robot.deeprobotics.m20.blueprints._nav import (
-    PLANNER_VIZ_HZ,
-    VOXEL_SIZE_M,
-    WALL_CLEARANCE_M,
-)
 from dimos.robot.deeprobotics.m20.constants import (
     BASE_LINK_HEIGHT_M,
     BODY_LENGTH_M,
     BODY_WIDTH_M,
+    PLANNER_VIZ_HZ,
     PLANNING_HEIGHT_M,
+    VOXEL_SIZE_M,
+    WALL_CLEARANCE_M,
 )
 
 if TYPE_CHECKING:

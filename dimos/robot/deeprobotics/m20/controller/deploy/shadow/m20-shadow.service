@@ -1,0 +1,17 @@
+[Unit]
+Description=M20 shadow: the Rust controller in dry-run beside rl_deploy (passive inputs only; logs, never sends)
+After=rl_deploy.service
+
+[Service]
+WorkingDirectory=/var/opt/robot/data/m20_shadow
+ExecStart=/var/opt/robot/data/m20_shadow/bin/m20_shadow --config m20_controller.toml --shadow shadow.toml --policies policies
+# off rl_deploy's real-time cores (4-7)
+CPUAffinity=1 2 3
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=1G
+Restart=no
+# why it ended, outside the journal (which resets on this board)
+StandardOutput=append:/var/opt/robot/data/m20_shadow/log/shadow.log
+StandardError=append:/var/opt/robot/data/m20_shadow/log/shadow.log
+ExecStopPost=/bin/sh -c 'echo "$$(date -Is) m20-shadow ended: result=$$SERVICE_RESULT exit=$$EXIT_CODE/$$EXIT_STATUS" >> /var/opt/robot/data/m20_shadow/log/exits.log'

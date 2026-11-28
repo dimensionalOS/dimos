@@ -701,3 +701,79 @@ def test_clouds_without_a_transform_are_skipped(module):
     m._relocalize(PointCloud2.from_numpy(np.zeros((3, 3), dtype=np.float32), frame_id="nowhere"))
     assert attempts == []
     assert m._refusals == 0
+
+
+def test_folded_scans_are_kept_in_map_whatever_world_to_map_does(module):
+    """lidar_live_map: a body scan folds into the live map placed by map -> base_link at its stamp."""
+    m = module(map_frame="premap", relocalize_once=False, live_cloud="lidar", lidar_live_map=True)
+    m.tf = SimpleNamespace(publish=lambda _: None)
+    odom = Transform(translation=Vector3(1.0, 0.0, 0.0), frame_id="map", child_frame_id="base_link")
+    m._tf = SimpleNamespace(
+        get=lambda parent, child, *_: odom if (parent, child) == ("map", "base_link") else None,
+        dispose=lambda: None,
+    )
+    scan = PointCloud2.from_numpy(np.asarray([[2, 0, 0]], dtype=np.float32), frame_id="base_link")
+    m.submit(_fix(2.0))
+    m.submit(_fix(5.0, 90.0))  # world -> map jumps
+    m._on_scan(scan)
+    m._keep_scans()
+    assert held(m.live) == [(3, 0, 0)]
+    assert m._center == (1.0, 0.0)
+
+
+def _scan_from(frame: str) -> PointCloud2:
+    return PointCloud2.from_numpy(np.asarray([[2, 0, 0]], dtype=np.float32), frame_id=frame)
+
+
+@pytest.mark.parametrize(
+    ("attempt_after_frames", "frames", "attempts"),
+    [
+        # every scan starts an attempt by default
+        ([], ["front", "rear", "front"], 3),
+        # one attempt per sweep of both lidars, whichever lands first, and a lidar seen twice still waits for the other
+        (["front", "rear"], ["front", "rear", "rear", "front", "front"], 2),
+    ],
+)
+def test_an_attempt_waits_for_a_scan_from_every_configured_frame(
+    module, attempt_after_frames, frames, attempts
+):
+    m = module(
+        map_frame="premap",
+        relocalize_once=False,
+        live_cloud="lidar",
+        lidar_live_map=True,
+        attempt_after_frames=attempt_after_frames,
+    )
+    m._tf = SimpleNamespace(
+        get=lambda *_: Transform(frame_id="map", child_frame_id="x"), dispose=lambda: None
+    )
+    changes = []
+    m._live_changed.subscribe(changes.append)
+    for frame in frames:
+        m._on_scan(_scan_from(frame))
+        m._keep_scans()
+    assert len(changes) == attempts
+    # every scan still joins the live map
+    assert len(held(m.live)) == 1
+
+
+def test_an_attempt_comes_on_every_nth_complete_sweep(module):
+    m = module(
+        map_frame="premap",
+        relocalize_once=False,
+        live_cloud="lidar",
+        lidar_live_map=True,
+        attempt_after_frames=["front", "rear"],
+        attempt_every_sweeps=3,
+    )
+    m._tf = SimpleNamespace(
+        get=lambda *_: Transform(frame_id="map", child_frame_id="x"), dispose=lambda: None
+    )
+    changes = []
+    m._live_changed.subscribe(changes.append)
+    for _ in range(7):
+        for frame in ("front", "rear"):
+            m._on_scan(_scan_from(frame))
+            m._keep_scans()
+    # sweeps 3 and 6 of 7
+    assert len(changes) == 2

@@ -1,0 +1,1777 @@
+// Copyright 2026 Dimensional Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! charge_manager's dock / undock sequence stepped once per control tick ([`Docking`]), and the command source that
+//! puts it in front of the operator's ([`DockingCommands`]). The per-pose decisions are [`super::vendor::ChargeCore`];
+//! this is what blocks in the vendor, as phases:
+//!
+//! Dock (DoChargeTask + goToPileAction): the detector restarts and FindTarget waits for its first pose; the obstacle
+//! check opens looking ahead (obstacle_open_ms); NaviCharge, held gait_settle_ms (WideWalk); the loop: the start point,
+//! the staging point, the fine point, every pose steering; FinetuneStand (setFineTuneStandMode); its loop of pose
+//! inputs; (0, 0, 0, sit_z) for sit_hold_ms; lie down; three charge-enables charge_sleep_ms apart (power_on_ms), then
+//! first_detection_current_timeout for every pack's charge MOS. Charging: a charge-enable every charge_wait_ms +
+//! charge_sleep_ms (an undock asked for in the sleep starts when it ends). No charge: stand on NaviCharge,
+//! retry_settle_ms, approach again (adjust_posture_times); used up, NoChargePlug_way: goBack stands, restarts the
+//! detector and undocks, sitDown stays lying.
+//!
+//! Undock (DoOverChargeTask + exitPileAction, only from charging or after a failure): charge-enable 0, the detector
+//! restarts and FindTarget waits (lying); the obstacle check opens looking back; stand (StandUp2WideWalk: stand,
+//! stand_rl_control_ms, rl_control and NaviCharge); the back-off kick; back off to the exit staging point and on to
+//! where docking started (back_way); the motion state docking started from, restore_ms, its gait, charge-enable 0.
+//!
+//! What charge_manager writes to rl_deploy (motion state, gait, steer, charge-enable) is written here as [`Write`]s at
+//! the same points, and the controller's command follows from them.
+//!
+//! In every loop a pose missing for pose_wait_ms stops the robot, and enough in a row restart the detector (a FindTarget
+//! that fails lies the robot down). A steer holds until the next or steer_timeout_ms (rl_deploy). Every time is
+//! counted in control ticks.
+//!
+//! Ours on top: refuses unless standing in rl_control with no fault and the stand-in over; a controller fault lies the
+//! robot down; an operator motion command ends it.
+
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
+
+use serde::Serialize;
+
+use super::config::SequenceConfig;
+use super::vendor::{
+    ChargeCore, ChargeManagerToml, ChargeParams, Direction, Event, Failure, NoCharge, Outcome,
+    ReflectorFilter, Steer, TargetPose,
+};
+use super::{ChargeReading, DockPose};
+use crate::commands::CommandSource;
+use crate::config::Config;
+use crate::rt::try_read;
+use crate::state_machine::{Controller, State};
+use crate::types::{Target, UserCommand};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Request {
+    Dock,
+    Undock,
+    Cancel,
+}
+
+impl Request {
+    pub fn parse(s: &str) -> Option<Request> {
+        match s.trim() {
+            "dock" => Some(Request::Dock),
+            "undock" => Some(Request::Undock),
+            "cancel" => Some(Request::Cancel),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum Phase {
+    Idle,
+    /// the detector restarted: waiting for its first pose (FindTarget)
+    FindTarget,
+    /// ObstacleDetection::Open's obstacle_open_ms sleep before what FindTarget leads to
+    OpenObstacle,
+    /// charge_manager waiting on its detector process's service (detector_service): the replies still to come
+    DetectorCall,
+    /// switching to NaviCharge, then held gait_settle_ms (WideWalk)
+    EnterGait,
+    /// goToPileAction's loop: the start point, the staging point, the fine point
+    Approach,
+    /// switching to FinetuneStand (setFineTuneStandMode)
+    EnterFinetune,
+    Finetune,
+    /// (0, 0, 0, sit_z) held sit_hold_ms
+    SitHold,
+    LyingDown,
+    /// power_on_ms, then up to first_detection_current_timeout for the charge
+    ConfirmCharge,
+    /// no charge: standing on NaviCharge again, then retry_settle_ms
+    StandForRetry,
+    /// lying on the dock (charging, or waiting for it after NoChargePlug_way = sitDown), until undock
+    Charging,
+    /// the detector restarting mid-loop (FindTarget again)
+    Restart,
+    /// undocking (or giving up): StandUp2WideWalk
+    StandUp,
+    BackOff,
+    /// undocked: restore_ms, then the gait docking started from
+    Restore,
+}
+
+/// What the sequence needs from the controller each tick.
+#[derive(Debug, Clone, Default)]
+pub struct View {
+    pub state: Option<State>,
+    pub fault: bool,
+    pub runner: Option<String>,
+    pub stand_in: bool,
+    /// the gait walking is on
+    pub gait: u32,
+    /// control ticks the controller has been in `state`
+    pub state_ticks: u64,
+}
+
+impl View {
+    /// Refresh from the controller (no allocation unless the runner changed).
+    pub fn update(&mut self, c: &Controller) {
+        if self.state == Some(c.state) {
+            self.state_ticks += 1;
+        } else {
+            self.state = Some(c.state);
+            self.state_ticks = 0;
+        }
+        self.fault = c.fault.is_some();
+        self.stand_in = c.in_stand_in();
+        self.gait = c.gait();
+        if self.runner.as_deref() != c.current_runner() {
+            self.runner = c.current_runner().map(String::from);
+        }
+    }
+
+    fn is(&self, state: State) -> bool {
+        self.state == Some(state)
+    }
+
+    fn on(&self, runner: &str) -> bool {
+        !self.stand_in && self.runner.as_deref() == Some(runner)
+    }
+
+    /// charge_manager's charging loop (0x182160) keeps a charge in motion states 0 and 2..4, else command 2
+    fn lying(&self) -> bool {
+        matches!(
+            self.state,
+            Some(State::Passive | State::JointDamping | State::StartDamping | State::LieDown)
+        )
+    }
+}
+
+/// The command the sequence sends this tick.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Output {
+    pub target: Target,
+    pub gait: u32,
+    pub axes: [f64; 3],
+    /// FinetuneStand's pose inputs (dx, dy, yaw, height) while finetuning
+    pub pose: Option<[f64; 4]>,
+    /// charge_manager's /BATTERY_CHARGE_ENABLE written this tick (rl_deploy: 1 sends the board 3 charge-enable frames)
+    pub charge_enable: Option<i32>,
+}
+
+/// The command parameters that carry a charge-enable write to the bus: its value and its count.
+pub const CHARGE_ENABLE_PARAM: &str = "charge_enable";
+pub const CHARGE_ENABLE_SEQ_PARAM: &str = "charge_enable_seq";
+
+/// rl_deploy's MotionState codes as charge_manager writes them.
+pub const MOTION_STAND: i32 = 1;
+pub const MOTION_LIE_DOWN: i32 = 4;
+pub const MOTION_RL_CONTROL: i32 = 17;
+/// charge_manager's ChargeTaskStatus codes (DoExcepHandlingProcess 0x17fdb0 acts on them)
+pub const RESTART_LOCATION_FAILED: u32 = 0x1002;
+pub const GO_TO_PILE_FAILED: u32 = 0x1005;
+pub const STAND_UP_FAILED: u32 = 0x1006;
+pub const NO_CHARGE_PLUG: u32 = 0x1007;
+pub const OBSTACLE_TIMEOUT: u32 = 0x1009;
+pub const EXIT_PILE_TIMEOUT: u32 = 0x100a;
+/// ours (dock.sequence.abort_on_fault), not a charge_manager code: docking ended on a controller fault
+pub const CONTROLLER_FAULT: u32 = 0x10f0;
+
+/// What charge_manager writes to rl_deploy (DDS /MOTION_STATE, /GAIT, /CHARGE_CMD, /BATTERY_CHARGE_ENABLE), written by
+/// this sequence where and in the order charge_manager writes it; the commands it sends the controller follow from
+/// them. [`Docking::record_writes`] keeps them for comparing with a recording.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Write {
+    MotionState(i32),
+    Gait(u32),
+    Steer(Steer),
+    ChargeEnable(i32),
+}
+
+fn motion_code(t: Target) -> Option<i32> {
+    match t {
+        Target::Stand => Some(MOTION_STAND),
+        Target::LieDown => Some(MOTION_LIE_DOWN),
+        Target::RlControl => Some(MOTION_RL_CONTROL),
+        Target::Passive | Target::JointDamping => None,
+    }
+}
+
+fn motion_target(code: i32) -> Option<Target> {
+    match code {
+        MOTION_STAND => Some(Target::Stand),
+        MOTION_LIE_DOWN => Some(Target::LieDown),
+        MOTION_RL_CONTROL => Some(Target::RlControl),
+        _ => None,
+    }
+}
+
+/// rl_deploy's MotionState code for a controller state (what charge_manager reads from /MOTION_INFO).
+fn state_code(s: Option<State>) -> i32 {
+    match s {
+        Some(State::StandUp) => MOTION_STAND,
+        Some(State::LieDown) => MOTION_LIE_DOWN,
+        Some(State::RlControl) => MOTION_RL_CONTROL,
+        _ => 0,
+    }
+}
+
+/// The sequence's state as published (dock_state).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Status {
+    pub phase: Phase,
+    /// docking or undocking (the sequence drives the controller)
+    pub active: bool,
+    /// tries after the first that found no charge
+    pub retries: u32,
+    /// the last sequence's outcome ("" while none ended yet)
+    pub result: String,
+    pub error: bool,
+    pub charging: bool,
+    pub packs_present: u8,
+    pub packs_charge_mos_on: u8,
+    /// charge_manager's (x m, y m, yaw rad) at the fine point
+    pub fine_point: Option<[f32; 3]>,
+    /// where docking started (mInit: x m out from docked, y m, yaw rad), the undock's goal with back_way = auto
+    pub start_point: Option<[f32; 3]>,
+    /// the obstacle check is open, looking this way (the detector module runs it)
+    pub obstacle: Option<Direction>,
+    /// stopped for an obstacle this far (m)
+    pub obstacle_stop: Option<f32>,
+    /// charge_manager.toml is read
+    pub vendor_config: bool,
+    /// charge_manager's error state with NOCHARGEPLUG (0x1007)
+    pub no_plug: bool,
+    /// charge_manager's error state (4) and its code
+    pub error_code: Option<u32>,
+    /// an undock (exitPile) is under way, not a dock
+    pub undocking: bool,
+}
+
+/// What charge_manager does once its detector process's service calls return.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AfterCalls {
+    /// OpenMarkerProcess (close, open): FindTarget
+    FindTarget(Next),
+    /// the undock's end (close, CloseMarkProcess's close): Close24vPower, idle
+    Undocked,
+    /// charging confirmed (CloseMarkProcess): the charging loop
+    Charging,
+}
+
+/// What a FindTarget / stand-up leads to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Next {
+    Dock,
+    Undock,
+    BackOff,
+    /// stood up after giving up: restart the detector, then back off
+    FindTarget,
+    /// goToPile's no-charge retry (0x1814e0): StandUp2WideWalk, then sleep(2), the kicks and the approach again
+    Retry,
+}
+
+/// One pose's charge_manager inputs from our detector's pose.
+fn target_pose(p: &DockPose, docked_x: f64) -> (f64, f64, f64) {
+    let [out, y, yaw] = p.robot_in_dock();
+    (docked_x - out, -y, yaw)
+}
+
+pub struct Docking {
+    seq: SequenceConfig,
+    hz: f64,
+    charge_enabled: bool,
+    approach_runner: String,
+    finetune_runner: String,
+    core: Option<ChargeCore>,
+    filter: ReflectorFilter,
+    pose_offset_x: f64,
+    phase: Phase,
+    ticks_in_phase: u64,
+    /// control ticks since start
+    tick: u64,
+    next: Next,
+    resume: Phase,
+    giving_up: bool,
+    /// the phase's runner is up (ticks_in_phase counts from then)
+    on_runner: bool,
+    pose_seq: Option<u64>,
+    /// the pose the detector's output stage published this tick
+    published: Option<TargetPose>,
+    /// when the loop's 200 ms pose wait started (us of control time): a pose, or the last missed wait's end plus
+    /// charge_manager's own time logging and stopping
+    woke_at_us: u64,
+    /// the last steer and the tick it went out
+    steer: Option<(Steer, u64)>,
+    target: Target,
+    gait: u32,
+    /// the gait to restore after an undock (mInitRobotGaitStatus_)
+    restore_gait: u32,
+    charge: Option<ChargeReading>,
+    /// the charge counts from readings after this one (the vendor clears its flag at the dock's start)
+    charge_seq_at_start: u64,
+    obstacle: Option<(Option<f32>, u64)>,
+    obstacle_open: bool,
+    obstacle_seq_at_open: u64,
+    status: Status,
+    /// what was written, kept when recording
+    record: Option<Vec<(u64, Write)>>,
+    charge_enable_now: Option<i32>,
+    /// charge-enables written so far
+    pub charge_enables: u64,
+    /// the motion state to restore after an undock (mInitRobotStatus_)
+    restore_state: i32,
+    /// an undock asked for while charging, taken at the charging loop's next wake
+    undock_pending: bool,
+    /// the charging loop: the tick of its next charge-enable write, and the end of the sleep after the last one
+    charge_next_write: u64,
+    charge_sleep_until: u64,
+    /// StandUp2WideWalk: the tick it writes rl_control and the gait (2 s after stand), once
+    stand_at: Option<u64>,
+    /// detector service replies still to come, and what follows them
+    calls_pending: u32,
+    calls_then: Option<AfterCalls>,
+    /// charge_manager's PowerOnSelfTest, run once charge_manager.toml is read
+    startup: Option<Startup>,
+    /// charge_manager's idle loop: its next 3 s wake (it then takes a charge it sees: state 0 -> 2)
+    idle_check_at: u64,
+    /// charge_manager's command is 1 (a dock, or idle taking a charge): the charging loop writes Open12vPower(1)
+    charge_cmd: bool,
+    /// charge_manager's error state's code (DoExcepHandlingProcess 0x17fdb0; 0x1007 retries Open12vPower(3), takes a charge)
+    error_code: Option<u32>,
+    /// the charging loop checked the charge flag this pass
+    charge_checked: bool,
+    /// the charging loop's last check found no charge (charge_manager's state 4 until the pass ends)
+    charge_lost: bool,
+    /// Open12vPower(n) under way: its start, n and the writes so far (it writes 1 and sleeps 2 s, n times)
+    open12v: Option<(u64, u32, u32)>,
+    /// StandUp2WideWalk's gait wait: its start (tick) and the gait rewrites so far
+    gait_wait_from: u64,
+    gait_rewrites: u32,
+}
+
+/// charge_manager's PowerOnSelfTest (0x181c40), as ticks.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Startup {
+    /// Open12vPower(3) (6 s), sleep 1 s, DetectionCharge(5): the charge flag by 12 s ends the test (idle)
+    Detect { started: u64 },
+    /// OpenMarkerProcess + FindTarget: a dock pose within tag_receive_timeout
+    FindPose { until: u64 },
+    /// near the dock: DetectionCharge(first_detection_current_timeout), up to 3 times
+    Confirm { tries: u32, until: u64, x: f32 },
+}
+
+impl Docking {
+    /// `charge_enabled`: the bus backend runs m20-battery's charge-enable rule (without it nothing can charge).
+    /// `vendor`: charge_manager.toml, once read (docking refuses until then).
+    pub fn new(cfg: &Config, charge_enabled: bool, vendor: Option<&ChargeManagerToml>) -> Docking {
+        let seq = cfg.dock.sequence;
+        let runner = |gait: u32| cfg.runner_for_gait(gait).to_string();
+        let mut d = Docking {
+            approach_runner: runner(seq.approach_gait),
+            finetune_runner: runner(seq.finetune_gait),
+            hz: cfg.timing.control_hz,
+            charge_enabled,
+            core: None,
+            filter: ReflectorFilter::new(&cfg.dock.filter),
+            pose_offset_x: cfg.dock.filter.pose_offset_x,
+            phase: Phase::Idle,
+            ticks_in_phase: 0,
+            tick: 0,
+            next: Next::Dock,
+            resume: Phase::Approach,
+            giving_up: false,
+            on_runner: false,
+            pose_seq: None,
+            published: None,
+            woke_at_us: 0,
+            steer: None,
+            target: Target::Passive,
+            gait: seq.approach_gait,
+            restore_gait: seq.default_restore_gait,
+            charge: None,
+            charge_seq_at_start: 0,
+            obstacle: None,
+            obstacle_open: false,
+            obstacle_seq_at_open: 0,
+            record: None,
+            charge_enable_now: None,
+            charge_enables: 0,
+            restore_state: MOTION_RL_CONTROL,
+            undock_pending: false,
+            charge_next_write: 0,
+            charge_sleep_until: 0,
+            stand_at: None,
+            calls_pending: 0,
+            startup: None,
+            idle_check_at: 0,
+            charge_cmd: false,
+            error_code: None,
+            charge_checked: false,
+            charge_lost: false,
+            open12v: None,
+            gait_wait_from: 0,
+            gait_rewrites: 0,
+            calls_then: None,
+            status: Status {
+                phase: Phase::Idle,
+                active: false,
+                retries: 0,
+                result: String::new(),
+                error: false,
+                charging: false,
+                packs_present: 0,
+                packs_charge_mos_on: 0,
+                fine_point: None,
+                start_point: None,
+                obstacle: None,
+                obstacle_stop: None,
+                vendor_config: false,
+                no_plug: false,
+                error_code: None,
+                undocking: false,
+            },
+            seq,
+        };
+        if let Some(t) = vendor {
+            d.set_vendor(t);
+        }
+        d
+    }
+
+    /// Take charge_manager.toml (only while idle).
+    pub fn set_vendor(&mut self, t: &ChargeManagerToml) -> bool {
+        if self.active() {
+            return false;
+        }
+        let start = self.core.as_ref().map(|c| c.start_point());
+        let first = self.core.is_none();
+        let mut core = ChargeCore::new(ChargeParams::from_toml(t), &self.seq);
+        if let Some(p) = start {
+            core.set_start_point(p);
+        }
+        self.core = Some(core);
+        self.status.vendor_config = true;
+        if first {
+            // charge_manager starts with PowerOnSelfTest: "Open dog 12v power switch." (Open12vPower(3))
+            self.startup = Some(Startup::Detect { started: self.tick });
+            self.open12v = Some((self.tick, 3, 0));
+        }
+        true
+    }
+
+    /// charge_manager's charge flag (BatteryStatusCallback, 0x17e9f8) from the newest battery reading
+    fn charge_flag(&self) -> bool {
+        self.charge.is_some_and(|r| self.charged(&r))
+    }
+
+    /// Into charge_manager's charging state (2) without a dock: `cmd` 1 runs the charging loop's writes.
+    fn take_charge(&mut self, view: &View, result: &str, cmd: bool) {
+        // the charging phase holds the robot as it lies (it never moves it)
+        self.target = if view.is(State::Passive) {
+            Target::Passive
+        } else {
+            Target::LieDown
+        };
+        self.set_phase(Phase::Charging);
+        self.charge_cmd = cmd;
+        self.error_code = None;
+        self.status.result = result.into();
+        self.status.error = false;
+        self.status.charging = self.charge_flag();
+        self.charge_sleep_until = self.tick;
+        self.charge_checked = false;
+        self.charge_lost = false;
+        self.charge_next_write = self.tick + self.ticks(self.seq.charge_wait_ms);
+    }
+
+    /// Open12vPower(n) under way: its due writes of 1 this tick; true once its last 2 s sleep is over.
+    fn pump_open12v(&mut self) -> bool {
+        let Some((start, n, written)) = self.open12v else {
+            return true;
+        };
+        let elapsed = self.ms(self.tick - start);
+        if written < n && elapsed >= written as u64 * 2000 {
+            self.write(Write::ChargeEnable(1));
+            self.open12v = Some((start, n, written + 1));
+        }
+        if elapsed >= n as u64 * 2000 {
+            self.open12v = None;
+            return true;
+        }
+        false
+    }
+
+    /// Idle: PowerOnSelfTest (0x181c40), then the idle loop's 3 s wakes or DoExcepHandlingProcess (0x17fdb0)
+    /// Returns whether it wrote a motion command (the error state's SitDown) that must reach the controller.
+    fn idle_step(&mut self, view: &View) -> bool {
+        if self.phase != Phase::Idle {
+            // a sequence (or a charge resumed across a restart) ends the self test and the error's retries
+            self.startup = None;
+            self.error_code = None;
+            self.open12v = None;
+            return false;
+        }
+        let Some(p) = self.params().cloned() else {
+            return false;
+        };
+        let powered = self.pump_open12v();
+        match self.startup {
+            Some(Startup::Detect { started }) => {
+                let elapsed = self.ms(self.tick - started);
+                // DetectionCharge(5) starts after Open12vPower(3) and sleep(1)
+                if powered && elapsed >= 7000 {
+                    if self.charge_flag() {
+                        // "Detection charge success...": idle; the idle loop takes the charge at its first wake
+                        self.startup = None;
+                        self.status.result = "Detection charge success...".into();
+                        self.idle_check_at = self.tick + self.ticks(3000);
+                    } else if elapsed >= 12000 {
+                        self.startup = Some(Startup::FindPose { until: u64::MAX });
+                    }
+                }
+                return false;
+            }
+            Some(Startup::FindPose { until }) => {
+                if until == u64::MAX {
+                    // OpenMarkerProcess: the detector's first pose after its restart
+                    self.filter.restart();
+                    self.published = None;
+                    self.startup = Some(Startup::FindPose {
+                        until: self.tick + self.ticks(p.find_target_ms),
+                    });
+                } else if let Some(pose) = self.published {
+                    if pose.x.abs() >= p.delta[0] || pose.y.abs() >= p.delta[1] {
+                        self.end_self_test(format!(
+                            "Init charge status is [idle] because of the distance from the charging pile is a bit \
+                             far. target x is {:.6}, target y is {:.6}",
+                            pose.x, pose.y
+                        ));
+                    } else {
+                        self.startup = Some(Startup::Confirm {
+                            tries: 1,
+                            until: self.tick + self.ticks(p.charge_confirm_ms),
+                            x: pose.x,
+                        });
+                    }
+                } else if self.tick >= until {
+                    self.end_self_test(
+                        "Init charge status is [idle] because did not see the charging pile."
+                            .into(),
+                    );
+                }
+                return false;
+            }
+            Some(Startup::Confirm { tries, until, x }) => {
+                if self.charge_flag() {
+                    if view.lying() {
+                        self.startup = None;
+                        // CloseMarkProcess, Close24vPower; the command stays -1 (no charging-loop writes)
+                        self.write(Write::ChargeEnable(0));
+                        self.take_charge(view, "Init charge status is [charging]", false);
+                    } else {
+                        // standing, charge_manager's first command-1 pass would return it to idle: ours stays idle
+                        self.end_self_test("Init charge status is [charging]".into());
+                    }
+                } else if self.tick >= until {
+                    if tries < 3 {
+                        self.startup = Some(Startup::Confirm {
+                            tries: tries + 1,
+                            until: self.tick + self.ticks(p.charge_confirm_ms),
+                            x,
+                        });
+                    } else {
+                        self.end_self_test(format!(
+                            "Init charge status is [error] because of [NOCHARGEPLUG], target x is {x:.6}"
+                        ));
+                        self.error_code = Some(NO_CHARGE_PLUG);
+                        self.status.error = true;
+                    }
+                }
+                return false;
+            }
+            None => {}
+        }
+        if self.error_code == Some(RESTART_LOCATION_FAILED) {
+            // DoExcepHandlingProcess on 0x1002: "My status is [error], sit down" each 3 s pass (SitDown writes 4 unless lying)
+            if self.tick >= self.idle_check_at {
+                self.idle_check_at = self.tick + self.ticks(3000);
+                if !view.is(State::LieDown) {
+                    self.write(Write::MotionState(MOTION_LIE_DOWN));
+                    return true;
+                }
+            }
+            return false;
+        }
+        if self.error_code == Some(NO_CHARGE_PLUG) {
+            // error 0x1007: Open12vPower(3) back to back (each takes 6 s > its 3 s gap), then the charge if it came
+            if self.open12v.is_none() {
+                if powered && self.tick > self.idle_check_at && self.charge_flag() && view.lying() {
+                    self.take_charge(
+                        view,
+                        "My status is [error], begin to transtion to [charging]",
+                        true,
+                    );
+                    return false;
+                }
+                self.idle_check_at = self.tick;
+                self.open12v = Some((self.tick, 3, 0));
+                self.pump_open12v();
+            }
+            return false;
+        }
+        if self.tick < self.idle_check_at {
+            return false;
+        }
+        self.idle_check_at = self.tick + self.ticks(3000);
+        if self.charge_flag() && self.error_code.is_none() && view.lying() {
+            // the idle loop's wake (0x182390) takes a charge with command 1 (standing, its command 2 idles at once)
+            self.take_charge(view, "空闲状态直接进入充电状态", true);
+        }
+        false
+    }
+
+    /// DoExcepHandlingProcess on 0x1005: command 0, state 3, an exitPile from where the robot is.
+    fn exit_pile_after(&mut self, code: u32) {
+        let why = std::mem::take(&mut self.status.result);
+        self.status.result =
+            format!("{why} (0x{code:x}): My status is [error], begin to transtion to [exitPile]");
+        self.undock_pending = true;
+    }
+
+    fn end_self_test(&mut self, result: String) {
+        self.startup = None;
+        // CloseMarkProcess, Close24vPower
+        self.write(Write::ChargeEnable(0));
+        self.status.result = result;
+        self.idle_check_at = self.tick + self.ticks(3000);
+    }
+
+    pub fn has_vendor(&self) -> bool {
+        self.core.is_some()
+    }
+
+    /// Keep every [`Write`] with its tick (from now on), for [`Self::take_writes`].
+    pub fn record_writes(&mut self) {
+        self.record.get_or_insert_with(Vec::new);
+    }
+
+    pub fn take_writes(&mut self) -> Vec<(u64, Write)> {
+        self.record.as_mut().map(std::mem::take).unwrap_or_default()
+    }
+
+    /// Control ticks since start (the tick [`Self::advance`] last ran).
+    pub fn tick(&self) -> u64 {
+        self.tick
+    }
+
+    /// Charging on the dock as charge_manager was when a recording began: lying, charging, the undock's goal
+    /// `start_point` and the (motion state, gait) to restore after it from the dock before, and the charging loop's
+    /// last charge-enable written this tick (it sleeps charge_sleep_ms, waits charge_wait_ms, writes again).
+    pub fn resume_charging(&mut self, start_point: [f32; 3], restore: (i32, u32)) {
+        if let Some(c) = self.core.as_mut() {
+            c.set_start_point(start_point);
+        }
+        self.status.start_point = Some(start_point);
+        (self.restore_state, self.restore_gait) = restore;
+        self.target = Target::LieDown;
+        self.status.charging = true;
+        self.set_phase(Phase::Charging);
+        self.charge_cmd = true;
+        self.charge_checked = true;
+        self.charge_lost = false;
+        self.charge_sleep_until = self.tick + self.ticks(self.seq.charge_sleep_ms);
+        self.charge_next_write = self.charge_sleep_until + self.ticks(self.seq.charge_wait_ms);
+    }
+
+    /// One of charge_manager's writes, and what it asks the controller.
+    fn write(&mut self, w: Write) {
+        match w {
+            Write::MotionState(code) => {
+                if let Some(t) = motion_target(code) {
+                    self.target = t;
+                }
+            }
+            Write::Gait(g) => self.gait = g,
+            Write::Steer(s) => self.steer = Some((s, self.tick)),
+            Write::ChargeEnable(v) => {
+                self.charge_enable_now = Some(v);
+                self.charge_enables += 1;
+            }
+        }
+        if let Some(r) = self.record.as_mut() {
+            r.push((self.tick, w));
+        }
+    }
+
+    /// The target, written as charge_manager's MotionState when it has one.
+    fn set_target(&mut self, t: Target) {
+        match motion_code(t) {
+            Some(code) if t != self.target => self.write(Write::MotionState(code)),
+            _ => self.target = t,
+        }
+    }
+
+    pub fn phase(&self) -> Phase {
+        self.phase
+    }
+
+    pub fn status(&self) -> &Status {
+        &self.status
+    }
+
+    /// The sequence drives the controller (returns a command every tick).
+    pub fn active(&self) -> bool {
+        self.phase != Phase::Idle
+    }
+
+    fn ms(&self, ticks: u64) -> u64 {
+        (ticks as f64 * 1000.0 / self.hz).round() as u64
+    }
+
+    fn now_ms(&self) -> u64 {
+        self.ms(self.tick)
+    }
+
+    fn now_us(&self) -> u64 {
+        (self.tick as f64 * 1e6 / self.hz).round() as u64
+    }
+
+    /// A reply from the detector's service (detector_service: what charge_manager waits on before going on).
+    pub fn detector_replied(&mut self) {
+        if self.phase == Phase::DetectorCall && self.calls_pending > 0 {
+            self.calls_pending -= 1;
+        }
+    }
+
+    /// charge_manager calls its detector process `n` times (DDS service, waiting for each reply), then `then`; without
+    /// detector_service (ours is no process to call) it goes on at once.
+    fn call_detector(&mut self, n: u32, then: AfterCalls) -> Option<Output> {
+        if !self.seq.detector_service {
+            return self.after_calls(then);
+        }
+        self.calls_pending = n;
+        self.calls_then = Some(then);
+        self.set_phase(Phase::DetectorCall);
+        Some(self.output(None))
+    }
+
+    fn after_calls(&mut self, then: AfterCalls) -> Option<Output> {
+        match then {
+            AfterCalls::FindTarget(next) => self.find_target(next),
+            AfterCalls::Undocked => {
+                self.write(Write::ChargeEnable(0));
+                let tries = self.status.retries + 1;
+                return if self.giving_up {
+                    self.finish(
+                        Target::RlControl,
+                        format!("no charge after {tries} tries; backed off"),
+                        true,
+                    )
+                } else {
+                    self.finish(Target::RlControl, "undocked", false)
+                };
+            }
+            AfterCalls::Charging => {
+                self.set_phase(Phase::Charging);
+                self.charge_cmd = true;
+                self.charge_checked = false;
+                self.charge_lost = false;
+                self.charge_sleep_until = self.tick;
+                self.charge_next_write = self.tick + self.ticks(self.seq.charge_wait_ms);
+            }
+        }
+        Some(self.output(None))
+    }
+
+    fn ticks(&self, ms: u64) -> u64 {
+        (ms as f64 * self.hz / 1000.0).round() as u64
+    }
+
+    fn phase_ms(&self) -> u64 {
+        self.ms(self.ticks_in_phase)
+    }
+
+    fn set_phase(&mut self, phase: Phase) {
+        self.phase = phase;
+        self.ticks_in_phase = 0;
+        self.on_runner = false;
+    }
+
+    fn params(&self) -> Option<&ChargeParams> {
+        self.core.as_ref().map(|c| &c.params)
+    }
+
+    /// BatteryStatusCallback's flag: packs with a level all (all_battery_charge; none: true) or any with charge MOS on
+    fn charged(&self, r: &ChargeReading) -> bool {
+        let all = self.params().is_none_or(|p| p.all_battery_charge);
+        if all {
+            r.packs_charge_mos_on >= r.packs_present
+        } else {
+            r.packs_charge_mos_on > 0
+        }
+    }
+
+    /// Open the obstacle check (when charge_manager.toml has it on); true when it was closed (Open then sleeps).
+    fn open_obstacle(&mut self) -> bool {
+        // SetObstacleDirection before Open: 进桩-Front in DoChargeTask (0x203810), 退桩-Back in DoOverChargeTask (0x203908)
+        let direction = if self.next == Next::Dock {
+            Direction::Front
+        } else {
+            Direction::Back
+        };
+        if let Some(c) = self.core.as_mut() {
+            c.direction = direction;
+        }
+        let avoid = self.params().is_some_and(|p| p.obstacle_avoid);
+        let opened = avoid && !self.obstacle_open;
+        self.obstacle_open = avoid;
+        self.obstacle_seq_at_open = self.obstacle.map_or(0, |o| o.1);
+        self.status.obstacle_stop = None;
+        opened
+    }
+
+    /// The obstacle check's newest reading since it opened.
+    fn obstacle_reading(&self) -> Option<f32> {
+        if !self.obstacle_open {
+            return None;
+        }
+        self.obstacle
+            .filter(|o| o.1 > self.obstacle_seq_at_open)
+            .and_then(|o| o.0)
+    }
+
+    /// End the sequence with `result`; `target` is what the controller is left with.
+    fn finish(&mut self, target: Target, result: impl Into<String>, error: bool) -> Option<Output> {
+        self.set_target(target);
+        self.steer = None;
+        self.stand_at = None;
+        self.undock_pending = false;
+        self.obstacle_open = false;
+        if let Some(c) = self.core.as_mut() {
+            c.end();
+        }
+        self.set_phase(Phase::Idle);
+        self.idle_check_at = self.tick + self.ticks(3000);
+        self.status.result = result.into();
+        self.status.error = error;
+        self.error_code = None;
+        self.giving_up = false;
+        Some(self.output(None))
+    }
+
+    /// Fail standing on BasicFlat (NarrowWalk).
+    fn finish_basic_flat(&mut self, result: impl Into<String>) -> Option<Output> {
+        // NarrowWalk
+        self.write(Write::Gait(self.seq.basic_flat_gait));
+        self.finish(Target::RlControl, result, true)
+    }
+
+    /// The steer as normalized axes, zeroed steer_timeout_ms after it went out.
+    fn axes(&self) -> [f64; 3] {
+        match self.steer {
+            Some((s, at)) if self.tick - at <= self.ticks(self.seq.steer_timeout_ms) => {
+                [s.x as f64, s.y as f64, s.yaw as f64]
+            }
+            _ => [0.0; 3],
+        }
+    }
+
+    /// FinetuneStand's pose inputs from the steer (rl_deploy): dx, dy, yaw scaled, height = max(-z, 0).
+    fn pose_inputs(&self) -> [f64; 4] {
+        let s = self.steer.map(|s| s.0).unwrap_or_default();
+        let k = self.seq.finetune_pose_scale;
+        [
+            k[0] * s.x as f64,
+            k[1] * s.y as f64,
+            k[2] * s.yaw as f64,
+            (-(s.z as f64)).max(0.0),
+        ]
+    }
+
+    fn output(&self, pose: Option<[f64; 4]>) -> Output {
+        let axes = if pose.is_some() {
+            [0.0; 3]
+        } else {
+            self.axes()
+        };
+        Output {
+            target: self.target,
+            gait: self.gait,
+            axes,
+            pose,
+            charge_enable: self.charge_enable_now,
+        }
+    }
+
+    fn send(&mut self, steer: Steer) {
+        self.write(Write::Steer(steer));
+    }
+
+    /// Ask for a dock, an undock or a stop. Returns why it was refused, if it was.
+    pub fn request(&mut self, request: Request, view: &View) -> Result<(), String> {
+        match request {
+            Request::Cancel => {
+                if self.active() {
+                    let lying = matches!(
+                        self.phase,
+                        Phase::SitHold | Phase::LyingDown | Phase::ConfirmCharge | Phase::Charging
+                    );
+                    self.finish(
+                        if lying { Target::LieDown } else { self.target },
+                        "cancelled",
+                        false,
+                    );
+                } else if self.error_code.is_some() {
+                    // the error state with command 2
+                    self.error_code = None;
+                    self.status.error = false;
+                    self.status.result =
+                        "My status is [error], begin to transtion to [idle]".into();
+                }
+                Ok(())
+            }
+            Request::Dock => {
+                if self.active() {
+                    return Err(format!("busy ({:?})", self.phase));
+                }
+                if let Some(code) = self.error_code {
+                    // in its error state charge_manager only leaves on an undock (0) or a stop (2)
+                    return Err(format!("charge_manager is in its error state ({code:#x})"));
+                }
+                if self.core.is_none() {
+                    return Err("charge_manager.toml is not read yet".into());
+                }
+                if !self.charge_enabled {
+                    return Err(
+                        "charge_enable is off: nothing would send the charge-enable request".into(),
+                    );
+                }
+                if view.fault || !view.is(State::RlControl) || view.stand_in {
+                    return Err(format!(
+                        "dock needs the robot standing in rl_control with no fault (state {:?}{}{})",
+                        view.state,
+                        if view.fault { ", fault" } else { "" },
+                        if view.stand_in { ", stand-in running" } else { "" }
+                    ));
+                }
+                // goToPileAction records the motion state and gait to restore after the undock
+                self.restore_gait = view.gait;
+                self.restore_state = state_code(view.state);
+                self.status.fine_point = None;
+                self.status.result.clear();
+                self.status.error = false;
+                self.error_code = None;
+                self.status.retries = 0;
+                self.charge_seq_at_start = self.charge.map_or(0, |r| r.seq);
+                self.target = Target::RlControl;
+                self.gait = view.gait;
+                // OpenMarkerProcess: close and open the detector, then FindTarget
+                self.call_detector(2, AfterCalls::FindTarget(Next::Dock));
+                Ok(())
+            }
+            Request::Undock => {
+                if self.core.is_none() {
+                    return Err("charge_manager.toml is not read yet".into());
+                }
+                if self.active() && self.phase != Phase::Charging {
+                    if self.undocking() {
+                        return Err(format!("an undock is under way ({:?})", self.phase));
+                    }
+                    if matches!(
+                        self.phase,
+                        Phase::SitHold | Phase::LyingDown | Phase::ConfirmCharge
+                    ) {
+                        // past SitDown goToPileAction checks only command 2: the charge check runs, then the undock
+                        self.undock_pending = true;
+                        return Ok(());
+                    }
+                    // goToPileAction's loop runs while the command is 1: it ends (INITNULL), Start sets 2, idle
+                    let target = self.target;
+                    self.finish(target, "DoChargeTaskRet status to INITNULL", false);
+                    return Ok(());
+                }
+                let allowed =
+                    self.phase == Phase::Charging || (!self.active() && self.error_code.is_some());
+                if !allowed {
+                    return Err(format!(
+                        "charge_manager undocks only while charging or after a failed sequence ({:?})",
+                        self.phase
+                    ));
+                }
+                self.status.result.clear();
+                self.status.error = false;
+                self.error_code = None;
+                self.giving_up = false;
+                // charge_manager's main loop takes it at its next wake (charging: once the loop's sleep ends)
+                self.undock_pending = true;
+                Ok(())
+            }
+        }
+    }
+
+    /// An undock (or a give-up's back-off) under way, not a dock.
+    fn undocking(&self) -> bool {
+        match self.phase {
+            Phase::StandUp => self.next != Next::Retry,
+            Phase::BackOff | Phase::Restore => true,
+            Phase::Restart => self.resume == Phase::BackOff,
+            Phase::DetectorCall => !matches!(
+                self.calls_then,
+                Some(AfterCalls::Charging) | Some(AfterCalls::FindTarget(Next::Dock))
+            ),
+            Phase::FindTarget | Phase::OpenObstacle => self.next != Next::Dock,
+            _ => false,
+        }
+    }
+
+    /// Restart the detector and wait for its first pose.
+    fn find_target(&mut self, next: Next) {
+        self.filter.restart();
+        // a pose published before the restart is not the detector's first
+        self.published = None;
+        self.next = next;
+        self.steer = None;
+        self.set_phase(Phase::FindTarget);
+    }
+
+    /// StandUp2WideWalk: unless in rl_control, stand (MotionState 1), 2 s later rl_control and NaviCharge, then wait
+    /// for NaviCharge; in rl_control already it changes nothing.
+    fn stand_up(&mut self, next: Next, view: &View) {
+        self.stand_at = None;
+        self.gait_rewrites = 0;
+        self.gait_wait_from = self.tick;
+        if !view.is(State::RlControl) {
+            self.write(Write::MotionState(MOTION_STAND));
+            self.stand_at = Some(self.tick + self.ticks(self.seq.stand_rl_control_ms));
+        }
+        self.next = next;
+        self.steer = None;
+        if self.stand_at.is_some() {
+            self.set_phase(Phase::StandUp);
+        } else {
+            self.stood();
+        }
+    }
+
+    /// StandUp2WideWalk returned: what the stand-up was for.
+    fn stood(&mut self) {
+        match self.next {
+            Next::FindTarget => self.find_target(Next::BackOff),
+            Next::Retry => self.set_phase(Phase::StandForRetry),
+            _ => self.begin_back_off(),
+        }
+    }
+
+    /// FindTarget found the dock (and the obstacle check is open): what it was for.
+    fn found_target(&mut self, view: &View) {
+        match self.next {
+            Next::Dock => {
+                let now = self.now_ms();
+                if let Some(c) = self.core.as_mut() {
+                    c.begin_dock(now);
+                }
+                // WideWalk
+                if view.gait != self.seq.approach_gait {
+                    self.write(Write::Gait(self.seq.approach_gait));
+                }
+                self.set_phase(Phase::EnterGait);
+            }
+            Next::Undock => self.stand_up(Next::BackOff, view),
+            Next::BackOff | Next::FindTarget | Next::Retry => self.begin_back_off(),
+        }
+    }
+
+    /// The undock starts (DoOverChargeTask): Close24vPower, then the detector restarts.
+    fn start_undock(&mut self, view: &View) {
+        self.undock_pending = false;
+        if view.is(State::JointDamping) {
+            // DoOverChargeTask (0x203908): soft e-stop (state 2) writes nothing, 0x1008, idle (the charge stays)
+            let target = self.target;
+            self.finish(target, "软急停，退出退桩操作 (0x1008)", false);
+            return;
+        }
+        self.status.charging = false;
+        self.write(Write::ChargeEnable(0));
+        // OpenMarkerProcess: close and open the detector, then FindTarget
+        self.call_detector(2, AfterCalls::FindTarget(Next::Undock));
+    }
+
+    /// One control tick: the newest dock pose (with its sweep count) and battery reading, the controller as last seen.
+    pub fn step(
+        &mut self,
+        view: &View,
+        pose: Option<(DockPose, u64)>,
+        charge: Option<ChargeReading>,
+    ) -> Option<Output> {
+        self.ingest(pose, charge, None);
+        self.advance(view)
+    }
+
+    /// Take this tick's newest dock pose (with its sweep count), battery reading and obstacle reading (nearest
+    /// occupied cell, m, or none, with its count).
+    pub fn ingest(
+        &mut self,
+        pose: Option<(DockPose, u64)>,
+        charge: Option<ChargeReading>,
+        obstacle: Option<(Option<f32>, u64)>,
+    ) {
+        self.published = None;
+        if let Some((p, seq)) = pose {
+            if self.pose_seq != Some(seq) {
+                self.pose_seq = Some(seq);
+                let (x, y, yaw) = target_pose(&p, self.seq.docked_x_m);
+                if let Some([lx, ly, lyaw]) = self.filter.sweep(x - self.pose_offset_x, y, yaw) {
+                    self.published = Some(TargetPose {
+                        x: (lx + self.pose_offset_x) as f32,
+                        y: ly as f32,
+                        yaw: lyaw as f32,
+                    });
+                }
+            }
+        }
+        if let Some(r) = charge {
+            self.charge = Some(r);
+            self.status.charging = self.charged(&r) && self.phase == Phase::Charging;
+            self.status.packs_present = r.packs_present;
+            self.status.packs_charge_mos_on = r.packs_charge_mos_on;
+        }
+        if let Some(o) = obstacle {
+            self.obstacle = Some(o);
+        }
+    }
+
+    /// A loop's pose handling: the core's steer / stop, or a missed wait.
+    fn loop_tick(&mut self, view: &View) -> Option<Outcome> {
+        let now = self.now_ms();
+        let Some(p) = self.published else {
+            let deadline = self.woke_at_us + self.seq.pose_wait_ms * 1000;
+            if self.now_us() >= deadline {
+                // the next wait starts once charge_manager has logged the miss and stopped the robot
+                self.woke_at_us = deadline + self.seq.pose_wait_overhead_us;
+                let core = self.core.as_mut()?;
+                let w = core.wait_timed_out();
+                if w.stop {
+                    self.send(Steer::default());
+                }
+                if w.restart {
+                    self.resume = self.phase;
+                    self.filter.restart();
+                    self.set_phase(Phase::Restart);
+                }
+            }
+            return None;
+        };
+        self.woke_at_us = self.now_us();
+        // goToPileAction accepts NaviCharge or FinetuneStand (0x180d10), exitPileAction NaviCharge only (0x180470)
+        let finetune_ok = self.phase != Phase::BackOff;
+        let navigating = view.is(State::RlControl)
+            && (view.on(&self.approach_runner) || finetune_ok && view.on(&self.finetune_runner));
+        let obstacle = self.obstacle_reading();
+        let out = self.core.as_mut()?.on_pose(now, p, navigating, obstacle);
+        if out.stop {
+            self.send(Steer::default());
+        }
+        if let Some(s) = out.steer {
+            self.send(s);
+        }
+        self.status.obstacle_stop = match out.event {
+            Some(Event::Obstacle(d)) => Some(d),
+            _ => None,
+        };
+        Some(out)
+    }
+
+    fn failed(&mut self, why: Failure) -> Option<Output> {
+        match why {
+            Failure::NotNavigating => self.finish(
+                self.target,
+                "not on NaviCharge / FinetuneStand in rl_control",
+                true,
+            ),
+            Failure::ApproachTimeout => {
+                let out = self.finish_basic_flat("not at the dock in time");
+                self.exit_pile_after(GO_TO_PILE_FAILED);
+                out
+            }
+            Failure::ObstacleTimeout => {
+                let out = self.finish_basic_flat("stopped for an obstacle too long");
+                self.error_code = Some(OBSTACLE_TIMEOUT);
+                out
+            }
+            Failure::ExitTimeout => {
+                let out = self.finish_basic_flat("not undocked in time");
+                self.error_code = Some(EXIT_PILE_TIMEOUT);
+                out
+            }
+            Failure::BadSteer => self.finish(self.target, "non-finite steer", true),
+        }
+    }
+
+    /// Advance one control tick on what `ingest` took, the controller as last seen.
+    pub fn advance(&mut self, view: &View) -> Option<Output> {
+        self.tick += 1;
+        self.charge_enable_now = None;
+        if self.undock_pending
+            && ((self.phase == Phase::Charging && self.tick >= self.charge_sleep_until)
+                || self.phase == Phase::Idle)
+        {
+            self.start_undock(view);
+        }
+        let sit = self.idle_step(view);
+        self.status.phase = self.phase;
+        self.status.no_plug = self.error_code == Some(NO_CHARGE_PLUG);
+        self.status.error_code = self.error_code;
+        self.status.undocking = self.undocking();
+        self.status.active = self.active();
+        self.status.obstacle = if self.obstacle_open {
+            self.core.as_ref().map(|c| c.direction)
+        } else {
+            None
+        };
+        if !self.active() {
+            return sit.then(|| self.output(None));
+        }
+        self.ticks_in_phase += 1;
+        // ours: a fault or a damping docking did not ask for ends it, passive, until the operator asks again
+        let damping =
+            view.state == Some(State::JointDamping) && self.target != Target::JointDamping;
+        if self.seq.abort_on_fault && self.phase != Phase::Charging && (view.fault || damping) {
+            let out = self.finish(Target::Passive, "a controller fault ended docking", true);
+            self.error_code = Some(CONTROLLER_FAULT);
+            return out;
+        }
+        // charge_manager has no fault input: a fault reaches it only as /MOTION_INFO's state (JointDamping 2)
+        let limit = (self.seq.transition_limit_s * self.hz).round() as u64;
+        match self.phase {
+            Phase::Idle => None,
+            Phase::FindTarget => {
+                if self.published.is_some() {
+                    // ObstacleDetection::Open sleeps obstacle_open_ms when it opens the check
+                    if self.open_obstacle() {
+                        self.set_phase(Phase::OpenObstacle);
+                    } else {
+                        self.found_target(view);
+                    }
+                } else if self.phase_ms() > self.params()?.find_target_ms {
+                    let target = self.target;
+                    // FindTarget failed: 0x1004 on the way in (idle), 0x1006 on the way out (error)
+                    let undock = self.next != Next::Dock;
+                    let out = self.finish(target, "the dock is not in sight", true);
+                    if undock {
+                        self.error_code = Some(STAND_UP_FAILED);
+                    }
+                    return out;
+                }
+                Some(self.output(None))
+            }
+            Phase::DetectorCall => {
+                if self.calls_pending == 0 {
+                    if let Some(then) = self.calls_then.take() {
+                        return self.after_calls(then);
+                    }
+                }
+                Some(self.output(None))
+            }
+            Phase::OpenObstacle => {
+                if self.phase_ms() >= self.seq.obstacle_open_ms {
+                    self.found_target(view);
+                }
+                Some(self.output(None))
+            }
+            Phase::EnterGait | Phase::StandForRetry => {
+                if !view.is(State::RlControl) && self.phase == Phase::EnterGait {
+                    let out = self.finish(
+                        Target::RlControl,
+                        format!("left rl_control ({:?})", view.state),
+                        true,
+                    );
+                    self.exit_pile_after(GO_TO_PILE_FAILED);
+                    return out;
+                }
+                if self.phase == Phase::StandForRetry {
+                    // the retry's sleep(2) from StandUp2WideWalk's return, whatever the robot did
+                    self.on_runner = true;
+                }
+                if self.phase == Phase::StandForRetry
+                    || view.is(State::RlControl) && view.on(&self.approach_runner)
+                {
+                    if !self.on_runner {
+                        self.on_runner = true;
+                        self.ticks_in_phase = 0;
+                    } else {
+                        let settle = if self.phase == Phase::EnterGait {
+                            self.seq.gait_settle_ms
+                        } else {
+                            self.seq.retry_settle_ms
+                        };
+                        if self.phase_ms() >= settle {
+                            if self.phase == Phase::StandForRetry {
+                                // the back-off kicks (5x (-0.8, 0, 0)), at once overwritten by the stale finetune struct
+                                for _ in 0..self.seq.back_off_writes {
+                                    self.send(Steer {
+                                        x: self.seq.back_off_x,
+                                        ..Default::default()
+                                    });
+                                }
+                                self.send(Steer {
+                                    z: self.seq.sit_z,
+                                    ..Default::default()
+                                });
+                                if self.undock_pending {
+                                    // an undock during the charge check: the retry's loop ends at once (INITNULL), idle
+                                    let target = self.target;
+                                    return self.finish(
+                                        target,
+                                        "DoChargeTaskRet status to INITNULL",
+                                        false,
+                                    );
+                                }
+                            }
+                            self.woke_at_us = self.now_us();
+                            self.set_phase(Phase::Approach);
+                        }
+                    }
+                } else if self.ticks_in_phase > limit {
+                    // WideWalk failed: 0x1005, an automatic exitPile
+                    let out = self.finish(
+                        Target::RlControl,
+                        format!("no {}", self.approach_runner),
+                        true,
+                    );
+                    self.exit_pile_after(GO_TO_PILE_FAILED);
+                    return out;
+                }
+                Some(self.output(None))
+            }
+            Phase::Approach => {
+                if let Some(out) = self.loop_tick(view) {
+                    if let Some(p) = out.start_point {
+                        self.status.start_point = Some(p);
+                    }
+                    match out.event {
+                        Some(Event::FineReached(p)) => {
+                            self.status.fine_point = Some(p);
+                            // setFineTuneStandMode
+                            self.write(Write::Gait(self.seq.finetune_gait));
+                            self.set_phase(Phase::EnterFinetune);
+                            return Some(self.output(Some([0.0; 4])));
+                        }
+                        Some(Event::Failed(why)) => return self.failed(why),
+                        _ => {}
+                    }
+                }
+                Some(self.output(None))
+            }
+            Phase::EnterFinetune => {
+                let up = view.on(&self.finetune_runner);
+                if up || self.phase_ms() >= self.seq.finetune_gait_wait_ms {
+                    let now = self.now_ms();
+                    self.core.as_mut()?.finetune_started(now);
+                    self.woke_at_us = self.now_us();
+                    self.set_phase(Phase::Finetune);
+                }
+                Some(self.output(Some([0.0; 4])))
+            }
+            Phase::Finetune => {
+                if let Some(out) = self.loop_tick(view) {
+                    match out.event {
+                        Some(Event::FinetuneDone(_)) => self.set_phase(Phase::SitHold),
+                        Some(Event::Failed(why)) => return self.failed(why),
+                        _ => {}
+                    }
+                }
+                if self.phase == Phase::Restart {
+                    return Some(self.output(None));
+                }
+                Some(self.output(Some(self.pose_inputs())))
+            }
+            Phase::SitHold => {
+                if self.phase_ms() >= self.seq.sit_hold_ms {
+                    // SitDown
+                    if !view.is(State::LieDown) {
+                        self.write(Write::MotionState(MOTION_LIE_DOWN));
+                    }
+                    self.set_phase(Phase::LyingDown);
+                    return Some(self.output(None));
+                }
+                Some(self.output(Some(self.pose_inputs())))
+            }
+            Phase::LyingDown => {
+                if view.is(State::LieDown) {
+                    // Open12vPower(3): charge-enable, sleep, three times
+                    self.write(Write::ChargeEnable(1));
+                    self.set_phase(Phase::ConfirmCharge);
+                } else if self.ticks_in_phase > limit {
+                    return self.no_charge(view);
+                }
+                Some(self.output(None))
+            }
+            Phase::ConfirmCharge => {
+                if !view.lying() {
+                    return self.finish(
+                        self.target,
+                        format!("left lie_down ({:?})", view.state),
+                        true,
+                    );
+                }
+                let p = self.params()?.clone();
+                let elapsed = self.phase_ms();
+                if elapsed < self.seq.power_on_ms
+                    && elapsed.is_multiple_of(self.seq.charge_sleep_ms)
+                {
+                    self.write(Write::ChargeEnable(1));
+                }
+                if elapsed >= self.seq.power_on_ms {
+                    let fresh = self.charge.filter(|r| r.seq > self.charge_seq_at_start);
+                    if fresh.is_some_and(|r| self.charged(&r)) {
+                        self.obstacle_open = false;
+                        if let Some(c) = self.core.as_mut() {
+                            c.end();
+                        }
+                        self.status.charging = true;
+                        self.status.result = "docked, charging".into();
+                        self.status.error = false;
+                        // CloseMarkProcess, then the charging loop
+                        return self.call_detector(1, AfterCalls::Charging);
+                    } else if elapsed - self.seq.power_on_ms > p.charge_confirm_ms {
+                        return self.no_charge(view);
+                    }
+                }
+                Some(self.output(None))
+            }
+            Phase::Charging => {
+                // charge_manager's charging state (0x182160) acts only on command 1; -1 (the self test's) waits
+                if !self.charge_cmd {
+                    return Some(self.output(None));
+                }
+                // each pass (0x182630): no charge -> state 4 (0x1007), still waiting and writing this pass, the error's
+                // handling from the next; standing -> command 2, idle (from either state)
+                if self.tick >= self.charge_sleep_until && !self.charge_checked {
+                    self.charge_checked = true;
+                    if self.charge_lost {
+                        self.charge_lost = false;
+                        let out = self.finish(
+                            self.target,
+                            "My status is [charging], begin transtion status to [error] error code:0x1007",
+                            true,
+                        );
+                        self.error_code = Some(NO_CHARGE_PLUG);
+                        return out;
+                    }
+                    self.charge_lost = !self.charge_flag();
+                }
+                if !view.lying() {
+                    let result = if std::mem::take(&mut self.charge_lost) {
+                        "My status is [error], begin to transtion to [idle]"
+                    } else {
+                        "stood up while on the dock"
+                    };
+                    return self.finish(self.target, result, false);
+                }
+                // charge_manager's charging loop: wait charge_wait_ms, Open12vPower(1) (write, sleep charge_sleep_ms)
+                if self.tick >= self.charge_next_write {
+                    self.charge_checked = false;
+                    self.write(Write::ChargeEnable(1));
+                    self.charge_sleep_until = self.tick + self.ticks(self.seq.charge_sleep_ms);
+                    self.charge_next_write =
+                        self.charge_sleep_until + self.ticks(self.seq.charge_wait_ms);
+                }
+                Some(self.output(None))
+            }
+            Phase::Restart => {
+                if self.published.is_some() {
+                    self.core.as_mut()?.restarted();
+                    self.woke_at_us = self.now_us();
+                    let resume = self.resume;
+                    self.set_phase(resume);
+                    self.on_runner = true;
+                } else if self.phase_ms() > self.params()?.find_target_ms {
+                    // the location restart failed: 0x1002, SitDown repeated in the error state
+                    let undock = self.resume == Phase::BackOff;
+                    let out = self.finish(Target::LieDown, "lost the dock", true);
+                    if !undock {
+                        self.error_code = Some(RESTART_LOCATION_FAILED);
+                        self.idle_check_at = self.tick;
+                    }
+                    return out;
+                }
+                Some(self.output(None))
+            }
+            Phase::StandUp => {
+                if let Some(at) = self.stand_at {
+                    if self.tick >= at {
+                        self.stand_at = None;
+                        self.write(Write::MotionState(MOTION_RL_CONTROL));
+                        self.write(Write::Gait(self.seq.approach_gait));
+                        self.gait_wait_from = self.tick;
+                    }
+                } else if self.next == Next::Retry {
+                    // goToPile's retry waits as StandUp2WideWalk does (for the gait) and ignores its result
+                    let waited = self.ms(self.tick - self.gait_wait_from);
+                    let s = &self.seq;
+                    let retries =
+                        waited.saturating_sub(s.stand_gait_wait_ms) / s.stand_gait_retry_ms.max(1);
+                    let total =
+                        s.stand_gait_wait_ms + s.stand_gait_retries as u64 * s.stand_gait_retry_ms;
+                    if view.gait == s.approach_gait || waited >= total {
+                        self.stood();
+                    } else if waited >= s.stand_gait_wait_ms && retries as u32 >= self.gait_rewrites
+                    {
+                        self.gait_rewrites += 1;
+                        self.write(Write::Gait(s.approach_gait));
+                    }
+                } else if view.is(State::RlControl) && view.on(&self.approach_runner) {
+                    self.stood();
+                } else if self.ticks_in_phase > limit {
+                    // StandUp2WideWalk failed in exitPileAction: 0x1006, the error state
+                    let out = self.finish(
+                        self.target,
+                        format!("did not stand ({:?})", view.state),
+                        true,
+                    );
+                    self.error_code = Some(STAND_UP_FAILED);
+                    return out;
+                }
+                Some(self.output(None))
+            }
+            Phase::BackOff => {
+                if let Some(out) = self.loop_tick(view) {
+                    match out.event {
+                        Some(Event::ExitReached) => {
+                            self.obstacle_open = false;
+                            if let Some(c) = self.core.as_mut() {
+                                c.end();
+                            }
+                            // restoreInitRobotStatus
+                            self.write(Write::MotionState(self.restore_state));
+                            self.set_phase(Phase::Restore);
+                        }
+                        Some(Event::Failed(why)) => return self.failed(why),
+                        _ => {}
+                    }
+                }
+                Some(self.output(None))
+            }
+            Phase::Restore => {
+                if self.phase_ms() >= self.seq.restore_ms {
+                    // restoreInitRobotGaitStatus; the detector closed (exitPileAction's end, then CloseMarkProcess in
+                    // its main loop), Close24vPower
+                    self.write(Write::Gait(self.restore_gait));
+                    return self.call_detector(2, AfterCalls::Undocked);
+                }
+                Some(self.output(None))
+            }
+        }
+    }
+
+    fn begin_back_off(&mut self) {
+        let now = self.now_ms();
+        if let Some(core) = self.core.as_mut() {
+            let kick = core.begin_exit(now);
+            for _ in 0..self.seq.back_off_writes {
+                self.send(kick);
+            }
+        }
+        self.woke_at_us = self.now_us();
+        self.set_phase(Phase::BackOff);
+    }
+
+    /// No charge after lying down: retry, or (tries used up) NoChargePlug_way.
+    fn no_charge(&mut self, view: &View) -> Option<Output> {
+        let core = self.core.as_mut()?;
+        match core.no_charge() {
+            NoCharge::Retry => {
+                self.status.retries += 1;
+                self.steer = None;
+                // StandUp2WideWalk: MotionState 1, 2 s later 17 and NaviCharge (log 2026-11-06 05:01:40: new:1, new:17 3 s on)
+                self.stand_up(Next::Retry, view);
+            }
+            NoCharge::Exhausted => {
+                core.end();
+                self.obstacle_open = false;
+                if self.params()?.no_charge_go_back {
+                    self.giving_up = true;
+                    self.stand_up(Next::FindTarget, view);
+                } else {
+                    // sitDown: lie on the dock and wait for a charge
+                    self.status.result = "no charge; lying on the dock".into();
+                    self.status.error = true;
+                    self.set_phase(Phase::Charging);
+                }
+            }
+        }
+        Some(self.output(None))
+    }
+}
+
+/// Where the module's handlers leave the dock's inputs for the 1 kHz loop (read with try_lock: never waited on).
+#[derive(Default)]
+pub struct DockFeed {
+    /// the newest dock pose and its sweep count
+    pub pose: Mutex<Option<(DockPose, u64)>>,
+    pub charge: Mutex<Option<ChargeReading>>,
+    pub request: Mutex<Option<Request>>,
+    /// the obstacle check's newest reading (nearest occupied cell m, or none) and its count
+    pub obstacle: Mutex<Option<(Option<f32>, u64)>>,
+    /// charge_manager.toml, once read (taken when docking is idle)
+    pub vendor: Mutex<Option<ChargeManagerToml>>,
+    /// charge-enables (1) written while no sequence drives (the self test, the NOCHARGEPLUG error's retries)
+    pub idle_charge_enables: std::sync::atomic::AtomicU64,
+}
+
+/// The docking sequence in front of the operator's command source. While it drives, the operator's velocity-only
+/// commands are ignored (navigation keeps sending zeros) and a motion command (new motion_seq) cancels it and goes
+/// through. Afterwards the target and gait it left are kept under the operator's velocity commands until their next
+/// motion command, so a cmd_vel never re-applies an older stand request to a robot that docking laid down.
+pub struct DockingCommands<C: CommandSource> {
+    inner: C,
+    pub docking: Docking,
+    feed: Arc<DockFeed>,
+    view: View,
+    operator: UserCommand,
+    held: Option<(Target, u32)>,
+    on_status: Box<dyn FnMut(&Status) + Send>,
+    last_status: Option<Status>,
+    /// why the last request was refused
+    pub last_refusal: Option<String>,
+}
+
+impl<C: CommandSource> DockingCommands<C> {
+    pub fn new(
+        inner: C,
+        docking: Docking,
+        feed: Arc<DockFeed>,
+        on_status: Box<dyn FnMut(&Status) + Send>,
+    ) -> Self {
+        DockingCommands {
+            inner,
+            docking,
+            feed,
+            view: View::default(),
+            operator: UserCommand::default(),
+            held: None,
+            on_status,
+            last_status: None,
+            last_refusal: None,
+        }
+    }
+
+    fn command(&self, out: &Output) -> UserCommand {
+        let mut params = BTreeMap::new();
+        if let Some([dx, dy, yaw, height]) = out.pose {
+            params.insert("dx".to_string(), dx);
+            params.insert("dy".to_string(), dy);
+            params.insert("yaw".to_string(), yaw);
+            params.insert("height".to_string(), height);
+        }
+        // charge_manager's /BATTERY_CHARGE_ENABLE this tick, for the bus (1: rl_deploy's 3 charge-enable frames), with
+        // its count so a command repeated after the sequence ends is not taken again
+        if let Some(v) = out.charge_enable {
+            params.insert(CHARGE_ENABLE_PARAM.to_string(), v as f64);
+            params.insert(
+                CHARGE_ENABLE_SEQ_PARAM.to_string(),
+                self.docking.charge_enables as f64,
+            );
+        }
+        UserCommand {
+            target: out.target,
+            gait: out.gait,
+            axes: out.axes,
+            velocity: None,
+            steer: false,
+            params,
+            runner: None,
+            motion_seq: self.operator.motion_seq,
+            gait_seq: self.operator.gait_seq,
+        }
+    }
+}
+
+impl<C: CommandSource> CommandSource for DockingCommands<C> {
+    fn poll(&mut self, now: f64) -> Option<UserCommand> {
+        let mut passthrough = None;
+        if let Some(c) = self.inner.poll(now) {
+            let motion = c.motion_seq != self.operator.motion_seq;
+            self.operator = c.clone();
+            if motion {
+                self.held = None;
+                if self.docking.active() {
+                    self.docking.finish(
+                        Target::Passive,
+                        "cancelled by an operator motion command",
+                        false,
+                    );
+                }
+                passthrough = Some(c);
+            } else if !self.docking.active() {
+                let mut c = c;
+                if let Some((target, gait)) = self.held {
+                    c.target = target;
+                    c.gait = gait;
+                }
+                passthrough = Some(c);
+            }
+        }
+        // the receivers' slots, never waited on (a held one is read next tick)
+        let skips = &crate::rt::LOCK_SKIPS;
+        if !self.docking.active() {
+            if let Some(t) = try_read(&self.feed.vendor, skips, |v| v.take()).flatten() {
+                self.docking.set_vendor(&t);
+            }
+        }
+        let pose = try_read(&self.feed.pose, skips, |p| *p).flatten();
+        let charge = try_read(&self.feed.charge, skips, |c| *c).flatten();
+        let obstacle = try_read(&self.feed.obstacle, skips, |o| *o).flatten();
+        self.docking.ingest(pose, charge, obstacle);
+        let request = try_read(&self.feed.request, skips, |r| r.take()).flatten();
+        if let Some(request) = request {
+            if let Err(why) = self.docking.request(request, &self.view) {
+                self.docking.status.result = format!("{request:?} refused: {why}");
+                self.docking.status.error = true;
+                self.last_refusal = Some(why);
+            }
+        }
+        let was_active = self.docking.active();
+        let out = self.docking.advance(&self.view);
+        if out.is_none() && self.docking.charge_enable_now == Some(1) {
+            self.feed
+                .idle_charge_enables
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        if self.last_status.as_ref() != Some(self.docking.status()) {
+            (self.on_status)(self.docking.status());
+            self.last_status = Some(self.docking.status().clone());
+        }
+        match out {
+            Some(out) => {
+                if !self.docking.active() {
+                    self.held = Some((out.target, out.gait));
+                }
+                Some(self.command(&out))
+            }
+            None if was_active => None,
+            None => passthrough,
+        }
+    }
+
+    fn observe(&mut self, controller: &Controller) {
+        self.view.update(controller);
+    }
+
+    fn expires(&self) -> bool {
+        !self.docking.active() && self.inner.expires()
+    }
+}
+
+#[cfg(test)]
+mod tests;

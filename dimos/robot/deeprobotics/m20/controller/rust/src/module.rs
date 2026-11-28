@@ -1,0 +1,1382 @@
+// Copyright 2026 Dimensional Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//! The M20 controller as one dimos module: the motor bus, the batteries and, built in, the walking policy that
+//! replaces rl_deploy. Same outputs in every mode:
+//!
+//! - `tap` (default): read the frames rl_deploy exchanges, from the `ecan_tap.so` shim's stream. Receive-only.
+//! - `owner` (rl_deploy stopped): own the motor bus with m20-ecan's bus owner (rl_deploy's startup, then 1 kHz),
+//!   with the charge-enable request from m20-battery's rule while docked and lying.
+//!   - `policy` off (default): rl_deploy's zero-gain sitting command every 1 ms; nothing holds or moves a joint.
+//!   - `policy` on: rl_deploy's state machine and ONNX runners at 1 kHz (m20_controller.toml), driven by `cmd_vel`
+//!     (metric, through each runner's REAL_STEER divisor), `motion_cmd` (passive, stand, rl_control, lie_down,
+//!     joint_damping) and `gait_cmd` (vendor gait code), on the body IMU from `imu`. Gains reach the motors only
+//!     with `allow_gains`; off (the default) every command that holds a joint goes out as the sitting command.
+//!   - docking (policy on): `dock_cmd` ("dock", "undock", "cancel") runs charge_manager's sequence (crate::dock)
+//!     on the dock pose from `dock_pose` (m20_dock_detector_module) and the packs' charge MOS; `dock_state` is its
+//!     status as JSON.
+//!   - the vendor phone app (policy on, [app_server]): crate::app_server, on `cmd_vel`'s command path.
+//!
+//! Every frame is published as it arrives; a publish still in flight when newer data lands makes the older data be
+//! skipped (latest wins).
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use dimos_module::{native_config, Input, Module, Output};
+use lcm_msgs::geometry_msgs::{PoseStamped, Twist, Vector3};
+use lcm_msgs::sensor_msgs::{BatteryState, Imu, JointState};
+use lcm_msgs::std_msgs::{self, Bool, Float32, Int32, UInt32};
+use m20_ecan::tap::{TapRecord, TapSocket};
+use m20_ecan::Direction;
+use tokio::sync::watch;
+use tracing::{info, warn};
+
+use crate::dock::docking::{DockFeed, Request};
+use crate::dock::vendor::ChargeManagerToml;
+use crate::dock::{ChargeReading, DockPose};
+use crate::hardware::ecan::{ImuSample, ImuSource};
+use crate::publish::frames::{Batteries, FrameHandler, Published};
+use crate::types::{Target, UserCommand};
+
+/// The controller's own m20_controller.toml, used when `controller_config` is empty.
+pub const BUILT_IN_CONFIG: &str = include_str!("../m20_controller.toml");
+
+fn valid_mode(mode: &str) -> Result<(), validator::ValidationError> {
+    match mode {
+        "tap" | "owner" => Ok(()),
+        _ => Err(validator::ValidationError::new("mode must be tap or owner")),
+    }
+}
+
+#[native_config]
+#[derive(Clone)]
+pub struct Config {
+    /// `tap` (read rl_deploy's frames through the shim) or `owner` (own the bus; rl_deploy stopped).
+    #[validate(custom(function = "valid_mode"))]
+    mode: String,
+    /// tap: the unix datagram socket the shim streams to; this module binds it.
+    socket_path: String,
+    /// owner: the motor-bus interface.
+    interface: String,
+    /// owner: send the BMS charge-enable request when m20-battery's rule asks (docked, lying).
+    charge_enable: bool,
+    /// frame_id of every header.
+    frame_id: String,
+    /// Seconds without a frame before warning.
+    #[validate(range(exclusive_min = 0.0, max = 3600.0))]
+    silence_warning_s: f64,
+    /// owner: board replies between progress log lines.
+    #[validate(range(min = 1))]
+    progress_log_replies: u64,
+    /// owner: run the walking policy (state machine + ONNX runners) on the bus; off sends only the sitting command.
+    policy: bool,
+    /// owner + policy: let commands carrying kp / kd onto the motors. Never on without an operator's go.
+    allow_gains: bool,
+    /// policy: an m20_controller.toml path; empty uses the one built in.
+    controller_config: String,
+    /// policy: the directory of the extracted rl_deploy ONNX policies; empty is ~/.cache/dimos/m20_policies.
+    policy_dir: String,
+    /// policy: seconds without a new command before the velocity is zeroed, over the TOML's
+    /// safety.command_timeout_s; 0 (unset) keeps the TOML's.
+    #[validate(range(min = 0.0))]
+    command_timeout_s: f64,
+    /// policy: the vendor gait code walking starts on until a gait_cmd changes it (Python default 0x1001 basic flat).
+    gait: u32,
+    /// policy: charge_manager.toml (NOS's, docking reads it); when this board has none, the copy the dock detector
+    /// module publishes on charge_manager_config is taken
+    charge_manager_toml: String,
+    /// policy: log the status when the commanded body height moves this far (m); other changes always log
+    #[validate(range(exclusive_min = 0.0))]
+    status_log_height_step_m: f64,
+    /// policy: |vx|, |vy|, |wz| clamp on cmd_vel (m/s, m/s, rad/s), the vendor bridge's
+    cmd_vel_limits: [f64; 3],
+    /// policy: the vendor bridge's cycle (Hz): command_ready, and the latest cmd_vel resent (zero after the timeout)
+    #[validate(range(exclusive_min = 0.0))]
+    command_ready_hz: f64,
+}
+
+#[derive(Module)]
+#[module(name = "m20_controller", setup = start, teardown = stop)]
+pub struct M20Controller {
+    #[input(decode = Twist::decode, handler = on_cmd_vel)]
+    cmd_vel: Input<Twist>,
+    #[input(decode = Imu::decode, handler = on_imu)]
+    imu: Input<Imu>,
+    /// rt/IMU_DATA's roll, pitch, yaw (deg) as yesense_node writes them: rl_deploy's gravity and tilt come from these
+    #[input(decode = Vector3::decode, handler = on_imu_rpy)]
+    imu_rpy: Input<Vector3>,
+    #[input(decode = std_msgs::String::decode, handler = on_motion_cmd)]
+    motion_cmd: Input<std_msgs::String>,
+    #[input(decode = UInt32::decode, handler = on_gait_cmd)]
+    gait_cmd: Input<UInt32>,
+    /// basic_server's control usage mode request: 0 regular, 1 navigation, 2 assist
+    #[input(decode = UInt32::decode, handler = on_usage_mode)]
+    usage_mode: Input<UInt32>,
+    /// the dock in base_link, from m20_dock_detector_module (one per sweep that sees it)
+    #[input(decode = PoseStamped::decode, handler = on_dock_pose)]
+    dock_pose: Input<PoseStamped>,
+    /// "dock", "undock" or "cancel"
+    #[input(decode = std_msgs::String::decode, handler = on_dock_cmd)]
+    dock_cmd: Input<std_msgs::String>,
+    /// charge_manager's obstacle check from m20_dock_detector_module: the nearest occupied cell (m), -1 for none
+    #[input(decode = Float32::decode, handler = on_dock_obstacle)]
+    dock_obstacle: Input<Float32>,
+    /// charge_manager.toml's text from m20_dock_detector_module (read on NOS)
+    #[input(decode = std_msgs::String::decode, handler = on_charge_manager_config)]
+    charge_manager_config: Input<std_msgs::String>,
+
+    #[output(encode = JointState::encode)]
+    joint_state: Output<JointState>,
+    #[output(encode = JointState::encode)]
+    joint_command: Output<JointState>,
+    #[output(encode = BatteryState::encode)]
+    battery: Output<BatteryState>,
+    #[output(encode = BatteryState::encode)]
+    battery_left: Output<BatteryState>,
+    #[output(encode = BatteryState::encode)]
+    battery_right: Output<BatteryState>,
+    /// policy: in RL control without a fault (velocity is being followed).
+    #[output(encode = Bool::encode)]
+    command_ready: Output<Bool>,
+    /// policy: the state machine's state, and its fault if any.
+    #[output(encode = std_msgs::String::encode)]
+    controller_state: Output<std_msgs::String>,
+    /// policy: the docking sequence's status (JSON: phase, active, result, error, charging, packs, fine_point)
+    #[output(encode = std_msgs::String::encode)]
+    dock_state: Output<std_msgs::String>,
+    /// policy: base_link's height above the wheels' contact (m, from the joints), for the dock's obstacle check
+    #[output(encode = Float32::encode)]
+    body_height: Output<Float32>,
+    /// policy: crate::status::ControllerStatus as JSON, on every change and once a second
+    #[output(encode = std_msgs::String::encode)]
+    controller_report: Output<std_msgs::String>,
+    /// /HES_STATUS as rl_deploy writes it: the ECAN board's hard-stop byte on every 0x8a frame (0 clear, 1 pressed)
+    #[output(encode = Int32::encode)]
+    hes_status: Output<Int32>,
+    /// true while the ECAN board's hard-stop byte is non-zero, on every 0x8a frame (hes_status as a Bool)
+    #[output(encode = Bool::encode)]
+    hardware_estop: Output<Bool>,
+
+    #[config]
+    config: Config,
+
+    shared: Arc<Shared>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+/// Between the module's handlers and the 1 kHz loop.
+#[derive(Default)]
+pub struct Shared {
+    /// the operator's command (the inputs' and the vendor app server's)
+    operator: Arc<crate::operator::Operator>,
+    /// the vendor app server's view of the robot, from the 1 kHz loop
+    app: Arc<crate::app_reports::Snapshots>,
+    imu: Mutex<Option<(ImuSample, std::time::Instant)>>,
+    /// the newest rt/IMU_DATA roll, pitch, yaw (deg)
+    imu_rpy: Mutex<Option<[f32; 3]>>,
+    stop: AtomicBool,
+    /// docking's inputs (dock pose, battery reading, requests)
+    dock: Arc<DockFeed>,
+    /// dock poses received
+    dock_poses: std::sync::atomic::AtomicU64,
+    /// obstacle readings received
+    dock_obstacles: std::sync::atomic::AtomicU64,
+    /// charge_manager.toml was taken (this board's or the detector module's copy)
+    vendor_read: AtomicBool,
+    /// basic_server's usage mode (requests in, the current mode out)
+    usage: Arc<crate::basic_server::UsageMode>,
+    /// the newest hard-stop byte off the bus (the bridge's /HES_STATUS gate)
+    hard_stop: Arc<crate::commands::HardStop>,
+    /// joint zeroing requests (the app's ResetJointsZero, motion_cmd reset_joint_zero) to the 1 kHz loop
+    joint_zero: Arc<crate::joint_zero::Requests>,
+}
+
+/// The body IMU as the loop reads it: the newest sample that arrived, however old (rl_deploy's, which never ages one
+/// out); while a receiver holds its lock, the one read last.
+pub struct SharedImu {
+    shared: Arc<Shared>,
+    sample: Option<(ImuSample, std::time::Instant)>,
+    rpy: Option<[f32; 3]>,
+}
+
+impl ImuSource for SharedImu {
+    fn latest(&mut self) -> Option<ImuSample> {
+        let skips = &crate::rt::LOCK_SKIPS;
+        if let Some(rpy) = crate::rt::try_read(&self.shared.imu_rpy, skips, |r| *r) {
+            self.rpy = rpy;
+        }
+        if let Some(sample) = crate::rt::try_read(&self.shared.imu, skips, |i| *i) {
+            self.sample = sample;
+        }
+        // the age keeps growing while no new sample arrives (the controller faults on a stalled IMU)
+        self.sample.map(|(sample, at)| ImuSample {
+            rpy_deg: self.rpy,
+            age_s: Some(at.elapsed().as_secs_f64()),
+            ..sample
+        })
+    }
+}
+
+/// The operator's commands as the loop polls them: the newest change since the last tick.
+pub struct SharedCommands {
+    shared: Arc<Shared>,
+}
+
+impl crate::commands::CommandSource for SharedCommands {
+    fn poll(&mut self, _now: f64) -> Option<UserCommand> {
+        self.shared.operator.take()
+    }
+}
+
+/// A motion command by name (passive, stand, rl_control, lie_down, joint_damping).
+pub fn parse_target(name: &str) -> Option<Target> {
+    serde_json::from_value(serde_json::Value::String(name.trim().to_string())).ok()
+}
+
+/// The ImuSample of a sensor_msgs/Imu in base_link's axes (orientation w, x, y, z; rad/s; m/s^2).
+pub fn imu_sample(msg: &Imu) -> ImuSample {
+    let q = &msg.orientation;
+    let (g, a) = (&msg.angular_velocity, &msg.linear_acceleration);
+    ImuSample {
+        quat: [q.w, q.x, q.y, q.z],
+        gyro: [g.x, g.y, g.z],
+        accel: [a.x, a.y, a.z],
+        stamp: msg.header.stamp.sec as f64 + msg.header.stamp.nsec as f64 * 1e-9,
+        rpy_deg: None,
+        age_s: None,
+    }
+}
+
+/// The one-time setup that grants the controller CAP_NET_RAW (motor bus) and SCHED_FIFO (CAP_SYS_NICE, LimitRTPRIO).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const REALTIME_FIX: &str =
+    "on AOS run `m20tool setup-step aos/dimos-host-realtime`, then restart dimos-host";
+
+/// What to run when the motor bus is refused for want of a permission; "" otherwise.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn setup_fix(error: &str) -> &'static str {
+    if error.contains("Operation not permitted") || error.contains("Permission denied") {
+        REALTIME_FIX
+    } else {
+        ""
+    }
+}
+
+/// Publish whatever the channel holds, as often as the output keeps up.
+fn forward<T: Clone + Send + Sync + 'static>(
+    mut latest: watch::Receiver<Option<T>>,
+    output: Output<T>,
+    name: &'static str,
+) {
+    tokio::spawn(async move {
+        while latest.changed().await.is_ok() {
+            let message = latest.borrow_and_update().clone();
+            if let Some(message) = message {
+                if let Err(error) = output.publish(&message).await {
+                    warn!(%error, stream = name, "cannot publish");
+                }
+            }
+        }
+    });
+}
+
+/// The latest message per output, handed to the publishing tasks.
+struct Latest {
+    joint_state: watch::Sender<Option<JointState>>,
+    joint_command: watch::Sender<Option<JointState>>,
+    battery: watch::Sender<Option<BatteryState>>,
+    left: watch::Sender<Option<BatteryState>>,
+    right: watch::Sender<Option<BatteryState>>,
+    hes_status: watch::Sender<Option<Int32>>,
+    hardware_estop: watch::Sender<Option<Bool>>,
+    hard_stop: Arc<crate::commands::HardStop>,
+    handler: FrameHandler,
+}
+
+impl Latest {
+    fn see(&self, timestamp_ns: u64, direction: Direction, frame: &[u8]) {
+        match self.handler.handle(timestamp_ns, direction, frame) {
+            Ok(Some(Published::JointState(m))) => drop(self.joint_state.send_replace(Some(m))),
+            Ok(Some(Published::JointCommand(m))) => drop(self.joint_command.send_replace(Some(m))),
+            Ok(Some(Published::Battery(b))) => {
+                let Batteries {
+                    left,
+                    right,
+                    combined,
+                } = *b;
+                self.left.send_replace(Some(left));
+                self.right.send_replace(Some(right));
+                self.battery.send_replace(Some(combined));
+            }
+            Ok(Some(Published::HardStop(m))) => {
+                self.hard_stop.set(m.data as u8);
+                self.hardware_estop
+                    .send_replace(Some(crate::publish::frames::hardware_estop(&m)));
+                self.hes_status.send_replace(Some(m));
+            }
+            Ok(None) => {}
+            Err(error) => warn!(%error, "bad motor-bus frame"),
+        }
+    }
+}
+
+/// What the policy loop publishes on a state change and once per second of ticks.
+#[derive(Clone, PartialEq)]
+struct Status {
+    ready: bool,
+    state: String,
+}
+
+impl M20Controller {
+    async fn start(&mut self) {
+        let config = self.config.clone();
+        self.shared.operator.set_start_gait(config.gait);
+        let (joint_state, joint_state_rx) = watch::channel(None);
+        let (joint_command, joint_command_rx) = watch::channel(None);
+        let (battery, battery_rx) = watch::channel(None);
+        let (left, left_rx) = watch::channel(None);
+        let (right, right_rx) = watch::channel(None);
+        let (hes_status, hes_status_rx) = watch::channel(None);
+        forward(hes_status_rx, self.hes_status.clone(), "hes_status");
+        let (hardware_estop, hardware_estop_rx) = watch::channel(None);
+        forward(
+            hardware_estop_rx,
+            self.hardware_estop.clone(),
+            "hardware_estop",
+        );
+        let (status, status_rx) = watch::channel(None::<Status>);
+        forward(joint_state_rx, self.joint_state.clone(), "joint_state");
+        forward(
+            joint_command_rx,
+            self.joint_command.clone(),
+            "joint_command",
+        );
+        forward(battery_rx, self.battery.clone(), "battery");
+        forward(left_rx, self.battery_left.clone(), "battery_left");
+        forward(right_rx, self.battery_right.clone(), "battery_right");
+        forward_status(
+            status_rx,
+            self.command_ready.clone(),
+            self.controller_state.clone(),
+        );
+        let (dock_status, dock_status_rx) = watch::channel(None::<std_msgs::String>);
+        forward(dock_status_rx, self.dock_state.clone(), "dock_state");
+        let (body_height, body_height_rx) = watch::channel(None::<Float32>);
+        forward(body_height_rx, self.body_height.clone(), "body_height");
+        let (full_status, full_status_rx) = watch::channel(None::<std_msgs::String>);
+        forward(
+            full_status_rx,
+            self.controller_report.clone(),
+            "controller_report",
+        );
+        if config.policy && !config.charge_manager_toml.is_empty() {
+            match ChargeManagerToml::load(&config.charge_manager_toml) {
+                Ok((t, _)) => {
+                    info!(path = %config.charge_manager_toml, "charge_manager.toml read");
+                    self.shared.vendor_read.store(true, Ordering::Relaxed);
+                    *self
+                        .shared
+                        .dock
+                        .vendor
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner()) = Some(t);
+                }
+                Err(error) => info!(
+                    error = format!("{error:#}"),
+                    "no charge_manager.toml on this board; docking waits for the dock detector module's copy"
+                ),
+            }
+        }
+        let latest = Latest {
+            joint_state,
+            joint_command,
+            battery,
+            left,
+            right,
+            hes_status,
+            hardware_estop,
+            hard_stop: self.shared.hard_stop.clone(),
+            handler: FrameHandler::new(&config.frame_id),
+        };
+        if config.policy && config.mode != "owner" {
+            warn!("policy needs mode = owner (the controller owns the bus); running the tap without it");
+        }
+        let shared = self.shared.clone();
+        let spawned = if config.mode == "owner" && config.policy {
+            std::thread::Builder::new()
+                .name("m20-controller".into())
+                .spawn(move || {
+                    run_policy(
+                        &config,
+                        latest,
+                        shared,
+                        Publishers {
+                            status,
+                            dock_status,
+                            body_height,
+                            full_status,
+                        },
+                    )
+                })
+        } else if config.mode == "owner" {
+            std::thread::Builder::new()
+                .name("m20-ecan-owner".into())
+                .spawn(move || run_owner(&config, &latest))
+        } else {
+            let mut tap = match TapSocket::bind(&config.socket_path) {
+                Ok(tap) => tap,
+                Err(error) => {
+                    warn!(%error, path = %config.socket_path, "cannot bind the tap socket; no joint or battery data");
+                    return;
+                }
+            };
+            info!(path = %config.socket_path, "waiting for the frames rl_deploy's shim streams");
+            let _ = tap.set_read_timeout(Some(Duration::from_secs_f64(config.silence_warning_s)));
+            std::thread::Builder::new()
+                .name("m20-ecan-tap".into())
+                .spawn(move || run_tap(&config, &mut tap, &latest))
+        };
+        match spawned {
+            Ok(thread) => self.thread = Some(thread),
+            Err(error) => warn!(%error, "cannot start the motor-bus thread"),
+        }
+    }
+
+    /// Policy mode: the loop sends its shutdown damping and returns; the other modes run until the process ends.
+    async fn stop(&mut self) {
+        self.shared.stop.store(true, Ordering::Relaxed);
+        if self.config.policy && self.config.mode == "owner" {
+            if let Some(thread) = self.thread.take() {
+                let _ = tokio::task::spawn_blocking(move || thread.join()).await;
+            }
+        }
+    }
+
+    async fn on_cmd_vel(&mut self, msg: Twist) {
+        let v = [msg.linear.x, msg.linear.y, msg.angular.z];
+        self.shared.operator.velocity(v, self.config.cmd_vel_limits);
+    }
+
+    async fn on_motion_cmd(&mut self, msg: std_msgs::String) {
+        let words: Vec<&str> = msg.data.split_whitespace().collect();
+        if words.first() == Some(&"reset_joint_zero") {
+            self.reset_joint_zero(&words[1..]);
+            return;
+        }
+        if self.shared.operator.held() {
+            // ours: during a joint zeroing only joint_damping (the soft e-stop) is taken, and it ends the zeroing
+            if parse_target(&msg.data) == Some(Target::JointDamping) {
+                warn!("joint damping during the joint zeroing: aborting it");
+                self.shared.joint_zero.abort();
+            } else {
+                warn!(motion = %msg.data, "motion command during the joint zeroing; ignored");
+            }
+            return;
+        }
+        if msg.data.trim() == "align_body_posture" {
+            info!("align body posture command");
+            self.shared.usage.align.store(true, Ordering::Relaxed);
+            return;
+        }
+        match parse_target(&msg.data) {
+            Some(target) => self.shared.operator.motion(target),
+            None => {
+                warn!(motion = %msg.data, "unknown motion command (passive, stand, rl_control, lie_down, joint_damping)")
+            }
+        }
+    }
+
+    /// AutoSetHome with these arguments in the 1 kHz loop; none or a bad one sends nothing (a warning).
+    fn reset_joint_zero(&self, args: &[&str]) {
+        let joints = match crate::joint_zero::parse_joints(args) {
+            Ok(joints) => joints,
+            Err(why) => {
+                warn!(%why, "joint zeroing not started");
+                return;
+            }
+        };
+        if !(self.config.mode == "owner" && self.config.policy) {
+            warn!("joint zeroing needs mode = owner with the policy on; ignored");
+            return;
+        }
+        match self.shared.joint_zero.request(joints.clone()) {
+            Ok(result) => {
+                info!(?joints, "joint zeroing requested");
+                tokio::task::spawn_blocking(move || match result.recv() {
+                    Ok(code) => info!(code, "joint zeroing over"),
+                    Err(_) => warn!("joint zeroing: the loop stopped without an answer"),
+                });
+            }
+            Err(code) => warn!(code, "joint zeroing already asked or running; ignored"),
+        }
+    }
+
+    async fn on_gait_cmd(&mut self, msg: UInt32) {
+        self.shared.operator.gait(msg.data as u32);
+    }
+
+    async fn on_usage_mode(&mut self, msg: UInt32) {
+        info!(mode = msg.data, "usage mode command");
+        *self
+            .shared
+            .usage
+            .request
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(msg.data);
+    }
+
+    async fn on_dock_pose(&mut self, msg: PoseStamped) {
+        let q = &msg.pose.orientation;
+        let pose = DockPose {
+            x: msg.pose.position.x,
+            y: msg.pose.position.y,
+            yaw: (2.0 * (q.w * q.z + q.x * q.y)).atan2(1.0 - 2.0 * (q.y * q.y + q.z * q.z)),
+        };
+        if ![pose.x, pose.y, pose.yaw].iter().all(|v| v.is_finite()) {
+            warn!(?pose, "non-finite dock pose; ignored");
+            return;
+        }
+        let seq = self.shared.dock_poses.fetch_add(1, Ordering::Relaxed) + 1;
+        *self
+            .shared
+            .dock
+            .pose
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some((pose, seq));
+    }
+
+    async fn on_dock_obstacle(&mut self, msg: Float32) {
+        let seq = self.shared.dock_obstacles.fetch_add(1, Ordering::Relaxed) + 1;
+        let reading = (msg.data >= 0.0).then_some(msg.data);
+        *self
+            .shared
+            .dock
+            .obstacle
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some((reading, seq));
+    }
+
+    async fn on_charge_manager_config(&mut self, msg: std_msgs::String) {
+        if self.shared.vendor_read.load(Ordering::Relaxed) {
+            return;
+        }
+        match ChargeManagerToml::parse(&msg.data) {
+            Ok(t) => {
+                info!("charge_manager.toml from the dock detector module");
+                self.shared.vendor_read.store(true, Ordering::Relaxed);
+                *self
+                    .shared
+                    .dock
+                    .vendor
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner()) = Some(t);
+            }
+            Err(error) => warn!(
+                error = format!("{error:#}"),
+                "bad charge_manager.toml from the dock detector module"
+            ),
+        }
+    }
+
+    async fn on_dock_cmd(&mut self, msg: std_msgs::String) {
+        match Request::parse(&msg.data) {
+            Some(_) if self.shared.operator.held() => {
+                warn!(command = %msg.data, "dock command during the joint zeroing; ignored")
+            }
+            Some(request) => {
+                info!(?request, "dock command");
+                if !(self.config.mode == "owner" && self.config.policy) {
+                    warn!("docking needs mode = owner with the policy on; ignored");
+                    return;
+                }
+                *self
+                    .shared
+                    .dock
+                    .request
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner()) = Some(request);
+            }
+            None => warn!(command = %msg.data, "unknown dock command (dock, undock, cancel)"),
+        }
+    }
+
+    async fn on_imu_rpy(&mut self, msg: Vector3) {
+        *self
+            .shared
+            .imu_rpy
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some([msg.x as f32, msg.y as f32, msg.z as f32]);
+    }
+
+    async fn on_imu(&mut self, msg: Imu) {
+        *self.shared.imu.lock().unwrap_or_else(|p| p.into_inner()) =
+            Some((imu_sample(&msg), std::time::Instant::now()));
+    }
+}
+
+fn forward_status(
+    mut latest: watch::Receiver<Option<Status>>,
+    ready: Output<Bool>,
+    state: Output<std_msgs::String>,
+) {
+    tokio::spawn(async move {
+        while latest.changed().await.is_ok() {
+            let Some(status) = latest.borrow_and_update().clone() else {
+                continue;
+            };
+            let results = [
+                ready.publish(&Bool { data: status.ready }).await,
+                state
+                    .publish(&std_msgs::String { data: status.state })
+                    .await,
+            ];
+            for error in results.into_iter().filter_map(Result::err) {
+                warn!(%error, "cannot publish the controller state");
+            }
+        }
+    });
+}
+
+/// What the policy loop publishes through.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // read only by the Linux run_policy
+struct Publishers {
+    status: watch::Sender<Option<Status>>,
+    dock_status: watch::Sender<Option<std_msgs::String>>,
+    body_height: watch::Sender<Option<Float32>>,
+    full_status: watch::Sender<Option<std_msgs::String>>,
+}
+
+#[cfg(target_os = "linux")]
+fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Publishers) {
+    let Publishers {
+        status,
+        dock_status,
+        body_height,
+        full_status,
+    } = publish;
+    use crate::dock::docking::{Docking, DockingCommands};
+    use crate::dock::obstacle;
+    use crate::hardware::bus::{BusHardware, Sink};
+    use crate::hardware::Hardware;
+    use crate::policy::{RunnerSet, ThreadedPolicy};
+    use crate::rt::{self, Pacing};
+    use crate::state_machine::{Controller, State};
+    let cfg = match controller_config(config) {
+        Ok(cfg) => cfg,
+        Err(error) => {
+            warn!(
+                error = format!("{error:#}"),
+                "bad controller config; not owning the bus"
+            );
+            return;
+        }
+    };
+    let policy_dir = if config.policy_dir.is_empty() {
+        std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+            .join(".cache/dimos/m20_policies")
+    } else {
+        std::path::PathBuf::from(&config.policy_dir)
+    };
+    let runners = match RunnerSet::load(&cfg, &policy_dir) {
+        Ok(runners) => runners,
+        Err(error) => {
+            warn!(error = format!("{error:#}"), dir = %policy_dir.display(), "cannot load the policies; not owning the bus");
+            return;
+        }
+    };
+    let rt_cfg = cfg.realtime.clone();
+    let mut policy = match ThreadedPolicy::spawn(runners, move || {
+        if let Err(error) =
+            rt::apply_realtime(rt_cfg.policy_cpu, rt_cfg.policy_fifo_priority, false)
+        {
+            tracing::error!(
+                error = format!("{error:#}"),
+                fix = REALTIME_FIX,
+                "the policy thread is not real-time; refusing to run"
+            );
+            std::process::exit(1);
+        }
+    }) {
+        Ok(policy) => policy,
+        Err(error) => {
+            warn!(
+                error = format!("{error:#}"),
+                "cannot start the policy thread"
+            );
+            return;
+        }
+    };
+    let charge_feed = shared.dock.clone();
+    let app_packs = shared.app.clone();
+    let mut battery_reports = 0u64;
+    let sink: Sink = Box::new(move |t, direction, frame| {
+        if let Some(reading) = charge_reading(direction, frame, battery_reports + 1) {
+            battery_reports += 1;
+            if let Ok(mut slot) = charge_feed.charge.try_lock() {
+                *slot = Some(reading);
+            }
+            if let Some(packs) = app_packs_of(direction, frame) {
+                app_packs.offer_packs(packs);
+            }
+        }
+        latest.see(t, direction, frame);
+    });
+    let imu = SharedImu {
+        shared: shared.clone(),
+        sample: None,
+        rpy: None,
+    };
+    let owner = m20_ecan::owner::OwnerConfig {
+        allow_gains: cfg.ecan.allow_gains,
+    };
+    let mut hardware = match BusHardware::open(
+        &cfg.ecan.interface,
+        owner,
+        cfg.ecan.charge_enable,
+        cfg.ecan.reply_timeout_s,
+        Box::new(imu),
+        sink,
+    ) {
+        Ok(hardware) => hardware,
+        Err(error) => {
+            warn!(
+                error = format!("{error:#}"),
+                fix = setup_fix(&format!("{error:#}")),
+                "cannot own the motor bus"
+            );
+            return;
+        }
+    };
+    hardware.set_battery(cfg.battery.clone());
+    if let Err(error) = rt::control_realtime(&cfg.realtime) {
+        tracing::error!(
+            error = format!("{error:#}"),
+            fix = REALTIME_FIX,
+            "the 1 kHz loop is not real-time; refusing to run"
+        );
+        std::process::exit(1);
+    }
+    info!(
+        interface = %cfg.ecan.interface,
+        allow_gains = cfg.ecan.allow_gains,
+        "owning the motor bus with the walking policy: rl_deploy's startup, then 1 kHz"
+    );
+    // charge_manager's charge-enables come from the dock sequence (rl_deploy has no rule of its own)
+    hardware.set_charge_rule(false);
+    let docking = Docking::new(&cfg, cfg.ecan.charge_enable, None);
+    // docking's latest status, for the controller status (written and read on this thread)
+    let dock_latest = Arc::new(Mutex::new(None::<crate::dock::docking::Status>));
+    let dock_seen = dock_latest.clone();
+    let mut status_log = crate::status::StatusLog::new(config.status_log_height_step_m);
+    let docking_commands = DockingCommands::new(
+        crate::commands::NavBridge::new(
+            SharedCommands {
+                shared: shared.clone(),
+            },
+            shared.hard_stop.clone(),
+            config.command_ready_hz,
+            cfg.safety.command_timeout_s,
+        ),
+        docking,
+        shared.dock.clone(),
+        Box::new(move |s| {
+            info!(phase = ?s.phase, result = %s.result, error = s.error, charging = s.charging, "docking");
+            if let Ok(mut slot) = dock_seen.lock() {
+                *slot = Some(s.clone());
+            }
+            let data = serde_json::to_string(s).unwrap_or_default();
+            dock_status.send_replace(Some(std_msgs::String { data }));
+        }),
+    );
+    let mut commands = crate::basic_server::BasicServer::new(
+        docking_commands,
+        shared.usage.clone(),
+        cfg.basic_server.clone(),
+        cfg.real_steer.clone(),
+    );
+    let usage = shared.usage.clone();
+    let imu_seen = shared.clone();
+    let app_server = start_app_server(&cfg, config, &shared);
+    let app_every =
+        ((cfg.timing.control_hz * cfg.app_server.report_period_s).round() as u64).max(1);
+    let mut controller = Controller::new(cfg.clone());
+    let status_every = (cfg.timing.control_hz.round() as u64).max(1);
+    let ready_every = ((cfg.timing.control_hz / config.command_ready_hz).round() as u64).max(1);
+    let mut last: Option<Status> = None;
+    let mut last_height = f64::NAN;
+    let mut charge_enable_seq = 0.0;
+    let idle_dock = shared.dock.clone();
+    let mut idle_charge_enables = 0;
+    let zero_requests = shared.joint_zero.clone();
+    let zero_operator = shared.operator.clone();
+    // the asker of the zeroing running, answered when the hardware is done
+    let mut zero_asker: Option<std::sync::mpsc::Sender<i32>> = None;
+    let result = rt::run(
+        &cfg,
+        &mut hardware,
+        &mut controller,
+        &mut policy,
+        &mut commands,
+        Pacing::Realtime,
+        &shared.stop,
+        |hw, tick| {
+            let idle = idle_dock
+                .idle_charge_enables
+                .load(std::sync::atomic::Ordering::Relaxed);
+            if idle != idle_charge_enables {
+                idle_charge_enables = idle;
+                hw.request_charge_enable();
+            }
+            let p = &tick.user.params;
+            if let (Some(&v), Some(&seq)) = (
+                p.get(crate::dock::docking::CHARGE_ENABLE_PARAM),
+                p.get(crate::dock::docking::CHARGE_ENABLE_SEQ_PARAM),
+            ) {
+                if seq != charge_enable_seq {
+                    charge_enable_seq = seq;
+                    if v == 1.0 {
+                        hw.request_charge_enable();
+                    }
+                }
+            }
+            let height =
+                obstacle::body_height(&cfg.robot, &tick.state.q, cfg.dock.obstacle.wheel_radius_m);
+            if (height - last_height)
+                .abs()
+                .partial_cmp(&cfg.dock.obstacle.body_height_step_m)
+                .is_none_or(std::cmp::Ordering::is_ge)
+            {
+                last_height = height;
+                body_height.send_replace(Some(Float32 {
+                    data: height as f32,
+                }));
+            }
+            let dock = dock_latest.lock().ok().and_then(|d| d.clone());
+            let mode = usage.current.load(Ordering::Relaxed);
+            if app_server.is_some() && tick.stats.ticks % app_every == 0 {
+                imu_seen.app.offer_robot(crate::app_reports::RobotView::of(
+                    &cfg,
+                    tick,
+                    mode,
+                    usage.direction.load(Ordering::Relaxed),
+                    dock.as_ref(),
+                    imu_seen.hard_stop.get(),
+                ));
+            }
+            let mut full = crate::status::ControllerStatus::of(&cfg, tick, dock.as_ref(), mode);
+            // the bridge's command_ready also needs the hard stop clear (main.cpp robot_ready)
+            let hard_stop_clear = imu_seen.hard_stop.clear();
+            full.hard_stop = imu_seen.hard_stop.get();
+            full.ready &= hard_stop_clear;
+            if let Some((asker, joints)) = zero_requests.take() {
+                let c = tick.controller;
+                let charger_connected =
+                    crate::rt::try_read(&idle_dock.charge, &crate::rt::LOCK_SKIPS, |r| {
+                        r.as_ref().is_some_and(|r| r.charger_connected)
+                    })
+                    .unwrap_or(true);
+                let conditions = crate::joint_zero::Conditions {
+                    state: c.state,
+                    at_rest: c.at_rest(),
+                    target: tick.user.target,
+                    charger_state: dock
+                        .as_ref()
+                        .map_or(0, crate::basic_server::charger_state_of),
+                    charger_connected,
+                    hard_stop: !hard_stop_clear,
+                    allow_gains: cfg.ecan.allow_gains,
+                };
+                let refused = match &cfg.joint_zero {
+                    None => Some(crate::app_commands::error::UNSUPPORTED_FUNCTION),
+                    Some(z) => crate::joint_zero::refusal(&conditions)
+                        .or_else(|| hw.start_joint_zero(z, &joints).err()),
+                };
+                match refused {
+                    Some(code) => {
+                        warn!(code, ?conditions, "joint zeroing refused");
+                        zero_requests.finish(&asker, code);
+                    }
+                    None => {
+                        info!("joint zeroing: AutoSetHome -1's frames on the bus; operator commands held");
+                        zero_operator.hold(true);
+                        zero_requests.set_running(true);
+                        zero_asker = Some(asker);
+                    }
+                }
+            }
+            if zero_requests.take_abort() {
+                hw.abort_joint_zero();
+            }
+            if let Some(code) = hw.joint_zero_result() {
+                info!(
+                    code,
+                    "joint zeroing over (0 done, else the failed joint + 1)"
+                );
+                if let Some(asker) = zero_asker.take() {
+                    zero_requests.finish(&asker, code);
+                }
+                zero_requests.set_running(false);
+                zero_operator.hold(false);
+            }
+            full.joint_zero = zero_requests.report();
+            full.imu_age_ms = crate::rt::try_read(&imu_seen.imu, &crate::rt::LOCK_SKIPS, |i| {
+                i.as_ref()
+                    .map(|(_, at)| (at.elapsed().as_secs_f64() * 1e4).round() / 10.0)
+            })
+            .flatten();
+            let logged = status_log.changed(&full);
+            if logged {
+                info!(
+                    state = %full.state,
+                    fault = ?full.fault,
+                    target = %full.target,
+                    commanded_gait = %full.commanded_gait,
+                    gait = %full.gait,
+                    runner = ?full.runner,
+                    stand_in = full.stand_in,
+                    commanded_height_incl_wheel_m = ?full.commanded_height_incl_wheel_m,
+                    height_incl_wheel_m = full.height_incl_wheel_m,
+                    usage_mode = full.usage_mode,
+                    dock_phase = ?full.dock_phase,
+                    "controller status"
+                );
+            }
+            if logged || tick.stats.ticks % status_every == 0 {
+                let data = serde_json::to_string(&full).unwrap_or_default();
+                full_status.send_replace(Some(std_msgs::String { data }));
+            }
+            let c = tick.controller;
+            let now = Status {
+                ready: c.state == State::RlControl && c.fault.is_none() && hard_stop_clear,
+                state: match &c.fault {
+                    Some(fault) => format!("{:?} (fault: {fault})", c.state),
+                    None => format!("{:?}", c.state),
+                },
+            };
+            if last.as_ref() != Some(&now) || tick.stats.ticks % ready_every == 0 {
+                status.send_replace(Some(now.clone()));
+                last = Some(now);
+            }
+        },
+    );
+    if let Some(server) = app_server {
+        server.stop();
+    }
+    match result {
+        Ok(stats) => info!(?stats, "policy loop stopped"),
+        Err(error) => warn!(error = format!("{error:#}"), "policy loop failed"),
+    }
+}
+
+/// The vendor app server ([app_server] in the TOML), on the operator's command path; none when off or unbound.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn start_app_server(
+    cfg: &crate::config::Config,
+    config: &Config,
+    shared: &Arc<Shared>,
+) -> Option<crate::app_server::AppServer> {
+    if !cfg.app_server.enabled {
+        return None;
+    }
+    let links = crate::app_commands::Links {
+        operator: shared.operator.clone(),
+        usage: shared.usage.clone(),
+        dock: shared.dock.clone(),
+        snapshots: shared.app.clone(),
+        velocity_limits: config.cmd_vel_limits,
+        joint_zero: shared.joint_zero.clone(),
+    };
+    match crate::app_server::AppServer::start(&cfg.app_server, links) {
+        Ok(server) => Some(server),
+        Err(error) => {
+            warn!(
+                error = format!("{error:#}"),
+                "no vendor app server (is basic_server still running?)"
+            );
+            None
+        }
+    }
+}
+
+/// Both packs as the app's device report shows them, from a battery frame off the board.
+pub fn app_packs_of(
+    direction: Direction,
+    frame: &[u8],
+) -> Option<[crate::app_reports::PackView; 2]> {
+    let (_, message) = m20_ecan::decode_ethernet(frame, direction).ok()?;
+    let report = m20_battery::BatteryReport::from_message(&message).ok()?;
+    Some(report.packs().map(|p| {
+        crate::app_reports::PackView {
+            voltage_v: p.voltage_v as f64,
+            level_percent: p.level_percent,
+            temperature_c: p
+                .temperatures()
+                .iter()
+                .map(|&t| t as f64)
+                .reduce(f64::max)
+                .unwrap_or(0.0),
+            charging: p.is_charging(),
+            serial: p.serial_number.clone(),
+        }
+    }))
+}
+
+/// The packs' charge state from a battery frame off the board, as docking reads it.
+pub fn charge_reading(direction: Direction, frame: &[u8], seq: u64) -> Option<ChargeReading> {
+    let (_, message) = m20_ecan::decode_ethernet(frame, direction).ok()?;
+    if !matches!(message, m20_ecan::Message::Battery(_)) {
+        return None;
+    }
+    let report = m20_battery::BatteryReport::from_message(&message).ok()?;
+    let packs = report.packs();
+    // charge_manager counts the packs reporting a level (BatteryDataValue::battery_level != 0)
+    let present: Vec<_> = packs.iter().filter(|p| p.level_percent > 0).collect();
+    Some(ChargeReading {
+        seq,
+        packs_present: present.len() as u8,
+        packs_charge_mos_on: present.iter().filter(|p| p.charge_mos_on()).count() as u8,
+        charger_connected: present
+            .iter()
+            .any(|p| m20_battery::charge::charger_connected(p)),
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn run_policy(_: &Config, _: Latest, _: Arc<Shared>, _: Publishers) {
+    warn!("the policy on the motor bus needs Linux (the vendor motor-bus socket)");
+}
+
+/// The controller config in force: the TOML with the module's own fields over it.
+pub fn controller_config(config: &Config) -> anyhow::Result<crate::config::Config> {
+    let mut cfg = load_controller_config(&config.controller_config)?;
+    cfg.ecan.interface = config.interface.clone();
+    cfg.ecan.charge_enable = config.charge_enable;
+    cfg.ecan.allow_gains = config.allow_gains;
+    if config.command_timeout_s > 0.0 {
+        cfg.safety.command_timeout_s = config.command_timeout_s;
+    }
+    Ok(cfg)
+}
+
+/// The controller's m20_controller.toml: the built-in one, or a path.
+pub fn load_controller_config(path: &str) -> anyhow::Result<crate::config::Config> {
+    if path.is_empty() {
+        let cfg: crate::config::Config = toml::from_str(BUILT_IN_CONFIG)?;
+        cfg.validate()?;
+        Ok(cfg)
+    } else {
+        crate::config::Config::load(std::path::Path::new(path))
+    }
+}
+
+fn run_tap(config: &Config, tap: &mut TapSocket, latest: &Latest) {
+    let (mut ring_dropped, mut send_dropped, mut receiving) = (0u32, 0u32, false);
+    loop {
+        let records = match tap.recv() {
+            Ok(records) => records,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                warn!(
+                    seconds = config.silence_warning_s,
+                    "no motor-bus frames; is rl_deploy running with the ecan_tap.so shim?"
+                );
+                receiving = false;
+                continue;
+            }
+            Err(error) => {
+                warn!(%error, "bad tap datagram");
+                continue;
+            }
+        };
+        if !receiving {
+            info!("motor-bus frames arriving");
+            receiving = true;
+        }
+        for TapRecord {
+            timestamp_ns,
+            direction,
+            ring_dropped: ring,
+            send_dropped: send,
+            frame,
+        } in records
+        {
+            if ring > ring_dropped || send > send_dropped {
+                warn!(
+                    ring_dropped = ring,
+                    send_dropped = send,
+                    "the stream dropped frames (its ring or this socket was full)"
+                );
+                (ring_dropped, send_dropped) = (ring, send);
+            }
+            latest.see(timestamp_ns, direction, &frame);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn run_owner(config: &Config, latest: &Latest) {
+    use m20_battery::charge::BusCharge;
+    use m20_ecan::bus::Bus;
+    use m20_ecan::owner::OwnerConfig;
+    // zero gains only: this module has no command source and never lets a gain through
+    let mut bus = match Bus::open(&config.interface, OwnerConfig { allow_gains: false }) {
+        Ok(bus) => bus,
+        Err(error) => {
+            warn!(%error, fix = setup_fix(&error.to_string()), "cannot own the motor bus");
+            return;
+        }
+    };
+    info!(interface = %config.interface, "owning the motor bus: rl_deploy's startup, then the zero-gain sitting command at 1 kHz");
+    let mut charge = config.charge_enable.then(BusCharge::new);
+    let silence = Duration::from_secs_f64(config.silence_warning_s);
+    let mut last_reply = std::time::Instant::now();
+    let mut started = false;
+    let mut last_statuses: Option<std::collections::BTreeSet<u16>> = None;
+    let mut replies = 0u64;
+    let mut send_failing = false;
+    loop {
+        match bus.tick(None) {
+            Ok(sent) => {
+                if std::mem::take(&mut send_failing) {
+                    info!("motor-bus sends work again");
+                }
+                if let Some(sent) = sent {
+                    latest.see(sent.timestamp_ns, sent.direction, &sent.frame);
+                    if let Some(charge) = charge.as_mut() {
+                        charge.on_frame(sent.direction, &sent.frame);
+                    }
+                }
+            }
+            // once per failing stretch, not 1000 times a second
+            Err(error) if !send_failing => {
+                warn!(%error, "motor-bus send failed");
+                send_failing = true;
+            }
+            Err(_) => {}
+        }
+        if !started && !bus.owner.in_startup() {
+            info!("startup sent; polling");
+            started = true;
+        }
+        for frame in bus.drain() {
+            last_reply = std::time::Instant::now();
+            if let Ok((_, m20_ecan::Message::JointStates { joints, .. })) =
+                m20_ecan::decode_ethernet(&frame.frame, frame.direction)
+            {
+                let statuses: std::collections::BTreeSet<u16> =
+                    joints.iter().map(|j| j.status_word).collect();
+                if last_statuses.as_ref() != Some(&statuses) {
+                    info!(
+                        ?statuses,
+                        startup = bus.owner.in_startup(),
+                        "joint status words"
+                    );
+                    last_statuses = Some(statuses.clone());
+                }
+                replies += 1;
+                if replies.is_multiple_of(config.progress_log_replies) {
+                    let (receive_errors, last_receive_error) = bus.receive_errors();
+                    info!(
+                        replies,
+                        refused = bus.owner.refused,
+                        receive_errors,
+                        last_receive_error = ?last_receive_error,
+                        "polling"
+                    );
+                }
+            }
+            latest.see(frame.timestamp_ns, frame.direction, &frame.frame);
+            if let Some(charge) = charge.as_mut() {
+                if charge.on_frame(frame.direction, &frame.frame) {
+                    info!(decision = ?charge.last, "charge-enable request");
+                    bus.owner.queue_charge_enable();
+                }
+            }
+        }
+        if last_reply.elapsed() > silence {
+            warn!(
+                seconds = config.silence_warning_s,
+                "no replies from the motor board"
+            );
+            last_reply = std::time::Instant::now();
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn run_owner(_: &Config, _: &Latest) {
+    warn!("owner mode needs Linux (the vendor motor-bus socket)");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_loop_keeps_the_last_imu_and_command_while_a_receiver_holds_the_lock() {
+        let shared = Arc::new(Shared::default());
+        let sample = |stamp| ImuSample {
+            quat: [1.0, 0.0, 0.0, 0.0],
+            gyro: [0.0; 3],
+            accel: [0.0, 0.0, 9.8],
+            stamp,
+            rpy_deg: None,
+            age_s: None,
+        };
+        let mut imu = SharedImu {
+            shared: shared.clone(),
+            sample: None,
+            rpy: None,
+        };
+        let mut commands = SharedCommands {
+            shared: shared.clone(),
+        };
+        *shared.imu.lock().unwrap() = Some((sample(1.0), std::time::Instant::now()));
+        *shared.imu_rpy.lock().unwrap() = Some([1.0, 2.0, 3.0]);
+        assert_eq!(imu.latest().map(|s| s.stamp), Some(1.0));
+        let walk = UserCommand {
+            velocity: Some([0.5, 0.0, 0.0]),
+            ..Default::default()
+        };
+        *shared.operator.slot.lock().unwrap() = Some(walk.clone());
+        let skips = crate::rt::LOCK_SKIPS.load(Ordering::Relaxed);
+        {
+            // the receivers hold every slot (a newer sample half written)
+            let mut slot = shared.imu.lock().unwrap();
+            *slot = Some((sample(2.0), std::time::Instant::now()));
+            let _rpy = shared.imu_rpy.lock().unwrap();
+            let _command = shared.operator.slot.lock().unwrap();
+            let held = imu.latest().unwrap();
+            assert_eq!((held.stamp, held.rpy_deg), (1.0, Some([1.0, 2.0, 3.0])));
+            assert!(crate::commands::CommandSource::poll(&mut commands, 0.0).is_none());
+        }
+        assert!(crate::rt::LOCK_SKIPS.load(Ordering::Relaxed) >= skips + 3);
+        // released: the newer sample, and the command waited in its slot for this tick
+        assert_eq!(imu.latest().map(|s| s.stamp), Some(2.0));
+        let polled = crate::commands::CommandSource::poll(&mut commands, 0.001).unwrap();
+        assert_eq!(polled.velocity, walk.velocity);
+    }
+
+    #[test]
+    fn the_built_in_config_loads_with_gains_off() {
+        let cfg = load_controller_config("").unwrap();
+        assert!(!cfg.ecan.allow_gains);
+    }
+
+    fn module_config(command_timeout_s: f64) -> Config {
+        let fields = serde_json::json!({
+            "mode": "owner", "socket_path": "", "interface": "eth1", "charge_enable": false,
+            "frame_id": "base_link",
+            "silence_warning_s": 5.0, "progress_log_replies": 5000, "policy": true, "allow_gains": false,
+            "controller_config": "", "policy_dir": "",
+            "command_timeout_s": command_timeout_s, "gait": 0x3002, "charge_manager_toml": "",
+            "status_log_height_step_m": 0.01, "cmd_vel_limits": [2.0, 1.0, 2.0], "command_ready_hz": 10.0,
+        });
+        serde_json::from_value(fields).unwrap()
+    }
+
+    #[test]
+    fn command_timeout_overrides_the_toml_only_when_set() {
+        let toml = load_controller_config("").unwrap().safety.command_timeout_s;
+        let unset = controller_config(&module_config(0.0)).unwrap();
+        assert_eq!(unset.safety.command_timeout_s, toml);
+        let set = controller_config(&module_config(0.3)).unwrap();
+        assert_eq!(set.safety.command_timeout_s, 0.3);
+        assert!(!set.ecan.allow_gains);
+    }
+
+    /// A battery frame off the board with both packs at `mos` (bit 0 = charge MOS), charge-detect `detect`.
+    fn battery_frame(mos: u8, detect: u8) -> Vec<u8> {
+        let mut payload = Vec::new();
+        for _ in 0..2 {
+            let mut record = [0u8; m20_ecan::message::BATTERY_PACK_LEN];
+            record[0..2].copy_from_slice(&8300u16.to_le_bytes());
+            // battery_level (charge_manager counts the packs reporting one)
+            record[19] = 90;
+            record[20] = mos;
+            record[112..114].copy_from_slice(&8400u16.to_le_bytes());
+            record[114] = detect;
+            payload.extend_from_slice(&record);
+        }
+        let body =
+            m20_ecan::frame::encode(0, 6, 0x21, m20_ecan::FrameType::Battery, &payload).unwrap();
+        m20_ecan::ethernet::wrap([2, 0, 0, 0, 0, 1], &body)
+    }
+
+    /// battery_frame at `level` % and `volts` V a pack.
+    fn battery_at(level: u8, volts: f64) -> Vec<u8> {
+        let mut payload = Vec::new();
+        for _ in 0..2 {
+            let mut record = [0u8; m20_ecan::message::BATTERY_PACK_LEN];
+            record[0..2].copy_from_slice(&((volts * 100.0) as u16).to_le_bytes());
+            record[19] = level;
+            payload.extend_from_slice(&record);
+        }
+        let body =
+            m20_ecan::frame::encode(0, 6, 0x21, m20_ecan::FrameType::Battery, &payload).unwrap();
+        m20_ecan::ethernet::wrap([2, 0, 0, 0, 0, 1], &body)
+    }
+
+    #[test]
+    fn the_battery_frames_give_rl_deploy_s_levels() {
+        use crate::battery::{BatteryFeed, BatteryLevel};
+        let cfg = crate::config::Config::load(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml"),
+        )
+        .unwrap();
+        let mut feed = BatteryFeed::new(cfg.battery);
+        assert_eq!(feed.level, None);
+        for (level, volts, want) in [
+            (90, 83.0, BatteryLevel::Normal),
+            (20, 83.0, BatteryLevel::Warning),
+            (5, 83.0, BatteryLevel::Error),
+            (90, 54.0, BatteryLevel::Error),
+            (90, 57.0, BatteryLevel::Error),
+            (90, 58.0, BatteryLevel::Normal),
+        ] {
+            feed.on_frame(&battery_at(level, volts));
+            assert_eq!(feed.level, Some(want), "{level} % {volts} V");
+        }
+    }
+
+    #[test]
+    fn docking_reads_each_packs_charge_mos_from_the_battery_frames() {
+        let charging = charge_reading(Direction::FromBoard, &battery_frame(3, 0), 7).unwrap();
+        assert_eq!(
+            (
+                charging.seq,
+                charging.packs_present,
+                charging.packs_charge_mos_on,
+                charging.charger_connected
+            ),
+            (7, 2, 2, true)
+        );
+        let off = charge_reading(Direction::FromBoard, &battery_frame(2, 1), 8).unwrap();
+        assert_eq!(off.packs_charge_mos_on, 0);
+        assert!(charge_reading(Direction::FromBoard, &[0u8; 20], 9).is_none());
+    }
+
+    #[test]
+    fn motion_commands_by_name() {
+        assert_eq!(parse_target("stand"), Some(Target::Stand));
+        assert_eq!(parse_target(" lie_down "), Some(Target::LieDown));
+        assert_eq!(parse_target("rl_control"), Some(Target::RlControl));
+        assert_eq!(parse_target("walk"), None);
+    }
+}

@@ -1,20 +1,8 @@
 # M20 deployment
 
-Run setup and the complete DimOS stack, including the Rerun bridge, on GOS
-(`10.21.31.104`). Setup builds and installs the NOS bridge, runs the RoboSense
-driver beside vendor LIO on NOS, and disables the competing lidar driver and
-planner by masking their systemd units. These service choices persist across
-reboots even when the vendor boot controller explicitly tries to start them.
-
-## Layout on GOS
-
-GOS runs Ubuntu 20.04 (glibc 2.31) and has no internet on the robot hotspot, so
-everything is built off the robot and copied over:
-
-- `/var/opt/robot/data/dimos-m20`: the checkout, its `.venv`, and the native
-  modules prebuilt for aarch64 and glibc 2.31.
-- `/var/opt/robot/data/m20-deps`: Python 3.12, `uv`, the wheelhouse, zenoh-c and
-  the `dimos-lcm` headers.
+DimOS runs on the M20's three boards: GOS (`10.21.31.104`, where `dimos run m20` starts and the navigation runs),
+AOS (`10.21.31.103`: the body IMU, the cameras and the motor bus) and NOS (`10.21.31.106`: the lidars' network and
+dimSLAM). Each board runs a `dimos host` that takes the modules the blueprint places on it.
 
 A laptop on the robot hotspot reaches GOS through AOS:
 
@@ -22,56 +10,42 @@ A laptop on the robot hotspot reaches GOS through AOS:
 sudo ip route add 10.21.31.0/24 via 10.21.41.1
 ```
 
-## One-time setup
+## Setup
 
-From the laptop, with agent forwarding so GOS can reach NOS with the laptop's key:
+1. Robot setup (clocks, the vendor services DimOS replaces, the ecan shim): `m20tool setup`.
+2. The dimos Hosts, from the dimos checkout on GOS (re-run after changing the checkout, so the boards run the same
+   revision):
 
-```bash
-ssh -A user@10.21.31.104 'cd /var/opt/robot/data/dimos-m20 && source .venv/bin/activate && ./dimos/robot/deeprobotics/m20/deploy/setup.sh'
-```
+   ```bash
+   bash dimos/robot/deeprobotics/m20/onboard/install_dimos_host.sh gos aos nos
+   ```
 
-The script prompts for any `sudo` or NOS SSH password it needs. It is safe to
-run again.
-
-## Start DimOS
-
-The robot stands up when `m20` starts and sits down when it stops, so clear
-the space around it first.
+## Run
 
 ```bash
-cd /var/opt/robot/data/dimos-m20
-source .venv/bin/activate
-dimos --robot-ip 10.21.31.106 \
-  run m20 --rerunbridgemodule.host 0.0.0.0 \
-  --rerunwebsocketserver.host 0.0.0.0 --daemon
+dimos run m20
 ```
 
-`--robot-ip` names the NOS Zenoh bridge. `M20Connection` and the camera relay
-still use the documented AOS endpoints at `10.21.31.103`.
+`--choice M20Mode=sim` runs the same navigation on the simulated M20 instead (no robot needed). The real mode's own
+choices (body filter, joint source, walker, body IMU, cameras, where dimSLAM runs) are in
+`dimos/robot/deeprobotics/m20/blueprints/m20.py`.
 
-Follow the log with `dimos log -f`. `dimos stop` sits the robot down and stops
-DimOS.
+## Walking
 
-Connect the operator viewer directly to the Rerun bridge on GOS:
+By default nothing in the real mode commands the legs: nothing reads `cmd_vel`. `--choice M20Walker=...` picks who
+does, and needs an operator on site before anything is sent:
 
-```bash
-dimos-viewer \
-  --connect rerun+http://10.21.31.104:9877/proxy \
-  --ws-url ws://10.21.31.104:3030/ws
-```
+- `rl_deploy`: the vendor walking controller, on its own REAL_STEER topic (`m20/cmd_vel`, limited and gated as the
+  vendor's bridge: only in RL control, zero otherwise). Needs rl_deploy running and basic_server stopped (it writes
+  nothing while another REAL_STEER writer is up). Standing up and the gait stay with the vendor remote.
+- `controller`: the M20 controller (`m20/controller`) owns the motor bus in place of rl_deploy (rl_deploy stopped)
+  and runs its walking policy (rl_deploy's state machine and ONNX runners) on `cmd_vel`, `motion_cmd` (passive,
+  stand, rl_control, lie_down, joint_damping) and `gait_cmd`. Its gains stay off (`allow_gains`) until an operator
+  turns them on, so out of the box it runs the state machine without moving anything.
 
-The Rerun bridge, camera relay, mapping, planning, and control modules all run
-inside the GOS control blueprint. The desktop viewer is only a client.
+The controller also serves the joint state and batteries (`--choice M20Joints=controller`): beside rl_deploy it reads
+the ecan shim's stream; owning the bus (rl_deploy stopped, the walker above) it sends rl_deploy's startup and then
+the zero-gain sitting command, with the charge-enable request while docked.
 
-Attach the control shell:
-
-```bash
-source .venv/bin/activate
-dimos shell
-```
-
-```python
-app.M20Connection.standup()
-app.M20Connection.set_navigation_terrain("stairs")
-app.M20Connection.liedown()
-```
+Offline: `controller/rust` has the MuJoCo backend and its tests (`cargo test`), and the dry-run shadow beside
+rl_deploy (`controller/deploy/shadow`, a dev tool, not in the blueprint).

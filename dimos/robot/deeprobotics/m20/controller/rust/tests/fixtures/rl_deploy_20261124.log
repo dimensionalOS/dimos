@@ -1,0 +1,13 @@
+[2026-11-24 05:50:24.839.702] [INFO  ] [Target_State] 1
+[2026-11-24 05:50:24.840.644] [INFO  ] [Trans] liedown_state ------------> standup_state
+[2026-11-24 05:50:26.839.729] [INFO  ] [Target_State] 17
+[2026-11-24 05:50:26.839.795] [INFO  ] [Target_Gait] 12289
+[2026-11-24 05:50:27.850.657] [INFO  ] [Trans] standup_state ------------> rl_control
+[2026-11-24 05:50:35.531.670] [INFO  ] [Target_State] 17
+[2026-11-24 05:50:37.531.778] [INFO  ] [Target_Gait] 12291
+[2026-11-24 05:50:38.412.931] [INFO  ] [Target_Gait] 4097
+[2026-11-24 05:50:39.437.962] [INFO  ] [Target_Gait] 12291
+[2026-11-24 05:51:08.747.031] [INFO  ] [Target_Gait] 12289
+[2026-11-24 05:51:21.233.840] [INFO  ] [Target_Gait] 12292
+[2026-11-24 05:51:25.831.569] [INFO  ] [Target_State] 4
+[2026-11-24 05:51:25.831.763] [INFO  ] [Trans] rl_control ------------> liedown_state

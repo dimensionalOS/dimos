@@ -1,0 +1,37 @@
+[package]
+name = "dimos-rockchip-h264-cameras"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust module: a front and a rear V4L2 camera on a Rockchip RK3588, hardware-encoded to H.264 CompressedVideo, every frame"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_rockchip_h264_cameras"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rockchip_h264_cameras"
+path = "src/bin/rockchip_h264_cameras.rs"
+
+[package.metadata.dimos.module.rockchip_h264_cameras]
+path = "dimos_rockchip_h264_cameras::module::RockchipH264Cameras"
+python = "dimos.hardware.sensors.camera.rockchip_h264.module:RockchipH264Cameras"
+
+[package.metadata.dimos.module.rockchip_h264_cameras.inputs]
+tf = "tf2_msgs.TFMessage"
+
+[package.metadata.dimos.module.rockchip_h264_cameras.outputs]
+front_camera = "foxglove_msgs.CompressedVideo"
+rear_camera = "foxglove_msgs.CompressedVideo"
+front_camera_info = "sensor_msgs.CameraInfo"
+rear_camera_info = "sensor_msgs.CameraInfo"
+
+[dependencies]
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "16957513ebc78c67c95bbbc866135e4a8d9ec0dc" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "process", "io-util"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+validator = { version = "0.21", features = ["derive"] }
+anyhow = "1"
+rockchip-h264 = "0.4"

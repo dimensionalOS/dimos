@@ -14,6 +14,8 @@
 
 """Documented and provisional geometry values for the Lynx M20."""
 
+import math
+
 # Documented body dimensions in the vendor hardware guide.
 BODY_LENGTH_M = 0.82
 BODY_WIDTH_M = 0.506
@@ -43,3 +45,39 @@ WORLD_FRAME = "world"
 # its end of the body with its spin axis level.
 FRONT_LIDAR_XYZ_M = (0.32028, 0.0, -0.013)
 REAR_LIDAR_XYZ_M = (-0.32028, 0.0, -0.013)
+
+# Lidar mount rotations in base_link (roll, pitch, yaw), from the vendor driver's
+# /opt/robot/share/node_driver/config/config.yaml (pitch -1.57079, yaw -3.14159 / 0):
+# each Airy's x axis points up and its z (spin) axis out its end of the body.
+FRONT_LIDAR_RPY = (0.0, -math.pi / 2, math.pi)
+REAR_LIDAR_RPY = (0.0, -math.pi / 2, 0.0)
+FRONT_LIDAR_FRAME = "front_lidar"
+REAR_LIDAR_FRAME = "rear_lidar"
+
+# The Airys' streams on AOS's eth0 (vendor config.yaml): multicast group, lidar address, MSOP/DIFOP/IMU ports.
+FRONT_LIDAR_GROUP = "224.10.10.201"
+REAR_LIDAR_GROUP = "224.10.10.202"
+FRONT_LIDAR_IP = "10.21.33.201"
+REAR_LIDAR_IP = "10.21.33.202"
+FRONT_LIDAR_PORTS = (6691, 7781, 6681)
+REAR_LIDAR_PORTS = (6692, 7782, 6682)
+
+# The body IMU (Yesense on the AOS board's UART) in base_link: position from the vendor MJCF's imu_site, and
+# its turn as Deep Robotics' yesense_node undoes it (base_link axes = sensor x, -z, y: +90 deg about x).
+IMU_FRAME = "imu_link"
+IMU_XYZ_M = (0.0632, -0.0268, -0.0435)
+IMU_MOUNT_RPY_RAD = (math.pi / 2, 0.0, 0.0)
+
+# GOS cores DimSLAM runs on alone in m20: two of the RK3588's A76s (4-7). The GOS Host, and so every other
+# module it starts, is kept off them (its CPUAffinity in onboard/install_dimos_host.sh, M20_SLAM_BOARD=gos; with
+# dimSLAM on NOS the GOS Host gets every core).
+GOS_SLAM_CPUS = (4, 5)
+# NOS cores DimSLAM runs on in m20: two of its A76s (4-7, isolcpus, the vendor's real-time cores; its LIO and
+# rslidar use ~17% of each). NOS's Host and every other fragment stay on 0-3 (onboard/install_dimos_host.sh).
+NOS_SLAM_CPUS = (4, 5)
+
+# The navigation stack's map voxel (m), the planner's wall clearance (m), and its viz rate (Hz) and sweep (cells).
+VOXEL_SIZE_M = 0.08
+WALL_CLEARANCE_M = 0.07
+PLANNER_VIZ_HZ = 2.0
+PLANNER_VIZ_SWEEP_CELLS = 1

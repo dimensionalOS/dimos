@@ -12,14 +12,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Native Rust dimSLAM module: cuVSLAM visual odometry fused with an IMU and any
-number of odometry sources by an error-state Kalman filter, in one process."""
+"""DimSlam: odometry from any mix of lidars, IMUs, cameras and other odometry sources, fused in one filter.
+
+Wiring. Every sensor of a kind shares one input and is told apart by the frame_id its messages carry; tf must
+place each sensor's frame relative to ``output_frame_id`` (the body being tracked).
+
+- Lidar-inertial (no camera, runs on CPU-only boards): connect ``lidar`` (PointCloud2 with float32 x/y/z and a
+  uint32 ``offset_time`` in ns after the stamp) and ``imu``; list each lidar in ``lidars`` and each IMU in ``imus``;
+  leave ``camera_mode`` unset.
+- Camera (visual odometry): connect ``image`` and ``camera_info`` (and ``depth_image``/``depth_camera_info`` for
+  depth); set ``camera_mode`` and list the rig in ``cameras`` (or leave it empty to discover it from camera_info).
+  Add ``imu`` and ``imus`` for visual-inertial.
+- Camera + lidar: both of the above at once.
+- Other odometry (wheels, another SLAM): connect ``odom_sources`` and list each in ``odom_sources``.
+
+Outputs: ``odometry`` (and ``odom_frame_id`` -> ``output_frame_id`` on tf unless ``publish_tf`` is off),
+``depth_cloud`` from depth images, and with ``deskew.enabled`` each lidar scan motion-corrected on
+``deskewed_cloud``. ``publish_every`` thins the odometry (a pose per lidar scan, IMU sample or measurement).
+
+Example, two lidars and one IMU::
+
+    DimSlam.blueprint(
+        odom_frame_id="map",
+        output_frame_id="base_link",
+        lidars=[LidarConfig(frame_id="front_lidar"), LidarConfig(frame_id="rear_lidar")],
+        imus=[ImuConfig(frame_id="rear_lidar_imu", gyro_variance=1e-6, accel_variance=1e-4)],
+        publish_every=4,
+    )
+"""
 
 from __future__ import annotations
 
+import math
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
@@ -35,32 +62,38 @@ from dimos.utils.nvidia_env import driver_env, sdk_variant
 logger = setup_logger()
 
 
-class CameraConfig(BaseModel):
-    """Settings for one camera, identified by the frame_id its images carry. A depth stream
-    is a camera of its own here, and need not be a rig camera."""
+class _Strict(BaseModel):
+    """A field this model does not have is an error, never silently dropped."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+# fields removed in dimSLAM v1.0, and what replaced each
+REMOVED_FIELDS = {
+    "publish_rate": "the filter publishes as its inputs move it, not on a timer; use publish_every to keep every Nth pose",
+    "replay_buffer_seconds": "a late message is carried forward to the filter's instant by its own motion, so nothing is replayed",
+}
+
+
+class CameraConfig(_Strict):
+    """One camera, identified by the frame_id its images carry; a depth stream is a camera of its own."""
 
     frame_id: str = ""
-    # Asserted, not performed. cuVSLAM takes one flag for the whole rig, so the rig's
-    # cameras have to agree.
+    # the rig's images are already rectified (one flag for the whole rig, so the rig's cameras must agree)
     rectified: bool = True
-    # Raw depth units per metre; 16-bit millimetre depth is 1000. Scaling one camera's depth
-    # by another's factor yields a plausible-looking wrong map.
+    # raw depth units per metre (16-bit millimetre depth is 1000)
     depth_units_per_meter: float = 1000.0
-    # Range gate on the published depth_cloud, metres. Stereo depth error grows as range
-    # squared, so the far gate decides whether the cloud is worth mapping with; 0 leaves it
-    # open.
+    # m: depth_cloud keeps points between these ranges; 0 leaves that side open
     depth_cloud_min_range: float = 0.0
     depth_cloud_max_range: float = 0.0
-    # One point per k x k depth block (median of in-gate depths). <= 1 emits every pixel.
+    # one depth_cloud point per k x k block of depth pixels (their median); <= 1 keeps every pixel
     depth_cloud_decimation: int = 0
-    # Multisensor only: this rig camera also receives depth images, already aligned to it.
-    # Any depth-providing camera anchors the rig's metric scale.
+    # multisensor only: this rig camera also receives depth images aligned to it, which set the rig's metric scale
     provides_depth: bool = False
 
 
-class Covariance(BaseModel):
-    """Per-axis variances. For a pose x/y/z are metres and roll/pitch/yaw radians; for a
-    twist they are the linear (m/s) and angular (rad/s) rates about the same axes."""
+class Covariance(_Strict):
+    """Per-axis variances: m^2 and rad^2 for a pose, (m/s)^2 and (rad/s)^2 for a twist; <0 the message's, 0 unused."""
 
     x: float = 0.0
     y: float = 0.0
@@ -73,127 +106,206 @@ class Covariance(BaseModel):
         return any(self.model_dump().values())
 
 
-class ImuConfig(BaseModel):
-    """One IMU and its noise model. Each entry keeps its own noise figures and its own
-    estimated biases, so a good gyro next to a cheap one keeps its say."""
+class ImuConfig(_Strict):
+    """One IMU, identified by the frame_id its samples carry; each keeps its own noise figures and estimated biases."""
 
-    # The frame_id this IMU's samples carry; any other frame is dropped.
     frame_id: str = ""
+    # rad^2/s^2 and m^2/s^4: variance of one gyro / accelerometer reading
+    gyro_variance: float = 0.01
+    accel_variance: float = 0.01
+    # rad/s and g: readings within clip_fraction of these are treated as clipped and ignored; 0 never clips
+    gyro_clip: float = 35.0
+    accel_clip_g: float = 3.0
+    clip_fraction: float = 0.99
+    # per s^2: random-walk variances of the gyro and accelerometer biases
+    gyro_bias_random_walk: float = 0.0001
+    accel_bias_random_walk: float = 0.0001
+    # datasheet noise densities and bias random walks (per sqrt(Hz)); each one >0 replaces the matching value above
     gyro_noise_density: float = 0.0
     gyro_random_walk: float = 0.0
     accel_noise_density: float = 0.0
     accel_random_walk: float = 0.0
-    # Averaged while stationary to level the filter and take the gyro bias; leaving that
-    # bias in cost 19.8 m of final error against 1.6 m on a 517 s Alfred drive. At 200 Hz
-    # this is one second of standing still at startup.
-    init_samples: int = 200
-    # rad/s. Above this the robot is called moving and bias calibration restarts, so it
-    # belongs above this gyro's own bias and below any real rotation. A noisy gyro that
-    # reads above it at rest never finishes init.
-    init_gyro_limit: float = 0.05
+    # samples averaged at rest to level the filter (and to measure an IMU's rate for its densities)
+    init_samples: int = Field(default=200, ge=1)
+    # rad/s: levelling restarts while the first IMU turns faster than this; 0 never restarts
+    init_gyro_limit: float = Field(default=0.05, ge=0)
+    # s added to this IMU's stamps to put them on the other sensors' clock
+    time_offset_s: float = 0.0
 
 
-class InitialStds(BaseModel):
-    """Standard deviations seeding the filter covariance at initialization."""
+class LidarConfig(_Strict):
+    """One lidar, identified by the frame_id its scans carry."""
+
+    frame_id: str
+    # m^2: variance of one point's distance to its plane
+    point_variance: float = 0.01
+    # in this lidar's own scan periods: how long another lidar's scan waits for it
+    max_wait_periods: float = Field(default=2.0, ge=0)
+    # m: points nearer than this are dropped
+    min_range: float = Field(default=0.5, ge=0)
+    # every keep_every-th usable point is kept
+    keep_every: int = Field(default=3, ge=1)
+    # m: then one point per cube of this side; 0 keeps every point
+    scan_cube: float = Field(default=0.2, ge=0)
+    # m: a point within this of the previous one on every axis is a repeat and dropped
+    duplicate_tolerance: float = Field(default=1e-7, ge=0)
+    # map neighbors a point's plane is fitted through
+    plane_points: int = Field(default=5, ge=3)
+    # m: the plane is used only when every neighbor lies this close to it
+    plane_tolerance: float = Field(default=0.1, gt=0)
+    # a point is used only when its range exceeds this times the square of its distance to its plane
+    range_per_distance_sq: float = 81.0
+    # m: map points farther than this are not neighbors
+    neighbor_range: float = Field(default=5.0, gt=0)
+
+
+class SourceConfig(_Strict):
+    """One external odometry source, identified by the transform its messages carry (header.frame_id, child_frame_id)."""
+
+    parent_frame_id: str = ""
+    child_frame_id: str = ""
+    # pose: a world that does not drift; twist: body velocity only; pose_delta: a drifting pose, fused by its motion
+    # (unset: pose when parent_frame_id is odom_frame_id, else pose_delta)
+    kind: Literal["pose", "twist", "pose_delta"] | None = None
+    pose_variances: Covariance = Field(default_factory=Covariance)
+    # body frame
+    twist_variances: Covariance = Field(default_factory=Covariance)
+    # a twist at or under these speeds (m/s, rad/s) is fused as zero with still_variance; 0 disables
+    still_variance: float = 0.0
+    still_speed: float = 0.0
+    still_angular_speed: float = 0.0
+
+
+class ProcessNoise(_Strict):
+    """How fast the body's motion may change between measurements: random-walk variances per s^2."""
+
+    velocity: float = 20.0
+    angular_velocity: float = 1000.0
+    specific_force: float = 500.0
+
+
+class InitialStds(_Strict):
+    """1-sigma uncertainty the filter starts with, per state (m, m/s, rad, rad/s, m/s^2); bias applies to every IMU."""
 
     position: float = 0.01
     velocity: float = 0.1
     rotation: float = 0.05
     bias: float = 0.05
+    mount_rotation: float = math.sqrt(0.01)
+    mount_translation: float = math.sqrt(0.01)
+    angular_velocity: float = math.sqrt(0.01)
+    specific_force: float = math.sqrt(0.01)
+    gravity: float = math.sqrt(0.0001)
 
 
-class SourceConfig(BaseModel):
-    """One external odometry source and how much it is trusted. A variance below zero takes
-    the message covariance, zero drops that dimension, above zero is a fixed variance. A
-    drifting source's covariance describes its accumulated drift rather than the delta
-    being fused, so a fixed value is usually the right answer."""
+class MapConfig(_Strict):
+    """The local map lidar scans are matched against."""
 
-    # The transform this source's estimates carry: each message's header.frame_id and
-    # child_frame_id. Both halves are needed because two sources can share a parent. A
-    # source whose parent is odom_frame_id is fused absolutely; anything else is fused as
-    # filter-anchored deltas, since its own pose has drifted.
-    parent_frame_id: str = ""
-    child_frame_id: str = ""
-    pose_variances: Covariance = Field(default_factory=Covariance)
-    # Body frame.
-    twist_variances: Covariance = Field(default_factory=Covariance)
+    # m: a scan point is added only where the map has none in its cube of this side
+    spacing: float = Field(default=0.5, gt=0)
+    # m: side of the map's hash cubes; neighbors are searched in a point's cube and the six sharing its faces
+    cube: float = Field(default=2.0, gt=0)
+    # cubes kept; past this the least recently touched is dropped
+    capacity: int = Field(default=1_000_000, ge=1)
+    # points the first scans must give before the map is used
+    seed_points: int = Field(default=10, ge=1)
+    # a scan grows the map only when it kept more than this many points
+    grow_min_points: int = Field(default=4, ge=0)
+    # neighbors from the full search in its original order; off: a pruned search finding the same neighbors faster
+    unpruned_neighbor_order: bool = False
+
+
+class DeskewConfig(_Strict):
+    """Each lidar scan's points moved to where they lie at the scan's end, by the filter's pose at each point's time."""
+
+    enabled: bool = False
+    # output: the body (output_frame_id) at the scan's end; odom: odom_frame_id
+    frame: Literal["output", "odom"] = "output"
+    # m: one point per cube of this side; 0 keeps every point
+    voxel: float = Field(default=0.0, ge=0)
 
 
 class DimSlamConfig(NativeModuleConfig):
     source_dir: str | None = "dimos/mapping/dim_slam/rust"
     executable: str = "result/bin/dim_slam"
-    # A literal so bin/native-modules can read it: CI builds `default`, which needs
-    # no GPU. The variant this machine needs is chosen in model_post_init.
+    # a literal so bin/native-modules can read it; model_post_init picks this machine's variant
     build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=driver_env)
 
-    # no default: this choice changes what inputs are required
-    # multisensor (experimental in cuVSLAM): any mix of RGB and RGB-D cameras plus an
-    # optional IMU; the cameras marked provides_depth anchor the rig's metric scale.
-    camera_mode: Literal["mono", "stereo", "rgbd", "multisensor"]
-    # In cuVSLAM's index order: the rig cameras first (two for stereo, the whole list for
-    # multisensor, one otherwise), then any settings-only streams such as an rgbd depth
-    # camera. Empty auto-discovers the rig from camera_info; an unlisted camera takes the
-    # defaults. Multisensor requires this list: any rig size is legal there, so discovery
-    # cannot know when it is done.
+    # unset: no camera tracking (camera messages are dropped); multisensor is experimental
+    camera_mode: Literal["mono", "stereo", "rgbd", "multisensor"] | None = None
+    # rig cameras first (two for stereo, all for multisensor, one otherwise), then settings-only streams such as depth
+    # (empty: discovered from camera_info; multisensor needs the list)
     cameras: list[CameraConfig] = Field(default_factory=list)
-    # Off runs the deterministic CPU path, which needs a libcuvslam built
-    # -DENFORCE_GPU=OFF. A build carrying only the other backend is used with a warning.
+    # track on the GPU; off uses the CPU backend
     use_gpu: bool = True
-
-    # Frame the cuVSLAM rig is built in. Empty means output_frame_id.
+    # frame the camera rig is built in; empty means output_frame_id
     rig_frame_id: str = ""
-    # Carried for whatever consumes the loop-closed pose; nothing here publishes map -> odom.
+    # parent frame name for consumers of a loop-closed pose (nothing here publishes map -> odom)
     map_frame_id: str = "map"
-
-    # Stamp spread one frame set may span, milliseconds; 0 keeps cuVSLAM's 1 ms contract. A
-    # software-triggered rig needs this widened: Spot's images land within ~15 ms of each
-    # other and its depth trails its camera by up to ~90 ms, so every set is dropped at 1 ms.
-    max_skew_ms: float = 0.0
-    # Translation std (m) above which the frame's motion is dropped and the path rebased;
-    # 0 disables.
+    # ms: how far apart one frame set's stamps may be
+    max_skew_ms: float = Field(default=1.0, gt=0)
+    # m: a camera frame whose translation std exceeds this is dropped and the path rebased; 0 disables
     covariance_gate_translation_std: float = 1.0
-    # Frame-to-frame m/s and rad/s, catching teleports the covariance gate misses; 0 disables.
+    # m/s and rad/s: a camera step faster than these is dropped as a teleport; 0 disables
     speed_gate_max_linear: float = 5.0
     speed_gate_max_angular: float = 12.0
 
+    # frame the odometry is expressed in (its parent)
     odom_frame_id: str = "odom"
+    # the body being tracked (its child); every sensor is placed relative to it by tf
     output_frame_id: str = "base_link"
-    # Off when something downstream owns odom -> output_frame_id.
+    # publish odom_frame_id -> output_frame_id on tf; off when something else owns that transform
     publish_tf: bool = True
-
-    # The filter itself steps at the IMU rate; this is only how often it emits.
-    publish_rate: float = 50.0
-    replay_buffer_seconds: float = 0.5
-    # Outlier gate in variance units, per measurement dimension. Smaller is more
-    # aggressive, 0 is no gate.
+    # publish every Nth pose the filter makes (it makes one per lidar scan, IMU sample or measurement)
+    publish_every: int = Field(default=1, ge=1)
+    # gate on source measurements, in squared Mahalanobis distance: >0 this times the row count, 0 none, <0 99% bound
     outlier_rejection_allowed_variance: float = 25.0
-    # Caps the filter's own state rather than an incoming reading. 0 disables it.
-    max_position_m: float = 10000.0
+    # m: a pose farther than this from the origin is not published; 0 disables
+    max_position_m: float = Field(default=10000.0, ge=0)
 
-    # Empty disables inertial propagation: the filter is seeded level from the first source
-    # message and holds its pose between them.
+    # the first drives the filter between scans and levels it; samples from unlisted frames are dropped
     imus: list[ImuConfig] = Field(default_factory=list)
-    # m/s^2. Why is gravity a config?
-    # 1) different IMUs have different bias
-    # 2) gravity changes with latitude by a non-trivial amount for IMUs (0.05 m/s^2)
+    # scans from unlisted frames are dropped
+    lidars: list[LidarConfig] = Field(default_factory=list)
+    process_noise: ProcessNoise = Field(default_factory=ProcessNoise)
+    # m/s^2 per g: IMU samples arrive in m/s^2 and are divided by this
+    standard_gravity: float = 9.80665
+    # m/s^2: local gravity, set when the first IMU levels the filter
     initial_gravity_estimate: float = 9.8
     initial_stds: InitialStds = Field(default_factory=InitialStds)
+    map: MapConfig = Field(default_factory=MapConfig)
+    deskew: DeskewConfig = Field(default_factory=DeskewConfig)
+    # s between repeats of one throttled warning
+    warn_throttle_s: float = Field(default=10.0, ge=0)
+    # log handler time and input age every this many lidar scans; 0 never
+    stats_every_scans: int = Field(default=100, ge=0)
+    # CPUs the process may run on (Linux); empty leaves it to the scheduler
+    cpus: list[int] = Field(default_factory=list)
 
-    # Trust in the tracker's pose, per SourceConfig semantics; the module registers the
-    # tracker as a fusion source itself, so it never appears in `odom_sources`. The tracker
-    # is fused by pose deltas only.
+    # trust in the camera tracker's motion, fused as a pose_delta source (variance rules as Covariance)
     visual_odom_pose_variances: Covariance = Field(
         default_factory=lambda: Covariance(x=0.01, y=0.01, z=0.01, roll=0.05, pitch=0.05, yaw=0.05)
     )
-    # One entry per external source (wheel odometry, ...), matched against each message's
-    # header.frame_id and child_frame_id.
+    # external odometry (wheels, another SLAM), matched by each message's header.frame_id and child_frame_id
     odom_sources: list[SourceConfig] = Field(default_factory=list)
-    # A virtual zero-twist measurement applied with every source message, for the
-    # directions the platform cannot move in. Above zero pulls that dimension toward
-    # zero with this variance; zero leaves it free.
+    # zero-twist [vx vy vz wx wy wz] fused after each source message (needs an IMU): >0 pins that axis, 0 frees it
     per_dimension_error_variance: Covariance = Field(default_factory=Covariance)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_removed_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            removed = [name for name in REMOVED_FIELDS if name in data]
+            if removed:
+                raise ValueError(
+                    "; ".join(
+                        f"{name} was removed in dimSLAM v1.0: {REMOVED_FIELDS[name]}"
+                        for name in removed
+                    )
+                )
+        return data
 
     @model_validator(mode="after")
     def _multisensor_lists_its_rig(self) -> DimSlamConfig:
@@ -205,37 +317,22 @@ class DimSlamConfig(NativeModuleConfig):
         return self
 
     @model_validator(mode="after")
-    def _imus_are_complete(self) -> DimSlamConfig:
-        noise_figures = (
-            "gyro_noise_density",
-            "gyro_random_walk",
-            "accel_noise_density",
-            "accel_random_walk",
-        )
-        seen_frames = set()
-        for index, imu in enumerate(self.imus):
-            if not imu.frame_id.strip():
-                raise ValueError(f"imus[{index}] needs a frame_id")
-            if imu.frame_id in seen_frames:
-                raise ValueError(f"imus[{index}] repeats frame_id {imu.frame_id!r}")
-            seen_frames.add(imu.frame_id)
-            missing = [name for name in noise_figures if getattr(imu, name) <= 0.0]
-            if missing:
-                raise ValueError(
-                    f"imus[{index}] ({imu.frame_id!r}) needs its noise figures set: "
-                    f"{', '.join(missing)}"
-                )
-            if imu.init_gyro_limit <= 0.0:
-                raise ValueError(
-                    f"imus[{index}] ({imu.frame_id!r}) init_gyro_limit must be above zero "
-                    "to ever init"
-                )
+    def _sensors_are_named_once(self) -> DimSlamConfig:
+        for kind, frames in (
+            ("imus", [imu.frame_id for imu in self.imus]),
+            ("lidars", [lidar.frame_id for lidar in self.lidars]),
+        ):
+            for index, frame in enumerate(frames):
+                if not frame.strip():
+                    raise ValueError(f"{kind}[{index}] needs a frame_id")
+            if len(set(frames)) != len(frames):
+                raise ValueError(f"{kind} repeat a frame_id: {frames}")
         return self
 
     @model_validator(mode="after")
     def _sources_are_fusable(self) -> DimSlamConfig:
         # Zero drops a dimension, so an all-zero source is fused in no dimension at all.
-        if not self.visual_odom_pose_variances.any_set():
+        if self.camera_mode is not None and not self.visual_odom_pose_variances.any_set():
             raise ValueError(
                 "every visual_odom_pose_variances entry is zero, "
                 "which fuses the tracker in no dimension at all"
@@ -253,6 +350,20 @@ class DimSlamConfig(NativeModuleConfig):
                 )
         return self
 
+    @model_validator(mode="after")
+    def _sources_have_a_kind(self) -> DimSlamConfig:
+        for source in self.odom_sources:
+            if source.kind is None:
+                source.kind = (
+                    "pose" if source.parent_frame_id == self.odom_frame_id else "pose_delta"
+                )
+        return self
+
+    @field_serializer("camera_mode")
+    def _no_camera_as_empty(self, camera_mode: str | None) -> str:
+        # the module reads an empty camera_mode as no cameras
+        return camera_mode or ""
+
     def model_post_init(self, context: Any, /) -> None:
         super().model_post_init(context)
         if self.build_command == "nix build -L path:.":
@@ -260,29 +371,26 @@ class DimSlamConfig(NativeModuleConfig):
 
 
 class DimSlam(NativeModule):
-    """Every camera publishes onto the same ``image`` and ``camera_info`` streams and is
-    told apart by ``frame_id``; the ``cameras`` list fixes which frames are on the rig and
-    in what order. Extrinsics come from tf against ``rig_frame_id``. ``depth_image`` feeds
-    ``depth_cloud`` in every mode, and is additionally tracked against in ``rgbd``,
-    reprojected onto the rig camera through ``depth_camera_info`` and tf when the depth
-    sensor differs.
-
-    The tracker's pose stream never touches the wire: it enters the filter directly
-    as a drifting source. Any number of external sources
-    (wheel odometry, ...) publish onto ``odom_sources`` and are told apart by
-    ``header.frame_id`` and ``child_frame_id``. Late messages roll the filter back and replay
-    everything after.
-    """
+    """Odometry from lidars, IMUs, cameras and odometry sources; see the module docstring for wiring and config."""
 
     config: DimSlamConfig
 
+    # every camera's images and infos, told apart by frame_id
     image: In[Image]
-    depth_image: In[Image]
     camera_info: In[CameraInfo]
+    # depth images (and their camera's info when depth must be reprojected onto a rig camera)
+    depth_image: In[Image]
     depth_camera_info: In[CameraInfo]
+    # every IMU's samples, told apart by frame_id
     imu: In[Imu]
+    # every lidar's scans, told apart by frame_id
+    lidar: In[PointCloud2]
+    # external odometry, told apart by header.frame_id and child_frame_id
     odom_sources: In[Odometry]
 
     odometry: Out[Odometry]
+    # range-gated depth points, in the depth frame
     depth_cloud: Out[PointCloud2]
+    # with deskew.enabled: one cloud per input scan, stamped at its end
+    deskewed_cloud: Out[PointCloud2]
     tf: IO[TFMessage]

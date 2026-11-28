@@ -31,6 +31,7 @@ from typing import Any, Literal, cast
 import uuid
 
 import numpy as np
+from pydantic import Field
 import reactivex as rx
 from reactivex import Observable, Subject, operators as ops
 
@@ -101,16 +102,23 @@ class Config(ModuleConfig):
     new_map: bool = False
     # Live cloud to match against the premap: the ray tracer's local_map, a window of lidar scans, or none
     live_cloud: Literal["none", "local_map", "lidar"] = "none"
-    # local_map: skip local maps sparser than this, too small a patch to match
+    # local_map or lidar_live_map: skip live clouds sparser than this, too small a patch to match
     min_local_points: int = 20_000
     # Seconds live clouds may stay under min_local_points (normal while the map builds) before that warns, once
     sparse_cloud_grace_s: float = 10.0
     # Rig preset to align with, see cloud_relocalizer.PRESETS
     relocalize: RelocalizeConfig = MID360
-    # relocalize_once off, local_map: the kept live map's voxel edge (m)
+    # relocalize_once off, lidar: fold the scans into the kept live map and match that, not the preset's window of scans
+    lidar_live_map: bool = False
+    # relocalize_once off, local_map or lidar_live_map: the kept live map's voxel edge (m)
     live_voxel_m: float = 0.1
-    # ... local_map: match kept live points within this xy distance (m) of the latest local map; 0 matches them all
+    # ... match kept live points within this xy distance (m) of the robot; 0 matches them all
     match_radius_m: float = 30.0
+    # ... lidar_live_map: attempt only once a scan from each of these frames joined the live map since the last attempt
+    # (a rig whose lidars publish separately attempts once per sweep, not once per lidar); empty attempts on every scan
+    attempt_after_frames: list[str] = []
+    # ... and only on every Nth such sweep (a count, not a timer); 1 attempts on every one
+    attempt_every_sweeps: int = Field(default=1, ge=1)
     # ... lidar: a scan's tf must be stamped within this of the scan (s)
     scan_tf_tolerance_s: float = 0.1
     # Refused ICP refinements in a row before searching the whole premap again; 0 never does
@@ -126,7 +134,8 @@ class PremapModule(Module):
 
     With ``relocalize_once`` off and ``live_cloud="local_map"`` it matches its own map of
     local_map's live (non-premap) voxels, so the premap never confirms itself, and with
-    ``live_cloud="lidar"`` the preset's window of scans. The first fix
+    ``live_cloud="lidar"`` the preset's window of scans (or, with ``lidar_live_map``, its own map of
+    the scans, attempted once per sweep of ``attempt_after_frames``). The first fix
     searches the whole premap and places it in the ray tracer; every later one refines the
     current fix by ICP and only moves ``world -> map``. world_frame must be the frame the
     ray tracer maps in.
@@ -168,6 +177,10 @@ class PremapModule(Module):
         # Fires whenever the kept live map grows, the continuous match's cue
         self._live_changed: Subject[None] = Subject()
         self._center: tuple[float, float] | None = None
+        # lidar_live_map: scans placed since the last fold, and the frames that have joined the live map since the last attempt
+        self._scans: list[np.ndarray] = []
+        self._frames_since_attempt: set[str] = set()
+        self._sweeps_since_attempt = 0
         self._refusals = 0
         # Stamp of the cloud the last accepted fix came from
         self._fix_ts: float | None = None
@@ -218,14 +231,22 @@ class PremapModule(Module):
             if self.config.live_cloud == "lidar":
                 return window(scans, self.config.relocalize)
             return backpressure(local_maps)
-        if self.config.live_cloud == "lidar":
+        if self.config.live_cloud == "lidar" and not self.config.lidar_live_map:
             # Each scan is placed by the tf at its stamp as it lands
             placed = scans.pipe(
                 ops.map(self._place_scan), ops.filter(lambda scan: scan is not None)
             )
             return window(cast("Observable[PointCloud2]", placed), self.config.relocalize)
-        # A local map is the whole window around the robot, so the latest replaces any waiting during a fold
-        self.register_disposable(backpressure(local_maps).subscribe(self._on_local_map))
+        if self.config.live_cloud == "lidar":
+            # Each scan is placed by the tf at its stamp as it lands; those placed during a fold go in the next one
+            self.register_disposable(
+                backpressure(scans.pipe(ops.filter(self._on_scan))).subscribe(
+                    lambda _: self._keep_scans()
+                )
+            )
+        else:
+            # A local map is the whole window around the robot, so the latest replaces any waiting during a fold
+            self.register_disposable(backpressure(local_maps).subscribe(self._on_local_map))
         return backpressure(self._live_changed).pipe(
             ops.map(
                 lambda _: self.live.cloud(
@@ -234,8 +255,8 @@ class PremapModule(Module):
             )
         )
 
-    def _place_scan(self, scan: PointCloud2) -> PointCloud2 | None:
-        """*scan* in the live frame; None when it has no tf at its stamp."""
+    def _scan_to_live(self, scan: PointCloud2) -> Transform | None:
+        """The tf from *scan*'s frame to the live frame at its stamp; None (with a warning) when there is none."""
         to_live = self.tfbuffer.get(
             self._live_frame, scan.frame_id, scan.ts, self.config.scan_tf_tolerance_s
         )
@@ -243,9 +264,42 @@ class PremapModule(Module):
             logger.warning(
                 f"scan skipped: no transform from {scan.frame_id!r} to {self._live_frame!r} at its stamp"
             )
+        return to_live
+
+    def _place_scan(self, scan: PointCloud2) -> PointCloud2 | None:
+        """*scan* in the live frame; None when it has no tf at its stamp."""
+        to_live = self._scan_to_live(scan)
+        if to_live is None:
             return None
         points = moved(scan.points_f32().reshape(-1, 3), to_live)
         return PointCloud2.from_numpy(points, frame_id=self._live_frame, timestamp=scan.ts)
+
+    def _on_scan(self, scan: PointCloud2) -> bool:
+        """lidar_live_map: place *scan* in the live frame for the next fold; False when it has no tf at its stamp."""
+        to_live = self._scan_to_live(scan)
+        if to_live is None:
+            return False
+        points = moved(scan.points_f32().reshape(-1, 3), to_live)
+        with self._lock:
+            self._scans.append(points)
+            self._frames_since_attempt.add(scan.frame_id)
+        self._center = (float(to_live.translation.x), float(to_live.translation.y))
+        return True
+
+    def _keep_scans(self) -> None:
+        with self._lock:
+            scans, self._scans = self._scans, []
+            complete = set(self.config.attempt_after_frames) <= self._frames_since_attempt
+            if complete:
+                self._frames_since_attempt = set()
+                self._sweeps_since_attempt += 1
+                complete = self._sweeps_since_attempt >= self.config.attempt_every_sweeps
+                if complete:
+                    self._sweeps_since_attempt = 0
+        if scans:
+            self.live.add(np.concatenate(scans))
+            if complete:
+                self._live_changed.on_next(None)
 
     def _on_local_map(self, cloud: PointCloud2) -> None:
         to_live = self.frame_to(self._live_frame, cloud.frame_id)
@@ -287,7 +341,12 @@ class PremapModule(Module):
             )
 
     def _has_enough_points(self, msg: PointCloud2) -> bool:
-        return self.config.live_cloud != "local_map" or len(msg) >= self.config.min_local_points
+        matches_live_map = self.config.live_cloud == "local_map" or (
+            self.config.live_cloud == "lidar"
+            and self.config.lidar_live_map
+            and not self.config.relocalize_once
+        )
+        return not matches_live_map or len(msg) >= self.config.min_local_points
 
     def _relocalize(self, msg: PointCloud2) -> None:
         assert self._relocalizer is not None
