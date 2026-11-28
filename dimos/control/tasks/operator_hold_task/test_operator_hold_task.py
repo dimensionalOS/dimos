@@ -287,13 +287,13 @@ def test_blueprint_helper_and_factory():
     assert cfg.type == "operator_hold"
     assert cfg.priority == 100
 
-    task = create_task(cfg, hardware={})
+    task = create_task(cfg)
     assert isinstance(task, OperatorHoldTask)
     assert task.name == OPERATOR_HOLD_TASK_NAME
 
     with pytest.raises(ValueError, match="must be named"):
-        create_task(TaskConfig(name="hold", type="operator_hold"), hardware={})
-    scoped = create_task(operator_hold_task(joint_names=["a/b"]), hardware={})
+        create_task(TaskConfig(name="hold", type="operator_hold"))
+    scoped = create_task(operator_hold_task(joint_names=["a/b"]))
     assert scoped._joint_names == frozenset({"a/b"})
     scoped.request("manual")
     assert scoped.compute(_state({"arm/joint1": 0.4})) is None

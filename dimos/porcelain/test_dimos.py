@@ -358,6 +358,24 @@ def test_unload_removes_only_that_module(running_app):
     assert running_app.skills.ping() == "pong"
 
 
+def test_restart_and_unload_an_instance_by_name(running_app):
+    running_app.run(TickerModule)
+
+    running_app.restart_instance("tickermodule", reload_source=False)
+    assert "TickerModule" in running_app._source.list_module_names()
+
+    running_app.unload_instance("tickermodule")
+    assert "TickerModule" not in running_app._source.list_module_names()
+    assert running_app.skills.ping() == "pong"
+
+
+def test_instance_actions_before_run(app):
+    with pytest.raises(RuntimeError, match="No modules are running"):
+        app.restart_instance("tickermodule")
+    with pytest.raises(RuntimeError, match="No modules are running"):
+        app.unload_instance("tickermodule")
+
+
 def test_unload_module_that_is_not_running(running_app):
     with pytest.raises(ValueError, match="TickerModule is not deployed"):
         running_app.unload(TickerModule)
@@ -400,6 +418,17 @@ def test_connected_unload_removes_only_that_module(running_app, client):
     client.unload(TickerModule)
 
     assert "TickerModule" not in client._source.list_module_names()
+    assert "TickerModule" not in running_app._source.list_module_names()
+    assert client.skills.ping() == "pong"
+
+
+def test_connected_restart_and_unload_an_instance_by_name(running_app, client):
+    client.run(TickerModule)
+
+    client.restart_instance("tickermodule", reload_source=False)
+    assert "TickerModule" in client._source.list_module_names()
+
+    client.unload_instance("tickermodule")
     assert "TickerModule" not in running_app._source.list_module_names()
     assert client.skills.ping() == "pong"
 

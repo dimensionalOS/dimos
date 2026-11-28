@@ -396,7 +396,6 @@ def test_end_to_end_controller_benchmark_scoring(tmp_path):
         SimpleNamespace(
             name="rpp_follower", joint_names=_JOINTS, priority=10, params={"speed": 0.5}
         ),
-        None,
     )
     plant = TwistBasePlantSim(
         TwistBasePlantParams(
@@ -466,7 +465,6 @@ def test_end_to_end_fullpose_benchmark_scoring(tmp_path):
         SimpleNamespace(
             name="holonomic_follower", joint_names=_JOINTS, priority=10, params={"speed": 0.5}
         ),
-        None,
     )
     plant = TwistBasePlantSim(
         TwistBasePlantParams(

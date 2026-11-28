@@ -36,8 +36,8 @@ In another terminal, use `dimos shell` and follow [Driving it](#driving-it) to s
 objects and request grasps. See the [isolated-runtime development guide](/dimos/experimental/isolated_python/README.md#runtime-development)
 for test and type-check commands.
 
-What differs between the arm and the sim is decided at import time: the hardware
-adapter, the base pose, the camera (RealSense plus its mount edge, versus the
+What differs between the arm and the sim is decided at import time: the arm's
+connection, the base pose, the camera (RealSense plus its mount edge, versus the
 MuJoCo wrist camera), and the home pose.
 
 The manipulation viewer is on viser at `http://127.0.0.1:8095`. To watch the
@@ -199,6 +199,29 @@ print(localize.find_surface(frame="link_base"))
 table = localize.surfaces(frame="link_base")[0]
 print(table["height"], table["tilt_deg"], table["size"])
 ```
+
+`add_surface` gives the planner the surface the arm works on, such as the table, as one
+flat box the size of its measured outline, 5 cm wider on each side, and cuts its voxel
+map cells, so grasps reach the real surface. Call it once after looking over the whole
+surface, since a part the camera has not seen is left out; `clear_surface` removes it:
+
+```python skip
+print(localize.add_surface(start=-30.0, duration=30.0))
+```
+
+Picking with the arm directly, without `PickAndPlaceModule`, three skills keep the object
+out of the planner's voxel map. The gripper itself never enters it (`XARM_GRIPPER_MAP_CUT`):
+
+```python skip
+localize.ignore_object("<object_id>")   # before the approach
+# ... plan to the grasp, close the gripper ...
+localize.hold_object("<object_id>")     # it now rides on link_tcp, out of the map
+# ... move, place, open the gripper, move up off it ...
+localize.release_object()               # the camera maps it where it now is
+```
+
+Release after moving up off the object. A grasp generator sees only what the camera saw,
+from above mostly the top face, so check a grasp's height against the surface it stands on.
 
 `pick_object` generates the grasps itself, so there is no separate grasp call.
 It opens the gripper, plans to the pregrasp, servos in, closes, verifies, and
