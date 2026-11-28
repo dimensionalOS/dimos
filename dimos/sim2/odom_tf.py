@@ -16,8 +16,8 @@
 
 from dimos.core.stream import In
 from dimos.core.tf_module import TfModule, TfModuleConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.nav_msgs.Odometry import Odometry
 
 
 class OdomTfConfig(TfModuleConfig):
@@ -30,7 +30,7 @@ class OdomTf(TfModule):
     """Puts each odometry reading on tf as odom -> body, stamped as the reading is."""
 
     config: OdomTfConfig
-    odom: In[PoseStamped]
+    odom: In[Odometry]
 
-    async def handle_odom(self, odom: PoseStamped) -> None:
-        self.tfbuffer.publish(Transform.from_pose(self.frame.body, odom))
+    async def handle_odom(self, odom: Odometry) -> None:
+        self.tfbuffer.publish(Transform.from_pose(self.frame.body, odom.to_pose_stamped()))
