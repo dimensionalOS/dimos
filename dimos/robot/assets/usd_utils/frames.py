@@ -15,7 +15,13 @@
 """Frames: the prims dimos treats as tf frames, each named by its prim path (``frame_path``).
 
 A frame is the default prim, a prim with RigidBodyAPI or named by a joint, or a prim on the path
-between them (a ``Geometry`` scope, say), so every frame's path-parent is a frame too."""
+between them (a ``Geometry`` scope, say), so every frame's path-parent is a frame too.
+
+A HardwareModule's frame is called on tf ``<namespace>/<role>`` when a role (a mount's name or a
+tf_frames_local key) names it, else ``<namespace>/<prim path>``. It serves its USD with
+``DimosFramesAPI`` on the top prim: ``dimos:namespace``, and ``rel dimos:frame:<namespace>:<role> =
+<prim>`` per named frame, so whoever holds a world USD (its parts moved under their mounts) turns a
+tf frame id back into its prim (``world_frame_prims``)."""
 
 from __future__ import annotations
 
@@ -172,3 +178,86 @@ def usd_frame_pose(usd: str, frame: str, root: Path | str | None = None) -> NDAr
     pose = pxr.UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(pxr.Usd.TimeCode.Default())
     # Gf matrices are row-vector, so transposed.
     return np.array(pose, dtype=np.float64).T
+
+
+FRAMES_API = "DimosFramesAPI"
+_FRAME_REL = "dimos:frame:"
+_NAMESPACE_ATTR = "dimos:namespace"
+
+
+def has_frames_api(prim: Prim) -> bool:
+    """Whether ``prim`` applies DimosFramesAPI, read off its apiSchemas (the schema is never registered)."""
+    listed = prim.GetMetadata("apiSchemas")
+    return listed is not None and FRAMES_API in listed.ApplyOperations([])
+
+
+def usd_with_frame_names(
+    usd: str, namespace: str, named: Mapping[str, str], root: Path | str | None = None
+) -> str:
+    """``usd`` with DimosFramesAPI on its top prim: the ``namespace`` its frames' tf ids are under, and ``rel dimos:frame:<tf frame id, ':' for '/'> = <prim>`` for each named (prim path -> tf frame id)."""
+    pxr = load_pxr()
+    layer = layer_from(pxr, usd, "a layer", root)
+    stage = pxr.Usd.Stage.Open(layer)
+    top = stage.GetDefaultPrim()
+    if not top:
+        raise ValueError(
+            "the layer declares no defaultPrim, so it has no prim to name its frames on"
+        )
+    if not has_frames_api(top):
+        top.AddAppliedSchema(FRAMES_API)
+    top.CreateAttribute(_NAMESPACE_ATTR, pxr.Sdf.ValueTypeNames.String, custom=False).Set(namespace)
+    for path, frame_id in sorted(named.items()):
+        rel = top.CreateRelationship(_FRAME_REL + frame_id.replace("/", ":"), custom=False)
+        rel.SetTargets([pxr.Sdf.Path(f"/{path}")])
+    return str(layer.ExportToString())
+
+
+def world_frame_prims(stage: Stage) -> dict[str, str]:
+    """Every tf frame id of a stage -> its prim path (no leading "/"): a part's (DimosFramesAPI prim's) named frame by its rel, its other prims by its namespace and their path under where it was put, and a prim no part holds by its own path."""
+    pxr = load_pxr()
+    found: dict[str, str] = {}
+
+    def add(frame_id: str, path: str) -> None:
+        if found.setdefault(frame_id, path) != path:
+            raise ValueError(f"the tf frame {frame_id!r} is both {found[frame_id]!r} and {path!r}")
+
+    # What no part holds (a scene layer written by hand) is called by its prim path.
+    prims = iter(pxr.Usd.PrimRange(stage.GetPseudoRoot()))
+    for prim in prims:
+        if prim.IsPseudoRoot():
+            continue
+        if has_frames_api(prim):
+            prims.PruneChildren()
+            continue
+        add(str(prim.GetPath())[1:], str(prim.GetPath())[1:])
+    tops = [prim for prim in stage.Traverse() if has_frames_api(prim)]
+    for top in tops:
+        attribute = top.GetAttribute(_NAMESPACE_ATTR)
+        namespace = str(attribute.Get()) if attribute and attribute.HasAuthoredValue() else ""
+        named: set[str] = set()
+        for rel in top.GetRelationships():
+            if not rel.GetName().startswith(_FRAME_REL):
+                continue
+            targets = rel.GetTargets()
+            if len(targets) != 1:
+                raise ValueError(
+                    f"{rel.GetPath()} names {len(targets)} prims; a tf frame is one prim"
+                )
+            add(rel.GetName()[len(_FRAME_REL) :].replace(":", "/"), str(targets[0])[1:])
+            named.add(str(targets[0]))
+        placed = top.GetParent().GetPath()
+        prims = iter(pxr.Usd.PrimRange(top))
+        for prim in prims:
+            if prim != top and has_frames_api(prim):
+                prims.PruneChildren()
+                continue
+            if str(prim.GetPath()) in named:
+                continue
+            relative = str(prim.GetPath().MakeRelativePath(placed))
+            add(f"{namespace}/{relative}" if namespace else relative, str(prim.GetPath())[1:])
+    return found
+
+
+def usd_world_frame_prims(usd: str, root: Path | str | None = None) -> dict[str, str]:
+    pxr = load_pxr()
+    return world_frame_prims(pxr.Usd.Stage.Open(layer_from(pxr, usd, "a layer", root)))
