@@ -15,8 +15,7 @@
 """Telling which message is newer, and when a robot has gone quiet.
 
 Messages arrive out of order and get repeated, so each carries a sequence
-number that counts up. The higher number wins. ``ControlValues`` also carries
-an ``epoch``; nothing here reads it.
+number that counts up. The higher number wins.
 
 Nothing here reads a clock. The current time is passed in, so a test can decide
 a robot has gone quiet without waiting for it to happen.

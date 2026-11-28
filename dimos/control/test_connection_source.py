@@ -26,8 +26,9 @@ import pytest
 from dimos.control._control_test_helpers import fake_arm_model
 from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.connection_source import ConnectionSource
+from dimos.control.contract.convert import dynamic_joint_state_to_values
 from dimos.control.contract.keys import Interface
-from dimos.control.contract.limits import movable_joints
+from dimos.control.contract.limits import PD_INTERFACES, movable_joints
 from dimos.control.task import ControlMode, MotorCommand
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -290,6 +291,40 @@ def test_each_kind_of_command_goes_to_its_own_port() -> None:
     assert list(velocities.message.position) == []
 
 
+def test_a_motor_command_goes_out_whole_in_one_message() -> None:
+    source = ConnectionSource(
+        ConnectionConfig(
+            source="arm",
+            model=GRIPPER_MODEL,
+            joint_commands={J1: PD_INTERFACES, GRIPPER: (Interface.POSITION,)},
+            max_stiffness={J1: 50.0},
+            max_damping={J1: 3.0},
+        ),
+        ["motor_command"],
+        ["joint_state"],
+        TIMEOUT,
+    )
+    source.on_message("joint_state", JointState(name=[J1, GRIPPER], position=[0.3, 0.05]))
+    source.command({})
+    motor = MotorCommand(position=1.5, velocity=None, effort=80.0, stiffness=70.0, damping=1.0)
+
+    values = source.command({J1: (motor, ControlMode.MOTOR_COMMAND)})
+    (message,) = source.command_messages(values, ts=1.0)
+
+    assert message.port == "motor_command"
+    # Pulled back inside the model's +-1 rad and 50 Nm, and the 50 Nm/rad cap.
+    assert dynamic_joint_state_to_values(message.message) == {
+        f"{J1}/position": 1.0,
+        f"{J1}/effort": 50.0,
+        f"{J1}/stiffness": 50.0,
+        f"{J1}/damping": 1.0,
+        f"{GRIPPER}/position": 0.05,
+    }
+    # Let go, the joint is held where it now is, not where it was held before.
+    source.on_message("joint_state", JointState(name=[J1, GRIPPER], position=[0.4, 0.05]))
+    assert source.command({}) == {f"{J1}/position": 0.4, f"{GRIPPER}/position": 0.05}
+
+
 def test_body_rate_feedback_is_ready_without_positions_or_odometry() -> None:
     source = base()
     names = source.joint_names
@@ -415,8 +450,6 @@ def test_dropped_holds_are_taken_again_from_the_next_whole_reading() -> None:
 def test_a_robot_it_cannot_drive_is_refused() -> None:
     with pytest.raises(ValueError, match="reports nothing"):
         arm(readings=())
-    with pytest.raises(ValueError, match="arm_motor_command needs stiffness"):
-        arm(commands=("motor_command",))
     with pytest.raises(ValueError, match="cannot be held"):
         arm(commands=("position_command",), readings=("odom",))
     with pytest.raises(ValueError, match="told nothing"):

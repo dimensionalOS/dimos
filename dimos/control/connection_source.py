@@ -15,7 +15,7 @@
 """The coordinator's record of one robot it drives through a connection module.
 
 A connection module reports a robot's readings and takes its commands as
-standard messages (``JointState``, ``Imu``)
+standard messages (``JointState``, ``DynamicJointState``, ``Imu``)
 on its ports. The coordinator keeps one ``ConnectionSource`` per robot it
 finds among its own ports. It turns each reading into named values with the
 shared converters in ``dimos.control.contract.convert``, keeps the latest, and
@@ -32,20 +32,22 @@ import threading
 import time
 from typing import Any
 
+from dimos_lcm.control_msgs import DynamicJointState
+
 from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.contract.convert import (
     IMU_INTERFACES,
     JOINT_STATE_FIELDS,
+    dynamic_joint_state_from_values,
     imu_to_values,
     joint_state_from_values,
     joint_state_to_values,
 )
 from dimos.control.contract.keys import SEPARATOR, Interface, Key
-from dimos.control.contract.limits import Limits, limits as limits_of
+from dimos.control.contract.limits import PD_INTERFACES, Limits, limits as limits_of
 from dimos.control.task import ControlMode, JointStateSnapshot, MotorCommand
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -60,10 +62,12 @@ IMU = "imu"
 
 #: The kinds of port a coordinator sends a robot commands on, each with the
 #: message it carries. A coordinator names such a port ``<robot>_<kind>``.
+#: A robot takes motor_command alone, which carries all five
+#: PD_INTERFACES, or position_command, velocity_command or both.
 COMMAND_PORTS: Mapping[str, type] = {
     POSITION_COMMAND: JointState,
     VELOCITY_COMMAND: JointState,
-    MOTOR_COMMAND: MotorCommandArray,
+    MOTOR_COMMAND: DynamicJointState,
 }
 #: The kinds of port a coordinator reads a robot's readings from, each with
 #: the message it carries. Named ``<robot>_<kind>`` too.
@@ -77,7 +81,6 @@ _INTERFACE_BY_MODE: dict[ControlMode, str] = {
     ControlMode.POSITION: Interface.POSITION,
     ControlMode.SERVO_POSITION: Interface.POSITION,
     ControlMode.VELOCITY: Interface.VELOCITY,
-    ControlMode.TORQUE: Interface.EFFORT,
 }
 
 
@@ -139,9 +142,10 @@ class ConnectionSource:
             stiffness, so tasks such as hand guiding may follow them by hand.
 
     Raises:
-        ValueError: If the coordinator cannot drive it: no reading port, a
-            motor port, joints that can neither take a velocity nor be held
-            at a position they report, or joint ports without a model.
+        ValueError: If the coordinator cannot drive it: no reading port,
+            motor_command with another command port, an interface no
+            port carries, joints that can neither take a velocity nor be
+            held at a position they report, or joint ports without a model.
     """
 
     def __init__(
@@ -156,24 +160,31 @@ class ConnectionSource:
         robot = config.source
         if commands and not readings:
             raise ValueError(f"{robot!r} reports nothing; it needs a reading port")
-        if MOTOR_COMMAND in commands:
+        self._has_motor_port = MOTOR_COMMAND in commands
+        others = [port for port in (POSITION_COMMAND, VELOCITY_COMMAND) if port in commands]
+        if self._has_motor_port and others:
             raise ValueError(
-                f"{robot!r}: {robot}_{MOTOR_COMMAND} needs stiffness and damping, "
-                "which the coordinator cannot send"
+                f"{robot!r}: {MOTOR_COMMAND} carries every joint, so it cannot be "
+                f"combined with {', '.join(others)}"
             )
         table = limits_of(config)
         self._robot = robot
         self._timeout = reading_timeout_s
         self._limits = table
 
-        self._joint_ports = {
-            interface: port
-            for interface, port in (
-                (Interface.POSITION, POSITION_COMMAND),
-                (Interface.VELOCITY, VELOCITY_COMMAND),
-            )
-            if port in commands
-        }
+        # Interface -> the kind of port that carries it.
+        self._joint_ports: dict[Interface, str] = (
+            dict.fromkeys(PD_INTERFACES, MOTOR_COMMAND)
+            if self._has_motor_port
+            else {
+                interface: port
+                for interface, port in (
+                    (Interface.POSITION, POSITION_COMMAND),
+                    (Interface.VELOCITY, VELOCITY_COMMAND),
+                )
+                if port in commands
+            }
+        )
 
         keys: dict[str, dict[str, str]] = {}
         for raw_key in table:
@@ -282,7 +293,7 @@ class ConnectionSource:
     @property
     def command_ports(self) -> list[str]:
         """The kinds of port commands go out on, e.g. ["position_command"]."""
-        return list(self._joint_ports.values())
+        return list(dict.fromkeys(self._joint_ports.values()))
 
     @property
     def reading_ports(self) -> list[str]:
@@ -408,27 +419,45 @@ class ConnectionSource:
 
         Args:
             winners: Each winning joint's value and control mode, e.g.
-                ``{"arm/joint1": (0.3, ControlMode.POSITION)}``. Each interface
-                must be authorized by the connection declaration.
+                ``{"arm/joint1": (0.3, ControlMode.POSITION)}``. A MOTOR_COMMAND
+                winner's value is a ``MotorCommand``; each number it sets is
+                pulled back inside its limit and sent. Each interface must be
+                authorized by the connection declaration.
 
         Raises:
             ValueError: If a task drives a joint in a way it does not accept,
-                e.g. by velocity when it only takes a position, or by MOTOR_COMMAND;
-                tells it a position outside its limit; or tells a joint a
-                non-finite speed. The robot then gets no command this tick and
-                its holds are left as they were.
+                e.g. by velocity when it only takes a position, by TORQUE, or
+                by MOTOR_COMMAND without the motor_command port; tells it a position
+                outside its limit; or tells a joint a non-finite number. The
+                robot then gets no command this tick and its holds are left
+                as they were.
         """
         interfaces = {name: _INTERFACE_BY_MODE.get(mode) for name, (_, mode) in winners.items()}
         # Check every task value first: the connection module refuses the
         # whole message if one is out of range, so no hold may change unless
         # all of them are sendable.
         joints = {joint.name: joint for joint in self._joints}
-        for name, (value, _) in winners.items():
+        for name, (value, mode) in winners.items():
             if name not in joints:
                 raise ValueError(f"Unknown joint {name}")
             joint = joints[name]
+            if mode is ControlMode.TORQUE:
+                raise ValueError(
+                    f"{name}: {self._robot!r} takes no TORQUE command; send torque as a "
+                    "MOTOR_COMMAND output with stiffness 0 and damping 0"
+                )
             if isinstance(value, MotorCommand):
-                raise ValueError(f"{name}: {self._robot!r} takes no MOTOR_COMMAND output")
+                if not self._has_motor_port:
+                    raise ValueError(
+                        f"{name}: {self._robot!r} takes no MOTOR_COMMAND output; "
+                        f"it has no {MOTOR_COMMAND} port"
+                    )
+                for each, number in _set_numbers(value):
+                    if each not in joint.command_keys:
+                        raise ValueError(f"{joint.name} cannot be told its {each}")
+                    if not math.isfinite(number):
+                        raise ValueError(f"{name} told {each} {number}, not a finite number")
+                continue
             interface = interfaces[name]
             if interface is None or interface not in joint.command_keys:
                 raise ValueError(f"{joint.name} cannot be told its {interface}")
@@ -445,10 +474,15 @@ class ConnectionSource:
         values: Values = {}
         for joint in self._joints:
             if joint.name in winners:
+                value, _ = winners[joint.name]
+                if isinstance(value, MotorCommand):
+                    for each, number in _set_numbers(value):
+                        key = joint.command_keys[each]
+                        values[key] = _clamp(number, self._limits[key])
+                    self._holds.pop(joint.name, None)
+                    continue
                 interface = interfaces[joint.name]
                 assert interface is not None
-                value, _ = winners[joint.name]
-                assert not isinstance(value, MotorCommand)
                 limit = self._limits[joint.command_keys[interface]]
                 if limit.clamp:
                     assert limit.lo is not None and limit.hi is not None
@@ -471,12 +505,22 @@ class ConnectionSource:
         """The messages that carry ``values``, each with the kind of port to send it on.
 
         One per port: a ``JointState`` on each joint port, of the joints told
-        that port's kind of value.
+        that port's kind of value. On the motor_command port, one
+        ``DynamicJointState`` of every joint in ``values``.
 
         Args:
             values: A command from ``command``.
             ts: When it was made, in Unix seconds.
         """
+        if self._has_motor_port:
+            told = [
+                j.name
+                for j in self._joints
+                if any(key in values for key in j.command_keys.values())
+            ]
+            if not told:
+                return []
+            return [PortMessage(MOTOR_COMMAND, dynamic_joint_state_from_values(values, told, ts))]
         messages: list[PortMessage] = []
         for interface, port in self._joint_ports.items():
             joints = [
@@ -506,16 +550,29 @@ class ConnectionSource:
                 return None
             held = latest[measured_key]
             self._holds[joint.name] = held
-        limit = joint.position_limit
-        if limit.lo is not None:
-            held = max(held, limit.lo)
-        if limit.hi is not None:
-            held = min(held, limit.hi)
-        return held
+        return _clamp(held, joint.position_limit)
 
 
 def _read_joint_state(msg: Any) -> Values:
     return joint_state_to_values(msg, JOINT_STATE_FIELDS)
+
+
+def _set_numbers(value: MotorCommand) -> list[tuple[Interface, float]]:
+    """The numbers a ``MotorCommand`` sets, each with the interface it goes on."""
+    return [
+        (interface, number)
+        for interface, number in zip(PD_INTERFACES, value, strict=True)
+        if number is not None
+    ]
+
+
+def _clamp(value: float, limit: Limits) -> float:
+    """``value`` moved inside whichever bounds ``limit`` has."""
+    if limit.lo is not None:
+        value = max(value, limit.lo)
+    if limit.hi is not None:
+        value = min(value, limit.hi)
+    return value
 
 
 def _within(value: float, limit: Limits) -> bool:

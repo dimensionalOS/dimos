@@ -17,8 +17,8 @@
 A name has three parts: which robot, which part of it, and what about that
 part::
 
-    arm/joint1/position         where the arm's first joint is
-    g1/left_hip_pitch/kp        how stiffly that hip is held
+    arm/joint1/position          where the arm's first joint is
+    g1/left_hip_pitch/stiffness  how stiffly that hip is held
     r1pro/base_forward/velocity  measured/commanded BODY forward speed
 
 The first two parts together, e.g. ``arm/joint1``, name the part itself. That
@@ -47,12 +47,12 @@ class Interface(str, Enum):  # TODO(PY311): switch to enum.StrEnum
     """
 
     # A joint: where it is, how fast it turns, how hard it pushes, and how
-    # stiffly (kp) and with how much damping (kd) it is held.
+    # stiffly and with how much damping it is held.
     POSITION = "position"
     VELOCITY = "velocity"
     EFFORT = "effort"
-    KP = "kp"
-    KD = "kd"
+    STIFFNESS = "stiffness"
+    DAMPING = "damping"
 
     # An IMU: orientation quaternion, angular rate, linear acceleration.
     QX = "qx"

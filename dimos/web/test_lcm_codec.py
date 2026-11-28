@@ -38,7 +38,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.msgs.sensor_msgs.JointCommand import JointCommand
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.web.lcm_codec import (
     check_lcm_params,
@@ -92,7 +92,7 @@ def test_schema_class_for_shapes() -> None:
     ("message_type", "match"),
     [
         (JointTrajectory, "declares its own LCM fingerprint"),
-        (MotorCommandArray, r"dimos_lcm.*@web_encoder"),
+        (JointCommand, r"dimos_lcm.*@web_encoder"),
         (dict, "not a DimOS message"),
         (_Bare, r"must be '<package>\.<Type>', got 'Bare'"),
     ],

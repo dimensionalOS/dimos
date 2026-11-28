@@ -21,21 +21,22 @@ import threading
 import time
 from typing import Any
 
+from dimos_lcm.control_msgs import DynamicJointState
 import numpy as np
 from pydantic import Field, model_validator
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule, Values
-from dimos.control.contract.convert import joint_state_to_values
+from dimos.control.contract.convert import dynamic_joint_state_to_values, joint_state_to_values
 from dimos.control.contract.keys import Interface
-from dimos.control.contract.limits import movable_joints
+from dimos.control.contract.limits import PD_INTERFACES, movable_joints
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import JointDescription, RobotModel
 
-_ECHOED = ((Interface.POSITION,), (Interface.VELOCITY,))
+_ECHOED = ((Interface.POSITION,), (Interface.VELOCITY,), PD_INTERFACES)
 
 
 def mock_base_model(source: str = "base") -> RobotModel:
@@ -108,7 +109,8 @@ class MockJointConnectionConfig(ConnectionConfig):
         for name, interfaces in self.joint_commands.items():
             if tuple(interfaces) not in _ECHOED:
                 raise ValueError(
-                    f"{name}: the mock takes a position or a velocity, not {interfaces}"
+                    f"{name}: the mock takes a position, a velocity or all five "
+                    f"PD_INTERFACES, not {interfaces}"
                 )
         return self
 
@@ -118,12 +120,16 @@ class MockJointConnection(ConnectionModule):
 
     A position-driven joint reports its last target as its position. A
     velocity-driven joint reports its last commanded speed and no position;
-    when commands stop it reports zero.
+    when commands stop it reports zero. A joint declared with all five
+    PD_INTERFACES is commanded on ``motor_command`` and reports only its
+    target position; its other numbers are checked against the limits and
+    then ignored.
     """
 
     config: MockJointConnectionConfig
     position_command: In[JointState]
     velocity_command: In[JointState]
+    motor_command: In[DynamicJointState]
     joint_state: Out[JointState]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -137,7 +143,7 @@ class MockJointConnection(ConnectionModule):
     def connect(self) -> None:
         commands = self.config.joint_commands
         names = [j.name for j in movable_joints(self.config.model) if j.name in commands]
-        driven = [name for name in names if commands[name] == (Interface.POSITION,)]
+        driven = [name for name in names if Interface.POSITION in commands[name]]
         positions = self.config.initial_positions or dict.fromkeys(driven, 0.0)
         if set(positions) != set(driven) or not np.isfinite(list(positions.values())).all():
             raise ValueError(
@@ -151,15 +157,19 @@ class MockJointConnection(ConnectionModule):
     def start(self) -> None:
         try:
             super().start()
-            declared = {i for interfaces in self.config.joint_commands.values() for i in interfaces}
+            declared = {tuple(interfaces) for interfaces in self.config.joint_commands.values()}
             for port, interface in (
                 (self.position_command, Interface.POSITION),
                 (self.velocity_command, Interface.VELOCITY),
             ):
-                if interface not in declared:
+                if (interface,) not in declared:
                     continue
                 self.register_disposable(
                     Disposable(port.subscribe(functools.partial(self._on_command, interface)))
+                )
+            if PD_INTERFACES in declared:
+                self.register_disposable(
+                    Disposable(self.motor_command.subscribe(self._on_motor_command))
                 )
             self._reader = threading.Thread(target=self._read_loop, daemon=True)
             self._reader.start()
@@ -186,11 +196,21 @@ class MockJointConnection(ConnectionModule):
             return
         self.command(values)
 
+    def _on_motor_command(self, message: DynamicJointState) -> None:
+        try:
+            values = dynamic_joint_state_to_values(message)
+        except ValueError as error:
+            self._report(str(error), rejection=True)
+            return
+        self.command(values)
+
     def write(self, values: Values) -> None:
         for key, value in values.items():
             joint, _, interface = key.rpartition("/")
-            target = self._positions if interface == Interface.POSITION else self._speeds
-            target[joint] = value
+            if interface == Interface.POSITION:
+                self._positions[joint] = value
+            elif joint in self._speeds:
+                self._speeds[joint] = value
 
     def halt(self) -> None:
         """Positions hold where they were last commanded; speeds drop to zero."""
