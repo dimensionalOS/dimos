@@ -24,7 +24,7 @@ from dimos.robot.assets.usd_utils.assets import (
     referenced_asset_paths,
     resolve_usd_assets,
 )
-from dimos.robot.assets.usd_utils.layers import usd_under_namespace
+from dimos.robot.assets.usd_utils.layers import usd_moved_under, usd_under_namespace
 
 pytest.importorskip("pxr")
 
@@ -228,3 +228,31 @@ def test_no_namespace_leaves_the_layer_alone() -> None:
 def test_a_namespace_that_cannot_be_a_prim_path_is_refused() -> None:
     with pytest.raises(ValueError, match="'2nd' starts with '2'"):
         usd_under_namespace(_BOUND_ARM, "fleet/2nd")
+
+
+@pytest.mark.parametrize("under", ["room/spot", "left"])
+def test_a_namespaced_layer_moved_under_a_prim_keeps_every_path_it_states(under: str) -> None:
+    moved = usd_moved_under(usd_under_namespace(_BOUND_ARM, "fleet/robot0"), "fleet/robot0", under)
+    stage = _stage(moved)
+
+    assert not stage.GetPrimAtPath("/fleet")
+    assert str(stage.GetDefaultPrim().GetPath()) == f"/{under.partition('/')[0]}"
+    weld = stage.GetPrimAtPath(f"/{under}/arm/weld")
+    assert [str(t) for t in weld.GetRelationship("physics:body1").GetTargets()] == [
+        f"/{under}/arm/tip"
+    ]
+    assert stage.GetPrimAtPath(f"/{under}/arm/tip").HasAPI(_rigid_body_api())
+
+
+def test_a_part_s_frames_are_found_from_their_tf_ids_wherever_it_was_put() -> None:
+    from dimos.robot.assets.usd_utils.frames import usd_with_frame_names, usd_world_frame_prims
+
+    named = usd_with_frame_names(_BOUND_ARM, "fleet/robot0", {"arm/tip": "fleet/robot0/tip"})
+    served = usd_under_namespace(named, "fleet/robot0")
+    moved = usd_moved_under(served, "fleet/robot0", "room/spot")
+
+    for usd, at in ((served, "fleet/robot0"), (moved, "room/spot")):
+        prims = usd_world_frame_prims(usd)
+        assert prims["fleet/robot0/tip"] == f"{at}/arm/tip"
+        assert prims["fleet/robot0/arm/base"] == f"{at}/arm/base"
+        assert "fleet/robot0/arm/tip" not in prims
