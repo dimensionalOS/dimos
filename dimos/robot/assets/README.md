@@ -120,7 +120,7 @@ one writes and another ignores diverges in silence:
 | reader | what it takes | what it does not |
 |---|---|---|
 | **MuJoCo** (the physics world) | each prim's own `xformOp:transform`, the Mjc* schemas, `physics:axis` | the weld joints' local frames, a material's `physics:dynamicFriction` (`sim2/mujoco/world.py` applies it afterwards) |
-| **`usd_to_urdf`** (the kinematics, so tf) | each joint's `physics:localPos0/localRot0` and `physics:axis`, the prim transform only for a world weld | the prim transforms of jointed bodies |
+| **`usd_joints`** (the kinematics, so tf) | each joint's `physics:localPos0/localRot0` and `physics:axis`, the prim transform only for a world weld | the prim transforms of jointed bodies |
 | **the Controller** (what a person sees) | `primvars:displayColor` first, then the bound material's `inputs:color` | reference arcs, so a prototype's colour has to be stated where the mesh is |
 
 Three bugs came out of that split in one day: an added frame welded with identity local frames

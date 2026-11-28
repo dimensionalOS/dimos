@@ -215,22 +215,14 @@ class UsdModel:
 
     @cached_property
     def joints(self) -> tuple[JointDescription, ...]:
-        from dimos.robot.assets.usd_utils.to_urdf_mask import usd_to_urdf
+        from dimos.robot.assets.usd_utils.joints import usd_joints
 
-        source = self.source_path
-        return (
-            RobotModel.from_urdf_string(
-                usd_to_urdf(self.usd, root=self.asset_root),
-                asset_dir=None if source is None else source.parent,
-            )
-            .load()
-            .joints
-        )
+        return usd_joints(self.usd, self.asset_root)
 
     @property
     def root_link(self) -> str:
         """The root link's frame: its prim path without the leading "/", e.g. ``go2/base``."""
-        from dimos.robot.assets.usd_utils.to_urdf_mask import usd_root_link
+        from dimos.robot.assets.usd_utils.joints import usd_root_link
 
         return usd_root_link(self.usd, self.asset_root)
 
@@ -265,7 +257,7 @@ class UsdModel:
     @cached_property
     def tf_frames(self) -> frozenset[str]:
         """Every frame of this description's tf: its frame prims, and any frame an edge names."""
-        # A joint may name a frame no prim carries: the anchor usd_to_urdf adds off a child's origin.
+        # A joint may name a frame no prim carries: the anchor usd_joints adds off a child's origin.
         return frozenset(
             {*self.frame_names(), *(frame for edge in self.tf_edges for frame in edge)}
         )
