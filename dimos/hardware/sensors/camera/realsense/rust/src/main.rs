@@ -600,9 +600,25 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
             .into_iter()
             .find(|s| s.extension() == Rs2Extension::DepthSensor)
         {
+            // dimOS reads DEPTH16 as millimetres, but the unit is per device
+            // (a D405 powers up at 0.1 mm), so pin it to 1 mm.
+            if depth_sensor.supports_option(Rs2Option::DepthUnits) {
+                if let Err(e) = depth_sensor.set_option(Rs2Option::DepthUnits, 0.001) {
+                    tracing::warn!(
+                        "RealSense: could not set depth units to 1 mm ({e}); \
+                         published depth may not be in millimetres"
+                    );
+                }
+            }
             depth_scale = depth_sensor
                 .get_option(Rs2Option::DepthUnits)
                 .unwrap_or(depth_scale);
+            if (depth_scale - 0.001).abs() > 1e-6 {
+                tracing::warn!(
+                    "RealSense depth units are {depth_scale} m, not 1 mm; \
+                     DEPTH16 consumers will misread distances"
+                );
+            }
             if depth_sensor.supports_option(Rs2Option::EmitterEnabled) {
                 let _ = depth_sensor.set_option(
                     Rs2Option::EmitterEnabled,
