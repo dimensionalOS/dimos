@@ -23,7 +23,7 @@ import math
 import os
 from pathlib import Path
 import re
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, NamedTuple
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -37,6 +37,20 @@ from dimos.robot.assets.xacro import expand_xacro
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+Vector = tuple[float, float, float]
+
+if TYPE_CHECKING:
+    from dimos.robot.assets.joint_transforms import JointTransforms
+
+
+class TfEdge(NamedTuple):
+    """One parent -> child edge of a description's tf: frame paths, translation and x, y, z, w rotation."""
+
+    parent: str
+    child: str
+    translation: Vector
+    rotation: tuple[float, float, float, float]
 
 
 @dataclass(frozen=True)
@@ -109,6 +123,210 @@ class LoadedRobotModel:
 
 
 @dataclass(frozen=True)
+class UsdModel:
+    _source_path: Path | str | os.PathLike[str] | None = None
+    _text: str | None = None
+    _added_frames: tuple[tuple[str, str, Vector, Vector], ...] = ()
+
+    @classmethod
+    def from_file(cls, source_path: Path | str | os.PathLike[str]) -> UsdModel:
+        if Path(source_path).suffix not in _USD_SUFFIXES:
+            raise ValueError(
+                f"UsdModel.from_file wants a USD file, got {str(source_path)!r}; "
+                f"a URDF or Xacro source is RobotModel.from_file"
+            )
+        return cls(source_path)
+
+    def with_frames(self, frames: Mapping[str, tuple[str, Vector, Vector]]) -> UsdModel:
+        # A frame added again replaces the earlier one where it stood, so joints and the layer
+        # agree on it and frames hung off it still come after it.
+        from dimos.protocol.tf.frame_paths import check_frame_path
+
+        for name in frames:
+            if "/" in name:
+                raise ValueError(
+                    f"cannot add the frame {name!r}: it is hung off its parent, so its name has no '/'"
+                )
+            check_frame_path(name, "the added frame")
+        # A frame is its path (parent/name), so the same name under another parent is another frame.
+        merged = {
+            f"{parent}/{name}": (name, parent, xyz, rpy)
+            for name, parent, xyz, rpy in (
+                *self._added_frames,
+                *((name, *spec) for name, spec in frames.items()),
+            )
+        }
+        return replace(self, _added_frames=tuple(merged.values()))
+
+    @classmethod
+    def from_layer(
+        cls, usd: str, source_path: Path | str | os.PathLike[str] | None = None
+    ) -> UsdModel:
+        # source_path is where the layer's relative asset paths resolve from, as for from_file.
+        return cls(source_path, _text=usd)
+
+    @classmethod
+    def from_robot_model(cls, model: RobotModel) -> UsdModel:
+        from dimos.robot.assets.usd_utils.from_urdf import urdf_to_usd
+
+        loaded = model.load()
+        return cls.from_layer(urdf_to_usd(loaded), loaded.source_path)
+
+    @property
+    def source_path(self) -> Path | None:
+        return None if self._source_path is None else Path(self._source_path).expanduser()
+
+    @cached_property
+    def usd(self) -> str:
+        return self._with_added_frames(self._layer())
+
+    @property
+    def asset_root(self) -> Path | None:
+        """Where the layer's relative asset paths resolve from."""
+        source = self.source_path
+        return source.parent if source is not None else None
+
+    def _with_added_frames(self, layer: str) -> str:
+        if not self._added_frames:
+            return layer
+        from dimos.robot.assets.usd_utils.frames import usd_with_frames
+
+        return usd_with_frames(
+            layer,
+            {name: (parent, xyz, rpy) for name, parent, xyz, rpy in self._added_frames},
+            root=self.asset_root,
+        )
+
+    def _layer(self) -> str:
+        if self._text is not None:
+            return self._text
+        path = self.source_path
+        if path is None:
+            raise ValueError("a UsdModel has neither a layer nor a file to read one from")
+        if not path.is_file():
+            raise FileNotFoundError(f"no USD file at {path}")
+        try:
+            return path.read_text()
+        except UnicodeDecodeError as error:
+            raise ValueError(
+                f"{path} is a binary (crate) USD layer; a scene travels as text, so export "
+                f"it as .usda"
+            ) from error
+
+    @cached_property
+    def joints(self) -> tuple[JointDescription, ...]:
+        from dimos.robot.assets.usd_utils.joints import usd_joints
+
+        return usd_joints(self.usd, self.asset_root)
+
+    @property
+    def root_link(self) -> str:
+        """The root link's frame: its prim path without the leading "/", e.g. ``go2/base``."""
+        from dimos.robot.assets.usd_utils.joints import usd_root_link
+
+        return usd_root_link(self.usd, self.asset_root)
+
+    @property
+    def top_frame(self) -> str:
+        """The frame of the USD's top (default) prim, which every other frame is under."""
+        from dimos.robot.assets.usd_utils.frames import usd_top_frame
+
+        return usd_top_frame(self.usd, self.asset_root)
+
+    @property
+    def prim_edges(self) -> tuple[JointDescription, ...]:
+        """The frame edges no joint makes, as fixed joints: a frame on its path-parent where its own prim transform puts it."""
+        from dimos.robot.assets.usd_utils.frames import usd_frame_edges
+
+        # A floating joint's child keeps its rest pose here; what moves it (odometry) is another parent.
+        jointed = {joint.child_link for joint in self.joints if joint.type != "floating"}
+        return tuple(
+            _fixed_edge(parent, child, transform)
+            for parent, child, transform in usd_frame_edges(self.usd, self.asset_root)
+            if child not in jointed
+        )
+
+    @cached_property
+    def tf_edges(self) -> tuple[tuple[str, str], ...]:
+        """Every (parent, child) edge of this description's tf, static and moving."""
+        return tuple(
+            (edge.parent_link, edge.child_link)
+            for edge in (*self._static_joints.joints, *self._moving_joints.joints)
+        )
+
+    @cached_property
+    def tf_frames(self) -> frozenset[str]:
+        """Every frame of this description's tf: its frame prims, and any frame an edge names."""
+        # A joint may name a frame no prim carries: the anchor usd_joints adds off a child's origin.
+        return frozenset(
+            {*self.frame_names(), *(frame for edge in self.tf_edges for frame in edge)}
+        )
+
+    def static_transforms(self) -> list[TfEdge]:
+        """The edges that never move: fixed joints, and each frame on its path-parent where no joint holds it."""
+        return self._edges_at(self._static_joints, {})
+
+    def moving_transforms(self, positions: Mapping[str, float] | None = None) -> list[TfEdge]:
+        """The edges of joints that move, at ``positions`` (by joint name; one not named sits at zero)."""
+        return self._edges_at(self._moving_joints, positions or {})
+
+    @cached_property
+    def _single_position_joints(self) -> tuple[JointDescription, ...]:
+        # A floating joint has no single position: what moves its child (odometry) is another parent.
+        return tuple(joint for joint in self.joints if joint.type != "floating")
+
+    @cached_property
+    def _static_joints(self) -> JointTransforms:
+        from dimos.robot.assets.joint_transforms import JointTransforms
+
+        fixed = tuple(joint for joint in self._single_position_joints if joint.type == "fixed")
+        return JointTransforms((*fixed, *self.prim_edges))
+
+    @cached_property
+    def _moving_joints(self) -> JointTransforms:
+        from dimos.robot.assets.joint_transforms import JointTransforms
+
+        # Worked out once: a robot asks for these at every tick, and only the positions change.
+        return JointTransforms(
+            tuple(joint for joint in self._single_position_joints if joint.type != "fixed")
+        )
+
+    @staticmethod
+    def _edges_at(joints: JointTransforms, positions: Mapping[str, float]) -> list[TfEdge]:
+        translations, rotations = joints.at(positions)
+        return [
+            TfEdge(parent, child, (x, y, z), (qx, qy, qz, qw))
+            for (parent, child), (x, y, z), (qx, qy, qz, qw) in zip(
+                joints.links, translations.tolist(), rotations.tolist(), strict=True
+            )
+        ]
+
+    def frame_names(self) -> set[str]:
+        from dimos.robot.assets.usd_utils.frames import usd_frame_names
+
+        return usd_frame_names(self.usd, self.asset_root)
+
+
+_USD_SUFFIXES = frozenset({".usd", ".usda"})
+
+
+def _fixed_edge(parent: str, child: str, transform: NDArray[np.float64]) -> JointDescription:
+    """A prim edge as the fixed joint it amounts to, named for the frame it holds."""
+    x, y, z = (float(value) for value in transform[:3, 3])
+    roll, pitch, yaw = (
+        float(value) for value in Rotation.from_matrix(transform[:3, :3]).as_euler("xyz")
+    )
+    return JointDescription(
+        name=child,
+        type="fixed",
+        parent_link=parent,
+        child_link=child,
+        origin_xyz=(x, y, z),
+        origin_rpy=(roll, pitch, yaw),
+    )
+
+
+@dataclass(frozen=True)
 class _FixedFrame:
     name: str
     parent: str
@@ -139,8 +357,7 @@ class PlanarBaseDefinition:
 
     The three coordinates are ordered ``x``, ``y``, then ``yaw``. Linear
     coordinates use meters and angular coordinates use radians. Translation is
-    unbounded and yaw is periodic. These are geometric position coordinates,
-    not velocity-only body action resources or derivatives of body-frame rates.
+    unbounded and yaw is periodic.
     """
 
     velocity_limits: _PositiveVector3

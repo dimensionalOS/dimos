@@ -21,6 +21,7 @@ from pytest_mock import MockerFixture
 
 from dimos.protocol.encode.cbor import decode, encode
 import dimos.robot.assets.model as robot_model
+from dimos.robot.assets.model import UsdModel
 from dimos.utils.data import LfsPath
 
 
@@ -817,3 +818,108 @@ def test_joint_velocity_limits_compose_with_loaded_renamed_views(tmp_path: Path)
     transferred_joint = decode(encode(limited)).load().get_joint("arm/slide")
     assert transferred_joint is not None
     assert transferred_joint.velocity == 0.2
+
+
+_ARM_USDA = """#usda 1.0
+(defaultPrim = "arm")
+def Xform "arm" {
+    def Xform "base" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
+        def Xform "forearm" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
+            double3 xformOp:translate = (0, 0, 0.5)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+        def PhysicsRevoluteJoint "shoulder" {
+            uniform token physics:axis = "Z"
+            rel physics:body0 = </arm/base>
+            rel physics:body1 = </arm/base/forearm>
+            float physics:lowerLimit = -90
+            float physics:upperLimit = 90
+            point3f physics:localPos0 = (0, 0, 0.5)
+        }
+    }
+}
+"""
+
+
+def test_a_usd_model_file_is_only_read_when_its_layer_is_asked_for(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="RobotModel.from_file"):
+        UsdModel.from_file(tmp_path / "robot.urdf")
+    scene = tmp_path / "arm.usda"
+    model = UsdModel.from_file(scene)
+    grown = model.with_frames({"spot": ("arm", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))})
+    with pytest.raises(FileNotFoundError, match="no USD file at"):
+        model.usd  # noqa: B018 - reading the property is what reads the file
+    scene.write_text(_ARM_USDA)
+    assert model.usd == _ARM_USDA
+    crate = tmp_path / "arm.usd"
+    crate.write_bytes(b"PXR-USDC\x00\x81\xff\xfe")
+    with pytest.raises(ValueError, match="export it as .usda"):
+        UsdModel.from_file(crate).usd  # noqa: B018 - reading the property is what reads the file
+
+    pytest.importorskip("pxr")
+    assert 'def Xform "spot"' in grown.usd
+    assert model.root_link == "arm/base"
+    (joint,) = model.joints
+    assert (joint.name, joint.type, joint.parent_link, joint.child_link) == (
+        "shoulder",
+        "revolute",
+        "arm/base",
+        "arm/base/forearm",
+    )
+    assert UsdModel.from_layer(_ARM_USDA, scene).source_path == scene
+    assert UsdModel.from_layer(_ARM_USDA).source_path is None
+
+
+def test_a_usd_model_grows_welded_frames_and_says_which_tf_edges_move() -> None:
+    pytest.importorskip("pxr")
+    import numpy as np
+
+    from dimos.robot.assets.usd_utils.frames import usd_frame_pose
+
+    # Fixed joints, added frames and prim edges never move; a floating child keeps its rest pose.
+    bare = UsdModel.from_robot_model(
+        robot_model.RobotModel.from_urdf_string(
+            '<robot name="leg"><link name="world"/><link name="hip"/><link name="knee"/>'
+            '<link name="foot"/><joint name="float" type="floating"><parent link="world"/>'
+            '<child link="hip"/></joint><joint name="bend" type="revolute"><parent link="hip"/>'
+            '<child link="knee"/><origin xyz="0 0 -0.3"/>'
+            '<axis xyz="0 1 0"/><limit lower="-2" upper="2" effort="1" velocity="1"/></joint>'
+            '<joint name="ankle" type="fixed"><parent link="knee"/><child link="foot"/>'
+            '<origin xyz="0 0 -0.3"/></joint></robot>'
+        )
+    )
+    foot = "leg/world/hip/knee/foot"
+    model = bare.with_frames({"toe": (foot, (0.1, 0.0, 0.2), (0.0, 0.0, np.pi / 2))})
+
+    joint = next((joint for joint in model.joints if joint.name == "toe_joint"), None)
+    assert joint is not None, "the added frame is welded in the layer but absent from joints"
+    assert (joint.type, joint.parent_link, joint.child_link) == ("fixed", foot, f"{foot}/toe")
+    assert joint.origin_xyz == pytest.approx((0.1, 0.0, 0.2))
+    assert f"{foot}/toe" in model.frame_names()
+    pose = usd_frame_pose(model.usd, f"{foot}/toe")
+    # The pose is above the scene's root: the foot hangs 0.6 below it.
+    np.testing.assert_allclose(pose[:3, 3], [0.1, 0.0, -0.4], atol=1e-6)
+    np.testing.assert_allclose(pose[:3, 0], [0.0, 1.0, 0.0], atol=1e-6)
+
+    static = {(edge.parent, edge.child): edge for edge in model.static_transforms()}
+    assert set(static) == {
+        ("leg", "leg/world"),
+        ("leg/world", "leg/world/hip"),
+        ("leg/world/hip/knee", foot),
+        (foot, f"{foot}/toe"),
+    }
+    np.testing.assert_allclose(static["leg/world/hip/knee", foot].translation, [0, 0, -0.3])
+    (bend,) = model.moving_transforms({"bend": np.pi / 2})
+    assert (bend.parent, bend.child) == ("leg/world/hip", "leg/world/hip/knee")
+    np.testing.assert_allclose(bend.rotation, [0.0, np.sqrt(0.5), 0.0, np.sqrt(0.5)], atol=1e-9)
+    assert set(model.tf_edges) == {*static, (bend.parent, bend.child)}
+    assert "leg/world/hip" in model.tf_frames
+
+    moved = model.with_frames({"toe": (foot, (0.3, 0.0, 0.0), (0.0, 0.0, 0.0))})
+    welded = [joint for joint in moved.joints if joint.child_link == f"{foot}/toe"]
+    assert [joint.origin_xyz for joint in welded] == [pytest.approx((0.3, 0.0, 0.0))]
+    assert moved.usd.count('def Xform "toe"') == 1
+    with pytest.raises(ValueError, match="no frame 'foot'"):
+        bare.with_frames({"toe": ("foot", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))}).frame_names()
+    with pytest.raises(ValueError, match="has no '/'"):
+        bare.with_frames({"a/toe": (foot, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})

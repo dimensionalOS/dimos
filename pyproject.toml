@@ -782,6 +782,7 @@ module = [
     "mcap.*",
     "mcap_ros2.*",
     "mujoco",
+    "mujoco.*",
     "nav_msgs.*",
     "openevals.*",
     "pinocchio",
