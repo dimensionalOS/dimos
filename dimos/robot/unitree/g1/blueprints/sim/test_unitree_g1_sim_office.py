@@ -48,6 +48,15 @@ def test_one_g1_stands_on_office_555s_main_spot_with_its_walker_and_sensors_on_i
     walker = next(atom for atom in atoms if atom.name == "main/g1walker")
     shared = {s.name for s in walker.streams if (walker.name, s.name) not in solid.remapping_map}
     assert "cmd_vel" in shared
+    # Its lidar and camera keep the names a viewer looks for them on.
+    for sensor, streams in (
+        ("main/lidar/livoxsim", {"lidar"}),
+        ("main/camera/simcamera", {"color_image", "camera_info"}),
+    ):
+        atom = next(atom for atom in atoms if atom.name == sensor)
+        assert streams <= {
+            s.name for s in atom.streams if (atom.name, s.name) not in solid.remapping_map
+        }
 
 
 def test_three_g1s_stand_on_its_main_left_and_right_spots_and_only_main_takes_cmd_vel() -> None:

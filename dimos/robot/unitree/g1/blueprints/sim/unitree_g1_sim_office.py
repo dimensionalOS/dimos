@@ -33,11 +33,20 @@ unitree_g1_sim_office = autoconnect(
             G1BodySim.blueprint(attached_to=Office555.mounts.main.name),
             OdomTf.blueprint(**G1_ODOM_TF),
             G1Walker.blueprint(),
-            LivoxSim.attach(G1BodySim.mounts.lidar),
-            SimCamera.attach(G1BodySim.mounts.camera),
+            # Its lidar and camera on the topics a viewer looks for them on, as a real G1's are.
+            on_mount(
+                LivoxSim.blueprint(attached_to=G1BodySim.mounts.lidar.name),
+                G1BodySim.mounts.lidar,
+                shared={"lidar"},
+            ),
+            on_mount(
+                SimCamera.blueprint(attached_to=G1BodySim.mounts.camera.name),
+                G1BodySim.mounts.camera,
+                shared={"color_image", "camera_info"},
+            ),
         ),
         Office555.mounts.main,
         # What drives one drives this, and its odometry is where a viewer looks for it.
-        shared={"cmd_vel", "odom"},
+        shared={"cmd_vel", "odom", "lidar", "color_image", "camera_info"},
     ),
 ).global_config(robot_model="unitree_g1")
