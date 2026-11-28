@@ -22,6 +22,7 @@ from typing import Any, Literal
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.gripper import GripperConfig
+from dimos.mapping.pointclouds.riding_box_filter import RidingBox
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -68,6 +69,12 @@ def xarm_gripper_config(prefix: str = "", *, robot: str | None = None) -> Grippe
         finger_joints={f"{joint_prefix}drive_joint": (0.0, 0.85)},
     )
 
+
+# The open xArm Gripper on link_tcp, flange to fingertips, left out of the voxel map: the
+# self filter covers the arm only.
+XARM_GRIPPER_MAP_CUT = RidingBox(
+    name="gripper", frame_id="link_tcp", center=(0.0, 0.0, -0.085), size=(0.14, 0.22, 0.19)
+)
 
 # Where the xArm Gripper's parts sit along its approach from link_tcp, metres:
 # the closed pads' centre behind it, the fingertips' farthest reach past it while
