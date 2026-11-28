@@ -39,7 +39,8 @@ def _bodies(usd: UsdModel, exclude: tuple[str, ...] = ()) -> dict[str, dict]:
     return {body["name"]: body for body in stage_bodies(pxr, stage, exclude)[0]}
 
 
-def test_the_room_is_its_fixed_pieces_and_a_crate_and_no_spawn_volume() -> None:
+def test_the_room_is_a_scene_of_fixed_pieces_and_a_crate_with_one_spawn_point() -> None:
+    assert list(DimSimRoom.mounts) == [BOT]
     bodies = _bodies(scene_usd(ROOM))
     fixed = {name for name, body in bodies.items() if "mass" not in body}
     assert fixed == {
@@ -50,31 +51,18 @@ def test_the_room_is_its_fixed_pieces_and_a_crate_and_no_spawn_volume() -> None:
     assert wall["pos"] == pytest.approx([0.0, 3.05, 0.6])
     assert wall["geoms"][0]["type"] == "box"
     assert wall["geoms"][0]["size"] == pytest.approx([3.1, 0.05, 0.6])
-
-
-def test_the_crate_is_dynamic_and_addressable_by_a_short_name() -> None:
-    crate = _bodies(scene_usd(ROOM))["crate"]
+    # The crate is dynamic and addressable by a short name, and no spawn volume is a body.
+    crate = bodies["crate"]
     assert crate["mass"] == 2.0
     assert crate["pos"] == pytest.approx([1.5, 0.0, 0.2])
     assert crate["geoms"][0]["size"] == pytest.approx([0.2, 0.2, 0.2])
+    assert len(bodies) == 7
 
 
 def test_a_robot_in_a_composed_room_is_left_out_of_it() -> None:
     bot = UsdModel.from_file(BOT_USD)
-    composed = compose_usds(
-        [
-            (resolve_usd_assets(scene_usd(ROOM).usd, str(ROOM.parent)), None),
-            (usd_under_namespace(bot.usd, BOT), BOT),
-        ]
-    )
+    room = resolve_usd_assets(scene_usd(ROOM).usd, str(ROOM.parent))
+    composed = compose_usds([(room, None), (usd_under_namespace(bot.usd, BOT), BOT)])
     assert len(_bodies(composed)) == 8, "the bot's box was never mounted in"
-    assert not [
-        geom
-        for body in _bodies(composed, exclude=(BOT,)).values()
-        for geom in body["geoms"]
-        if f"/{BOT}/" in geom["name"]
-    ]
-
-
-def test_the_room_is_a_scene_with_one_spawn_point() -> None:
-    assert list(DimSimRoom.mounts) == [BOT]
+    left = _bodies(composed, exclude=(BOT,)).values()
+    assert not [geom for body in left for geom in body["geoms"] if f"/{BOT}/" in geom["name"]]
