@@ -24,7 +24,9 @@ from dimos.robot.assets.usd_utils import lfs
 _POINTER = "version https://git-lfs.github.com/spec/v1\noid sha256:0\n"
 
 
-def test_only_the_pointers_are_fetched_in_one_pull(mocker: MockerFixture, tmp_path: Path) -> None:
+def test_only_pointers_are_pulled_once_and_one_it_cannot_pull_is_named(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
     pointer, fetched = tmp_path / "a.usdc", tmp_path / "b.usdc"
     pointer.write_text(_POINTER)
     fetched.write_bytes(b"mesh")
@@ -43,14 +45,9 @@ def test_only_the_pointers_are_fetched_in_one_pull(mocker: MockerFixture, tmp_pa
         cwd=tmp_path.resolve(),
         check=True,
     )
-
-
-def test_a_pointer_it_could_not_fetch_is_named(mocker: MockerFixture, tmp_path: Path) -> None:
-    pointer = tmp_path / "a.usdc"
+    run.reset_mock()
     pointer.write_text(_POINTER)
     mocker.patch.object(lfs, "get_project_root", return_value=tmp_path / "elsewhere")
-    run = mocker.patch("dimos.robot.assets.usd_utils.lfs.subprocess.run")
-
     with pytest.raises(RuntimeError, match="a.usdc"):
         lfs.pull_lfs_files([pointer])
     run.assert_not_called()
