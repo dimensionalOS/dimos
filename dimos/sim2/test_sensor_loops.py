@@ -114,7 +114,7 @@ def _run(
         world.time += opening
         return view
 
-    monkeypatch.setattr(sensor, "open_view", open_view)
+    monkeypatch.setattr(sim_protocol, "open_view", open_view)
     monkeypatch.setattr(getattr(sensor, stream), "publish", published.append)
     asyncio.run(getattr(sensor, loop)())
     return {"view": view, "published": published, "ticked": world.ticked}
@@ -134,15 +134,15 @@ def livox() -> Iterator[Any]:
 def test_a_livox_cloud_cast_slower_than_its_stamp_tolerance_is_dropped_and_warned_once(
     stamp_tolerance: float, sent: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dimos.sim2 import sensor
+    from dimos.sim2 import sim as sim_protocol
     from dimos.sim2.livox import LivoxSim
 
     livox = LivoxSim(instance_name="left/livox", stamp_tolerance=stamp_tolerance)
     warned: list[str] = []
-    monkeypatch.setattr(sensor.logger, "warning", warned.append)
+    monkeypatch.setattr(sim_protocol.logger, "warning", warned.append)
     world_clock = _World()
     # Wall time is the world's own time, which a cast takes a second of.
-    monkeypatch.setattr(sensor, "time", SimpleNamespace(time=lambda: world_clock.time))
+    monkeypatch.setattr(sim_protocol, "time", SimpleNamespace(time=lambda: world_clock.time))
     try:
         run = _run(livox, "_scan", "lidar", monkeypatch, world=world_clock)
     finally:
@@ -202,7 +202,7 @@ def l1(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     from dimos.sim2.l1 import SimL1
 
     sensor = SimL1(instance_name="left/l1", stamp_tolerance=math.inf)
-    monkeypatch.setattr(sensor, "_rider_odometry", lambda rider: ("left/odom", np.eye(4)))
+    monkeypatch.setattr(sim_protocol, "_rider_odometry", lambda rider: ("left/odom", np.eye(4)))
     yield sensor
     sensor.stop()
 
@@ -373,11 +373,15 @@ def _toy_world(sensor: Any, mount: str, monkeypatch: pytest.MonkeyPatch) -> Any:
 
     from dimos.robot.assets.model import UsdModel
     from dimos.robot.assets.usd_utils.layers import usd_under_namespace
-    from dimos.sim2.assets.toy import toy_robot
-    from dimos.sim2.sim import compose_usds, fetched_usd
-    from dimos.sim2.spec import ODOM_FRAME, ROBOT
-    from dimos.sim2.usd_layer import layer_file
-    from dimos.sim2.world_observations import WorldMirror, WorldWriter
+    from dimos.sim2.scene import layer_file, toy_robot
+    from dimos.sim2.sim import (
+        ODOM_FRAME,
+        ROBOT,
+        WorldMirror,
+        WorldWriter,
+        compose_usds,
+        fetched_usd,
+    )
 
     scene = Path(__file__).parent / "mujoco" / "assets" / "scene.usda"
     room = UsdModel.from_file(scene).with_frames(
@@ -487,12 +491,12 @@ def test_an_l1_in_a_world_far_off_wall_time_sends_nothing(monkeypatch: pytest.Mo
 def test_a_reading_off_wall_time_by_more_than_its_tolerance_is_dropped_and_warned_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dimos.sim2 import sensor
+    from dimos.sim2 import sim as sim_protocol
     from dimos.sim2.imu import SimImu
 
     imu = SimImu(instance_name="dog/imu/simimu", attached_to="imu")
     warned: list[str] = []
-    monkeypatch.setattr(sensor.logger, "warning", warned.append)
+    monkeypatch.setattr(sim_protocol.logger, "warning", warned.append)
     period = 1 / imu.config.rate_hz
     try:
         now = time.time()
