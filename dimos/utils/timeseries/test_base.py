@@ -418,9 +418,12 @@ def test_single_frame_clip_waits_between_passes(
 
 def test_realtime_iterator_waits_between_single_frame_passes(mocker: MockerFixture) -> None:
     store = make_in_memory_store()
-    store.save(SampleData("selected", 10))
+    store.save(SampleData("before", 9), SampleData("selected", 10))
     sleep = mocker.patch("dimos.utils.timeseries.base.time.sleep")
-    assert [frame.ts for frame in islice(store.iterate_realtime(loop=True), 3)] == [10] * 3
+    frames = store.iterate_realtime(seek=1, duration=0.1, loop=True)
+    assert next(frames).ts == 10
+    store.save(SampleData("late arrival", 8))
+    assert [frame.ts for frame in islice(frames, 2)] == [10, 10]
     assert [call.args[0] for call in sleep.call_args_list] == pytest.approx([0.05, 0.05])
 
 

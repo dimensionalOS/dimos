@@ -24,6 +24,7 @@ import pickle
 import re
 from typing import Any, cast
 
+import reactivex as rx
 from reactivex.observable import Observable
 
 from dimos.utils.data import get_data, get_data_dir
@@ -285,27 +286,9 @@ class LegacyPickleStore(TimeSeriesStore[T]):
         Yields:
             (timestamp, data) tuples
         """
-        first = self.first_timestamp()
-        if first is None:
-            return
-
-        # Calculate start timestamp
-        start: float | None = None
-        if from_timestamp is not None:
-            start = from_timestamp
-        elif seek is not None:
-            start = first + seek
-
-        # Calculate end timestamp
-        end: float | None = None
-        if duration is not None:
-            start_ts = start if start is not None else first
-            end = start_ts + duration
-
-        while True:
-            yield from self._iter_items(start=start, end=end)
-            if not loop:
-                break
+        yield from self.iterate_items(
+            seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
+        )
 
     def stream(
         self,
@@ -321,8 +304,8 @@ class LegacyPickleStore(TimeSeriesStore[T]):
         """
         from dimos.utils.testing.replay import timed_playback
 
-        return timed_playback(
-            lambda: self.iterate_ts(seek=seek, duration=duration, from_timestamp=from_timestamp),
-            speed=speed,
-            loop=loop,
+        return rx.defer(
+            lambda _: timed_playback(
+                self._clip_rows(seek, duration, from_timestamp), speed=speed, loop=loop
+            )
         )

@@ -37,7 +37,6 @@ from reactivex.scheduler import TimeoutScheduler
 from dimos.memory.cli.dataset import resolve_dataset
 from dimos.memory.store.base import Store, StreamAccessor
 from dimos.protocol.service.spec import BaseConfig, Configurable
-from dimos.utils.timeseries.base import LOOP_GAP as _LOOP_GAP
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
@@ -46,6 +45,7 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
+_LOOP_GAP = 0.05  # recording seconds, scaled by replay speed
 _LATE_TOLERANCE = 0.05  # don't skip frames within this many seconds of "now"
 
 

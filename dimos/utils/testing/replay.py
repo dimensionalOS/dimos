@@ -234,18 +234,14 @@ class MemoryReplayAdapter(Generic[T]):
             data = self._autocast(data)
         return cast("T", data)
 
-    def iterate_ts(
-        self,
-        seek: float | None = None,
-        duration: float | None = None,
-        from_timestamp: float | None = None,
-        loop: bool = False,
-    ) -> Iterator[tuple[float, T]]:
+    def _clip_rows(
+        self, seek: float | None, duration: float | None, from_timestamp: float | None
+    ) -> Callable[[], Iterator[tuple[float, T]]]:
         s = self._stream
 
         first_ts = self.first_timestamp()
         if first_ts is None:
-            return
+            return lambda: iter(())
 
         start: float | None = None
         if from_timestamp is not None:
@@ -270,13 +266,18 @@ class MemoryReplayAdapter(Generic[T]):
         else:
             bound = s
 
-        while True:
-            emitted = False
-            for obs in bound:
-                emitted = True
-                yield (obs.ts, self._decode(obs))
-            if not loop or not emitted:
-                break
+        return lambda: ((obs.ts, self._decode(obs)) for obs in bound)
+
+    def iterate_ts(
+        self,
+        seek: float | None = None,
+        duration: float | None = None,
+        from_timestamp: float | None = None,
+        loop: bool = False,
+    ) -> Iterator[tuple[float, T]]:
+        rows = self._clip_rows(seek, duration, from_timestamp)
+        for ts, data, _ in playback_frames(rows, loop):
+            yield ts, data
 
     def iterate(self) -> Iterator[T]:
         for _, data in self.iterate_ts():
@@ -337,10 +338,10 @@ class MemoryReplayAdapter(Generic[T]):
         loop: bool = False,
     ) -> Observable[T]:
         """Real-time scheduled playback as an RxPY Observable."""
-        return timed_playback(
-            lambda: self.iterate_ts(seek=seek, duration=duration, from_timestamp=from_timestamp),
-            speed=speed,
-            loop=loop,
+        return rx.defer(
+            lambda _: timed_playback(
+                self._clip_rows(seek, duration, from_timestamp), speed=speed, loop=loop
+            )
         )
 
 
