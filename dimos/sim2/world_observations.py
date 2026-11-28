@@ -300,7 +300,5 @@ class WorldMirror:
             await asyncio.sleep(due - time.time())
             ticked = time.time()
             yield ticked
-            due += period
-            if time.time() >= due:
-                # Busy past its next tick: the missed ones are skipped, and none comes within a period of this one.
-                due = max(time.time(), ticked + period)
+            # A tick that came late (busy, or a sleep that overran) skips what it missed, and none comes within a period of it.
+            due = max(due + period, ticked + period, time.time())
