@@ -55,14 +55,16 @@ jobs:
           enable-cache: false
       - name: Build the image
         run: packaging/appimage/build.sh
+      - name: Stage the installation files together
+        run: |
+          mkdir "$DIMOS_APPIMAGE_OUT/release"
+          mv "$DIMOS_APPIMAGE_OUT"/dimos-*.AppImage "$DIMOS_APPIMAGE_OUT"/dimos-*.AppImage.sha256 "$DIMOS_APPIMAGE_OUT/release/"
+          cp packaging/appimage/install.sh "$DIMOS_APPIMAGE_OUT/release/"
       - name: Upload the image
         uses: actions/upload-artifact@v7.0.2
         with:
           name: dimos-appimage-x86_64
-          path: |
-            /mnt/appimage/out/dimos-*.AppImage
-            /mnt/appimage/out/dimos-*.AppImage.sha256
-            packaging/appimage/install.sh
+          path: ${{ env.DIMOS_APPIMAGE_OUT }}/release
           compression-level: 0  # The image is compressed already.
           retention-days: 14
           if-no-files-found: error
