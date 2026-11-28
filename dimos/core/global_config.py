@@ -17,11 +17,12 @@
 Module and subsystem settings belong to their owners' configuration classes.
 """
 
+from collections.abc import Mapping
 import os
 from threading import RLock
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, TypeVar
 
-from pydantic import AliasChoices, Field, ValidationInfo, field_validator
+from pydantic import AliasChoices, AliasGenerator, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dimos.constants import DEFAULT_BUILD_NATIVE
@@ -42,6 +43,10 @@ ENV_FILE = None if "PYTEST_VERSION" in os.environ else ".env"
 
 # Only the shared instance defers reading the environment.
 _pending_config: "GlobalConfig | None" = None
+
+
+def _environment_aliases(first: str, *others: str) -> AliasChoices:
+    return AliasChoices(first, *others, *(f"G__{name}" for name in (first, *others)))
 
 
 class GlobalConfig(BaseSettings):
@@ -96,8 +101,7 @@ class GlobalConfig(BaseSettings):
     # (dimos, humancli, agentspy, dtop). The `transport` alias keeps the bare
     # env name and the `--transport` CLI flag (which sets the field by name) working.
     transport: TransportBackend = Field(
-        default="zenoh",
-        validation_alias=AliasChoices("DIMOS_TRANSPORT", "transport"),
+        default="zenoh", validation_alias=_environment_aliases("DIMOS_TRANSPORT", "transport")
     )
     build_native: bool = DEFAULT_BUILD_NATIVE
     dtop: bool = Field(default=False, description="Publish live resource stats for dtop.")
@@ -110,6 +114,7 @@ class GlobalConfig(BaseSettings):
     bridge discovers its WebTransport endpoint through /api/info."""
 
     model_config = SettingsConfigDict(
+        alias_generator=AliasGenerator(validation_alias=_environment_aliases),
         env_file=ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
@@ -191,6 +196,31 @@ def get_global_config(**overrides: Any) -> GlobalConfig:
             elif overrides:
                 global_config.update(**overrides)
     return global_config
+
+
+def global_environment_names(*, qualified: bool = True) -> dict[str, str]:
+    names = {}
+    for field, info in GlobalConfig.model_fields.items():
+        alias = info.validation_alias
+        choices = alias.choices if isinstance(alias, AliasChoices) else (alias,)
+        for name in (*choices, field):
+            if isinstance(name, str) and (qualified or not name.lower().startswith("g__")):
+                names[name.lower()] = field
+    return names
+
+
+_T = TypeVar("_T")
+
+
+def normalize_global_aliases(values: Mapping[str, _T], *, qualified: bool = False) -> dict[str, _T]:
+    """Resolve competing spellings within one source before combining it with another."""
+    names = global_environment_names(qualified=qualified)
+    lower = {name.lower(): value for name, value in values.items()}
+    result = {name: value for name, value in values.items() if name.lower() not in names}
+    for name, field in names.items():
+        if name in lower:
+            result.setdefault(field, lower[name])
+    return result
 
 
 def require_robot_ips(ips: tuple[str, ...]) -> str | None:

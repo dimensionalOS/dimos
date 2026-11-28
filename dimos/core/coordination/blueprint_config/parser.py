@@ -63,7 +63,6 @@ from dimos.core.coordination.blueprint_config.schema import (
 )
 from dimos.core.coordination.blueprint_config.sources import (
     configuration_environment,
-    global_environment_names,
     global_schema_defaults,
     merge_global_cli,
     merge_global_environment,
@@ -74,7 +73,7 @@ from dimos.core.coordination.blueprint_config.sources import (
 from dimos.core.coordination.blueprint_config.values import (
     deep_merge,
     extract_shape,
-    normalize_mapping_keys,
+    normalize_global_keys,
     plain,
     plain_mapping,
     snapshot_mapping,
@@ -131,21 +130,22 @@ class BlueprintConfigParser:
         values = global_schema_defaults()
         if config_path is not None:
             config_values = read_config_file(Path(config_path))
-            raw_global = config_values.get("g")
-            if raw_global is not None:
+            for section, raw_global in config_values.items():
+                if section.lower() != "g" or raw_global is None:
+                    continue
                 if not isinstance(raw_global, Mapping):
                     raise BlueprintConfigError(
                         "config file section 'g' must be an object, not "
                         f"{type(raw_global).__name__}."
                     )
-                deep_merge(values, normalize_mapping_keys(raw_global))
+                deep_merge(values, normalize_global_keys(raw_global))
 
         inherited: dict[str, Any] = {}
         merge_global_environment(inherited, configuration_environment(environ))
         explicit: dict[str, Any] = {}
         merge_global_cli(explicit, tuple(cli_tokens))
         if global_overrides is not None:
-            deep_merge(explicit, normalize_mapping_keys(global_overrides))
+            deep_merge(explicit, normalize_global_keys(global_overrides))
 
         try:
             return validate_global_values(values | inherited | explicit)
@@ -198,8 +198,7 @@ class BlueprintConfigParser:
         # overlaid just before validation. Equivalent to seeding the defaults
         # first because GlobalConfig is flat (no nested mappings for
         # deep_merge to recurse into).
-        global_values: dict[str, Any] = {}
-        deep_merge(global_values, plain_mapping(self.blueprint.global_config_overrides))
+        global_values = plain_mapping(self.blueprint.global_config_overrides)
         transport_values: dict[str, Any] = {}
         # The file and CLI merged a second time, alone, is what a hosted run sends its Hosts.
         file_cli_modules: dict[str, dict[str, Any]] = {m.atom.name: {} for m in schema.modules}
@@ -241,7 +240,7 @@ class BlueprintConfigParser:
         }
 
         if global_overrides is not None:
-            deep_merge(global_values, plain_mapping(global_overrides))
+            deep_merge(global_values, normalize_global_keys(global_overrides))
 
         resolved_global = global_schema_defaults()
         deep_merge(resolved_global, global_values)
@@ -255,13 +254,7 @@ class BlueprintConfigParser:
                 module_values, schema, GlobalConfig.model_validate(parsed_global)
             )
         )
-        # Pick the validated values of the explicitly-set fields, translating
-        # alias keys (e.g. DIMOS_TRANSPORT) to field names first.
-        field_names = global_environment_names()
-        explicit_shape = {
-            field_names.get(key.lower(), key): value for key, value in global_values.items()
-        }
-        explicit_global = extract_shape(parsed_global, explicit_shape)
+        explicit_global = extract_shape(parsed_global, global_values)
         parsed_transports = self._validate_transports(transport_values, schema)
 
         return ParsedBlueprintConfig(

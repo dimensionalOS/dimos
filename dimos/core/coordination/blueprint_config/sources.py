@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import dotenv_values
-from pydantic import AliasChoices, ValidationError
+from pydantic import ValidationError
 
 from dimos.core.coordination.blueprint_config.errors import (
     BlueprintConfigError,
@@ -36,8 +36,16 @@ from dimos.core.coordination.blueprint_config.schema import (
     coerce_environment_value,
     normalize_option_name,
 )
-from dimos.core.coordination.blueprint_config.values import deep_set, plain_mapping
-from dimos.core.global_config import ENV_FILE, GlobalConfig
+from dimos.core.coordination.blueprint_config.values import (
+    deep_set,
+    plain_mapping,
+)
+from dimos.core.global_config import (
+    ENV_FILE,
+    GlobalConfig,
+    global_environment_names as global_environment_names,
+    normalize_global_aliases,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -116,13 +124,14 @@ def configuration_environment(
     environ: Mapping[str, str] | None,
 ) -> Mapping[str, str]:
     if environ is None:
-        if ENV_FILE is None:
-            environ = os.environ
-        else:
-            from_dotenv = {
+        environ = normalize_global_aliases(os.environ, qualified=True)
+        if ENV_FILE is not None:
+            dotenv = {
                 key: value for key, value in dotenv_values(ENV_FILE).items() if value is not None
             }
-            environ = {**from_dotenv, **os.environ}
+            environ = {**normalize_global_aliases(dotenv, qualified=True), **environ}
+    else:
+        environ = normalize_global_aliases(environ, qualified=True)
     removed = sorted(name for name in environ if name.upper() in REMOVED_ENVIRONMENT_NAMES)
     required = [name for name in removed if name.upper() in REQUIRED_ENVIRONMENT_MIGRATIONS]
     if required:
@@ -144,7 +153,7 @@ def configuration_environment(
 
 
 def validate_global_values(values: Mapping[str, Any]) -> dict[str, Any]:
-    known = global_environment_names()
+    known = global_environment_names(qualified=False)
     unknown = sorted(key for key in values if key.lower() not in known)
     if unknown:
         raise BlueprintConfigError(
@@ -197,7 +206,8 @@ def merge_global_environment(
             continue
         parts = tuple(part.lower().replace("-", "_") for part in raw_name.split("__"))
         if len(parts) >= 2 and parts[0] == "g":
-            set_coerced(parts[1:], raw_name, value)
+            field = global_env_names.get(parts[1], parts[1])
+            set_coerced((field, *parts[2:]), raw_name, value)
 
 
 def _global_option_targets() -> dict[str, OptionTarget]:
@@ -268,17 +278,3 @@ def reserved_global_short_names() -> set[str]:
         if scalar_annotation_types(info.annotation) == {bool}:
             reserved.add(f"no_{name}")
     return reserved
-
-
-def global_environment_names() -> dict[str, str]:
-    names: dict[str, str] = {}
-    for field_name, info in GlobalConfig.model_fields.items():
-        names[field_name.lower()] = field_name
-        alias = info.validation_alias
-        if isinstance(alias, str):
-            names[alias.lower()] = field_name
-        elif isinstance(alias, AliasChoices):
-            for choice in alias.choices:
-                if isinstance(choice, str):
-                    names[choice.lower()] = field_name
-    return names

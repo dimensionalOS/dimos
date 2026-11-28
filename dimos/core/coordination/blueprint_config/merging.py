@@ -30,10 +30,13 @@ from dimos.core.coordination.blueprint_config.schema import (
     display_normalized_option,
     normalize_option_name,
 )
-from dimos.core.coordination.blueprint_config.sources import global_environment_names
+from dimos.core.coordination.blueprint_config.sources import (
+    global_environment_names,
+)
 from dimos.core.coordination.blueprint_config.values import (
     deep_merge,
     deep_set,
+    normalize_global_keys,
     normalize_mapping_keys,
 )
 from dimos.core.coordination.blueprints import config_key
@@ -63,7 +66,9 @@ def merge_root_source(
             raise BlueprintConfigError(
                 f"{source} section {raw_root!r} must be an object, not {type(raw_value).__name__}."
             )
-        normalized = normalize_mapping_keys(raw_value)
+        normalized = (
+            normalize_global_keys(raw_value) if root == "g" else normalize_mapping_keys(raw_value)
+        )
         if root == "g":
             deep_merge(global_values, normalized)
         elif root == "transports":

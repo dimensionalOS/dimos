@@ -267,3 +267,86 @@ def test_graph_child_uses_effective_global_options(
     )
     assert result.returncode == 0, result.stderr
     assert "GO2Connection" in (tmp_path / "unitree-go2-multi.svg").read_text()
+
+
+def _python_output(cwd: Path, *args: str, env: dict[str, str] | None = None) -> list[str]:
+    return subprocess.check_output(
+        [sys.executable, *args], cwd=cwd, env=env, text=True, timeout=30
+    ).splitlines()
+
+
+@pytest.mark.parametrize(
+    ("field", "shell_name", "shell_value", "dotenv_name", "dotenv_value"),
+    [
+        ("transport", "TRANSPORT", "zenoh", "DIMOS_TRANSPORT", "lcm"),
+        ("transport", "G__TRANSPORT", "zenoh", "dimos_transport", "lcm"),
+        ("transport", "G__DIMOS_TRANSPORT", "zenoh", "TRANSPORT", "lcm"),
+        ("n_workers", "G__N_WORKERS", "7", "N_WORKERS", "invalid"),
+    ],
+)
+def test_cli_and_its_child_keep_the_exported_global(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    shell_name: str,
+    shell_value: str,
+    dotenv_name: str,
+    dotenv_value: str,
+) -> None:
+    (tmp_path / ".env").write_text(f"{dotenv_name}={dotenv_value}\n")
+    monkeypatch.delenv("PYTEST_VERSION", raising=False)
+    monkeypatch.delenv("PYTHON_DOTENV_DISABLED", raising=False)
+    for name in ("DIMOS_TRANSPORT", "TRANSPORT", "N_WORKERS"):
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(f"G__{name}", raising=False)
+    monkeypatch.setenv(shell_name, shell_value)
+    read_global = (
+        "from dimos.core.global_config import global_config; "
+        "from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser; "
+        f"print(global_config.{field}, BlueprintConfigParser.preparse_global_config()[{field!r}], flush=True)"
+    )
+    if field == "transport":
+        # Native child processes select their backend directly from the environment.
+        read_global += f"; import os; assert os.environ['DIMOS_TRANSPORT'] == {shell_value!r}"
+    code = (
+        f"import subprocess, sys; import dimos.cli.dimos; {read_global}; "
+        f"subprocess.run([sys.executable, '-c', {read_global!r}], check=True)"
+    )
+    assert _python_output(tmp_path, "-c", code) == [f"{shell_value} {shell_value}"] * 2
+
+
+@pytest.mark.parametrize("source", ["shell", "dotenv"])
+def test_cli_and_blueprint_prefer_bare_globals_in_either_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    settings = [
+        ("DIMOS_TRANSPORT", "zenoh"),
+        ("G__DIMOS_TRANSPORT", "lcm"),
+        ("N_WORKERS", "3"),
+        ("G__N_WORKERS", "7"),
+    ]
+    for name in ("PYTEST_VERSION", "TRANSPORT", "G__TRANSPORT", *(k for k, _ in settings)):
+        monkeypatch.delenv(name, raising=False)
+    read_config = """
+from dimos.core.global_config import global_config
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.module import Module
+
+parser = BlueprintConfigParser(Module.blueprint())
+for values in (global_config.model_dump(), parser.preparse_global_config(), parser.parse().global_config):
+    print(values["transport"], values["n_workers"])
+"""
+    code = (
+        "import subprocess, sys; import dimos.cli.dimos; "
+        f"subprocess.run([sys.executable, '-c', {read_config!r}], check=True)"
+    )
+    for order in (settings, list(reversed(settings))):
+        env = dict(os.environ)
+        if source == "shell":
+            env.update(order)
+        else:
+            (tmp_path / ".env").write_text("".join(f"{k}={v}\n" for k, v in order))
+        output = _python_output(tmp_path, "-m", "dimos.cli.dimos", "show-config", env=env)
+        assert "transport: zenoh" in output
+        assert "n_workers: 3" in output
+        assert _python_output(tmp_path, "-c", code, env=env) == ["zenoh 3"] * 3

@@ -507,3 +507,38 @@ def test_blueprint_roundtrip_keeps_checks_and_pinned_transports() -> None:
         assert [atom.module for atom in restored.blueprints] == [ModuleA, ModuleB]
     finally:
         pinned.stop()
+
+
+@pytest.mark.parametrize(
+    "first, second", [("DIMOS_TRANSPORT", "transport"), ("transport", "DIMOS_TRANSPORT")]
+)
+def test_later_global_pin_wins_across_aliases(first: str, second: str) -> None:
+    base = ModuleA.blueprint().global_config(**{first: "lcm"})
+    later = {second: "zenoh"}
+    composed = autoconnect(base, ModuleB.blueprint().global_config(**later)).solidify()
+    for blueprint in (base.global_config(**later), composed):
+        assert dict(blueprint.global_config_overrides) == {"transport": "zenoh"}
+        assert (
+            BlueprintConfigParser(blueprint).parse(environ={}).global_config["transport"] == "zenoh"
+        )
+
+
+def test_direct_build_uses_restored_global_pins(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dimos.core.coordination import module_coordinator
+    from dimos.core.global_config import GlobalConfig
+
+    state = ModuleA.blueprint().cbor_encode()
+    state["global_config_overrides"] = {"DIMOS_TRANSPORT": "lcm"}
+    blueprint = Blueprint.cbor_decode(state)
+    monkeypatch.setattr(module_coordinator, "global_config", GlobalConfig())
+
+    class ReachedConstructorError(Exception):
+        pass
+
+    def before_runtime(self, *, g, **kwargs):
+        assert g.transport == "lcm"
+        raise ReachedConstructorError
+
+    monkeypatch.setattr(module_coordinator.ModuleCoordinator, "__init__", before_runtime)
+    with pytest.raises(ReachedConstructorError):
+        module_coordinator.ModuleCoordinator.build(blueprint)

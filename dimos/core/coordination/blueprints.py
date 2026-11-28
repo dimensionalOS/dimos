@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
+from dimos.core.coordination.blueprint_config.values import normalize_global_keys
 from dimos.core.module import ModuleBase, is_module_type
 from dimos.core.stream import IO, In, Out, Transport, TransportSpec
 from dimos.core.transport import PubSubTransport
@@ -248,6 +249,14 @@ class Blueprint(BlueprintProtocol):
     hosted_placements: tuple[HostedPlacement, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
+        if self.global_config_overrides or not isinstance(
+            self.global_config_overrides, MappingProxyType
+        ):
+            object.__setattr__(
+                self,
+                "global_config_overrides",
+                MappingProxyType(normalize_global_keys(self.global_config_overrides)),
+            )
         module_names = {atom.name for atom in self.blueprints}
         unknown = sorted(
             {
@@ -288,7 +297,10 @@ class Blueprint(BlueprintProtocol):
     def global_config(self, **kwargs: Any) -> Self:
         return replace(
             self,
-            global_config_overrides=MappingProxyType({**self.global_config_overrides, **kwargs}),
+            global_config_overrides={
+                **self.global_config_overrides,
+                **normalize_global_keys(kwargs),
+            },
         )
 
     def hosted(

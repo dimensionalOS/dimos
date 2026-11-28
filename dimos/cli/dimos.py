@@ -49,7 +49,20 @@ import typer
 # Load before CLI imports freeze config/state paths, so a daemon re-exec and
 # later status/stop commands resolve the same registry. Keep tests isolated.
 if "PYTEST_VERSION" not in os.environ:
+    exported = set(os.environ)
     load_dotenv()
+    from dimos.core.global_config import global_environment_names, normalize_global_aliases
+
+    # A lower-priority dotenv spelling must not shadow an exported alias.
+    names = global_environment_names()
+    exported_fields = {names[key.lower()] for key in exported if key.lower() in names}
+    for key in os.environ.keys() - exported:
+        if names.get(key.lower()) in exported_fields:
+            del os.environ[key]
+    # Native children read DIMOS_TRANSPORT directly.
+    transport = normalize_global_aliases(os.environ, qualified=True).get("transport")
+    if transport is not None:
+        os.environ["DIMOS_TRANSPORT"] = transport
 
 from dimos.cli.cache import app as cache_app
 from dimos.cli.can import app as can_app
