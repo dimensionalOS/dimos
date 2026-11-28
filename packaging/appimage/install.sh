@@ -13,19 +13,25 @@ image="$(readlink -f "$1")"
 root=/opt/dimos
 
 mkdir -p "$root"
-cd "$root"
+exec 9<"$root"
+flock 9
+stage="$(mktemp -d "$root/.install.XXXXXXXX")"
+trap 'rm -rf -- "$stage"' EXIT
+trap 'exit 1' HUP INT TERM
+cd "$stage"
 [ -x "$image" ] || chmod +x "$image"
 # The version comes first, from one small file.
-rm -rf squashfs-root
 "$image" --appimage-extract dimos.desktop > /dev/null
 version="$(sed -n 's/^X-AppImage-Version=//p' squashfs-root/dimos.desktop)"
-rm -rf squashfs-root
-if [ -z "$version" ] || [ -e "$version" ]; then
-  echo "install.sh: $root/${version:-<no version in the image>} is already there" >&2
+case "$version" in
+  ''|*/*|.|..|current) echo "install.sh: invalid image version '$version'" >&2; exit 1 ;;
+esac
+if [ -e "$root/$version" ] || [ -L "$root/$version" ]; then
+  echo "install.sh: $root/$version is already there" >&2
   exit 1
 fi
 "$image" --appimage-extract > /dev/null
-mv squashfs-root "$version"
-ln -sfn "$version" current
-ln -sf "$root/current/AppRun" /usr/local/bin/dimos
+mv -T squashfs-root "$root/$version"
+ln -sfnT "$version" "$root/current"
+ln -sfT "$root/current/AppRun" /usr/local/bin/dimos
 echo "DimOS $version is installed in $root/$version"
