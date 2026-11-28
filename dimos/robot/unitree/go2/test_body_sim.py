@@ -141,3 +141,25 @@ def test_held_at_its_standing_pose_it_stands_and_reads_its_joints_and_gravity(
     [imu] = imus
     assert imu.linear_acceleration.z == pytest.approx(9.81, abs=0.5)
     assert abs(imu.angular_velocity.z) < 0.1
+
+
+def test_its_odometry_starts_on_its_mount_and_its_twist_is_in_its_body_s_frame(
+    go2: Go2BodySim,
+) -> None:
+    import math
+
+    standing = go2._body_on_mount[:3, 3]
+    # Where it stood when the world first showed it: its odom's origin is its mount.
+    start = np.array([5.0, 3.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+    start[:3] += standing
+    first = go2.odometry(start, np.zeros(6), 1.0)
+    assert [first.x, first.y, first.z] == pytest.approx(list(standing))
+    # Turned a quarter left and moving along the world's +y, it moves along its own +x.
+    turned = start.copy()
+    turned[3:] = [0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4)]
+    odom = go2.odometry(turned, np.array([0.0, 0.5, 0.0, 0.0, 0.0, 0.3]), 2.0)
+
+    assert odom.frame_id == go2.attach_frame
+    assert odom.child_frame_id == go2.body_frame
+    assert [odom.twist.linear.x, odom.twist.linear.y] == pytest.approx([0.5, 0.0], abs=1e-9)
+    assert odom.twist.angular.z == pytest.approx(0.3)
