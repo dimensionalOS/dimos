@@ -26,6 +26,11 @@ import threading
 import time
 import uuid
 
+# Tests start their workers as `dimos run` does, so their OpenMP pools wait passively instead of spinning on every core.
+from dimos.utils.native_thread_pools import limit_native_thread_pools
+
+limit_native_thread_pools()
+
 # Tag every pytest descendant so a sidecar watchdog can sweep strays (dimsim, rerun, etc).
 DIMOS_PYTEST_RUN_ID_ENV = "DIMOS_PYTEST_RUN_ID"
 _worker = os.environ.get("PYTEST_XDIST_WORKER")

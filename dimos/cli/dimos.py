@@ -23,25 +23,10 @@ from __future__ import annotations
 import os
 import sys
 
-# Native thread-pool hygiene. Every OpenMP/BLAS runtime sizes its pool to all
-# cores and spin-waits at barriers (libgomp: ~300k pause iterations per region;
-# libomp: KMP_BLOCKTIME of active spinning after each region). With ~10 worker
-# processes each owning core-sized pools this oversubscribes ~10x: measured
-# 12% of all cycles spinning in gomp_barrier_wait_end and load avg 30-50 at
-# ~50% CPU. PASSIVE wait + small pools cut a 10 Hz open3d workload 3.7x
-# (1.10 -> 0.30 cores) and ~50 threads/worker -> ~10. Must be set before any
-# library loads its OpenMP runtime (libgomp reads env at load, OpenBLAS spawns
-# its pool at import); workers inherit via the forkserver. User env wins.
-os.environ.setdefault("KMP_BLOCKTIME", "0")
-os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
-os.environ.setdefault("GOMP_SPINCOUNT", "0")
-os.environ.setdefault("OMP_NUM_THREADS", "4")
-os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
-os.environ.setdefault("MKL_NUM_THREADS", "2")
-os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
-# cv2 reads this at import for its parallel_for pool; replaces the eager
-# `import cv2; cv2.setNumThreads(2)` the worker entrypoint used to do.
-os.environ.setdefault("OPENCV_FOR_THREADS_NUM", "2")
+# Before any library loads its OpenMP/BLAS runtime; workers inherit it via the forkserver.
+from dimos.utils.native_thread_pools import limit_native_thread_pools
+
+limit_native_thread_pools()
 
 from dotenv import load_dotenv
 import typer
