@@ -285,27 +285,9 @@ class LegacyPickleStore(TimeSeriesStore[T]):
         Yields:
             (timestamp, data) tuples
         """
-        first = self.first_timestamp()
-        if first is None:
-            return
-
-        # Calculate start timestamp
-        start: float | None = None
-        if from_timestamp is not None:
-            start = from_timestamp
-        elif seek is not None:
-            start = first + seek
-
-        # Calculate end timestamp
-        end: float | None = None
-        if duration is not None:
-            start_ts = start if start is not None else first
-            end = start_ts + duration
-
-        while True:
-            yield from self._iter_items(start=start, end=end)
-            if not loop:
-                break
+        yield from self.iterate_items(
+            seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
+        )
 
     def stream(
         self,

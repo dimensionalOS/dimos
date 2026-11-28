@@ -45,3 +45,8 @@ def test_duration_uses_earliest_source_timestamp(replay: MemoryReplayAdapter[int
 
 def test_find_closest_seek_uses_earliest_source_timestamp(replay: MemoryReplayAdapter[int]) -> None:
     assert replay.find_closest_seek(0.005) == 0
+
+
+def test_adapter_excludes_the_end_of_an_explicit_window(replay: MemoryReplayAdapter[int]) -> None:
+    assert list(replay.iterate_ts(seek=0, duration=0.01)) == [(10.0, 1)]
+    assert list(replay.iterate_ts(from_timestamp=10.01, duration=0.01)) == [(10.01, 2)]

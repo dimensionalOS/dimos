@@ -108,6 +108,15 @@ def test_duration_uses_earliest_source_timestamp(recording: Store) -> None:
     assert [ts for ts, _ in replay.stream("odom").iterate_ts()] == [10.0, 10.01]
 
 
+def test_adjacent_replay_windows_include_each_boundary_once(recording: Store) -> None:
+    def stamps(**window: float) -> list[float]:
+        return [ts for ts, _ in recording.replay(**window).stream("odom").iterate_ts()]
+
+    assert stamps(duration=0.01) == stamps(seek=0, duration=0.01) == [10.0]
+    assert stamps(from_timestamp=10.01, duration=0.01) == [10.01]
+    assert stamps(seek=0, duration=0) == []
+
+
 def test_pin_anchor_uses_earliest_source_timestamp(recording: Store) -> None:
     replay = recording.replay()
 

@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 import reactivex as rx
 from reactivex import operators as ops
 
+from dimos.memory.utils.time_window import RecordingWindow
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -229,16 +231,10 @@ class TimeSeriesStore(Generic[T], ABC):
             return
 
         if from_timestamp is not None:
-            start = from_timestamp
-        elif seek is not None:
-            start = first + seek
-        else:
-            start = None
-
-        end = None
-        if duration is not None:
-            start_ts = start if start is not None else first
-            end = start_ts + duration
+            first, seek = from_timestamp, 0.0
+        window = RecordingWindow.from_offsets(first, seek or 0.0, duration)
+        start = window.start if seek is not None else None
+        end = window.end if duration is not None else None
 
         while True:
             yield from self._iter_items(start=start, end=end)
