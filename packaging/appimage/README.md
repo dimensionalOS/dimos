@@ -106,8 +106,10 @@ DIMOS_APPIMAGE_OUT=/mnt/appimage packaging/appimage/build.sh
 ```
 
 The result is `<out>/dimos-<version>-<arch>.AppImage` and its `.sha256` file. CI
-builds it with the [`appimage` workflow](/.github/workflows/appimage.yml), started by
-hand. The workflow's artifact holds the image, the `.sha256` file and `install.sh`.
+builds it with the [`appimage` workflow](/.github/workflows/appimage.yml). It runs on
+the tag of a release when the release is published, and it can be started by hand. It
+does not run on pull requests. The workflow's artifact holds the image, the `.sha256`
+file and `install.sh`.
 Check a copy with `sha256sum -c dimos-<version>-<arch>.AppImage.sha256`.
 
 - **Run it from a clean checkout.** The wheel is built from the files that are there.

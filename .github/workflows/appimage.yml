@@ -1,8 +1,12 @@
 # Builds the DimOS AppImage for Ubuntu 26.04 on x86_64. See packaging/appimage/README.md.
-# Started by hand. The image stays a workflow artifact until there is a bucket to publish it to.
+# Runs on the tag of a release when the release workflow publishes it, or started by hand.
+# It is too heavy for pull requests. The image stays a workflow artifact until there is a
+# bucket to publish it to.
 name: appimage
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
 
 concurrency:

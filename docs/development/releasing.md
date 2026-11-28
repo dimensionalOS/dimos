@@ -27,6 +27,7 @@ Throughout this document, replace `X.Y.Z` with the version you are releasing (e.
 3. Monitor the CI run. When it reaches the publish-pypi step, you'll need other team members to approve the release.
 4. After completion, the bot will have pushed a signed merge-back commit directly to `main`. Confirm with `git log --first-parent main -1`. The tip should be `Merge release/X.Y.Z back to main`. Then verify `vX.Y.Z` shows on https://github.com/dimensionalOS/dimos/releases and on https://pypi.org/project/dimos/.
 5. The bot also force-pushes the `latest` branch to the release commit. Pre-releases (`a`, `b`, `rc` or `dev` versions) leave it unchanged.
+6. Publishing the release starts the `appimage` workflow on the `vX.Y.Z` tag. It builds the [AppImage](/packaging/appimage/README.md) and keeps it as an artifact of its run for 14 days. A failure there does not affect the release. The workflow can be started again by hand, on the tag or on the release branch.
 
 ## 3. Cleanup
 
