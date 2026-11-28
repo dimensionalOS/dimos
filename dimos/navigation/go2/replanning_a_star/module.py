@@ -139,21 +139,25 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         return self._planner.get_state()
 
     @rpc
-    def is_goal_reached(self) -> bool:
-        return self._planner.is_goal_reached()
+    def is_goal_reached(self, goal: PoseStamped | None = None) -> bool:
+        return self._planner.is_goal_reached(goal)
 
     @rpc
-    def is_goal_cancelled(self) -> bool:
-        return self._planner.is_goal_cancelled()
+    def is_goal_cancelled(self, goal: PoseStamped | None = None) -> bool:
+        return self._planner.is_goal_cancelled(goal)
 
     @rpc
-    def get_goal_cancel_reason(self) -> str | None:
-        return self._planner.get_goal_cancel_reason()
+    def get_goal_cancel_reason(self, goal: PoseStamped | None = None) -> str | None:
+        return self._planner.get_goal_cancel_reason(goal)
 
     @rpc
-    def cancel_goal(self, reason: str = "cancel_goal RPC: cancellation requested") -> bool:
-        self._planner.cancel_goal(reason=reason)
-        return True
+    def cancel_goal(
+        self,
+        reason: str = "cancel_goal RPC: cancellation requested",
+        goal: PoseStamped | None = None,
+    ) -> bool:
+        cancelled = self._planner.cancel_goal(reason=reason, goal=goal)
+        return cancelled if goal is not None else True
 
     @rpc
     def set_replanning_enabled(self, enabled: bool) -> None:

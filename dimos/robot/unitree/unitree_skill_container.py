@@ -17,7 +17,9 @@ from __future__ import annotations
 import datetime
 import difflib
 import math
+import threading
 import time
+from typing import Any
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -219,8 +221,15 @@ class UnitreeSkillContainer(Module):
 
     _navigation: NavigationInterfaceSpec
     _connection: GO2ConnectionSpec
+    _goal_lock: threading.Lock
+    _last_goal_ts: float
 
     tf: In[TFMessage]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._goal_lock = threading.Lock()
+        self._last_goal_ts = 0.0
 
     @rpc
     def start(self) -> None:
@@ -265,14 +274,19 @@ class UnitreeSkillContainer(Module):
             return "Failed to get the position of the robot."
 
         goal = _goal_pose(tf.to_pose(), x, y, degrees, relative)
-        self._navigation.set_goal(goal)
-        outcome = self._wait_for_goal()
+        with self._goal_lock:
+            goal.ts = max(float(goal.ts), self._last_goal_ts + 1e-3)
+            self._last_goal_ts = goal.ts
+            self._navigation.set_goal(goal)
+        outcome = self._wait_for_goal(goal)
 
         tf = self.tfbuffer.get("world", "base_link")
         now = "unknown" if tf is None else _pose_text(tf.to_pose())
         return f"{outcome}. Robot is at {now}; goal was {_pose_text(goal)}."
 
-    def _wait_for_goal(self, timeout: float = 100.0, settle: float = 2.0) -> str:
+    def _wait_for_goal(
+        self, goal: PoseStamped | None = None, timeout: float = 100.0, settle: float = 2.0
+    ) -> str:
         """Block until the planner arrives, gives up, or `timeout` passes.
 
         The planner drops out of FOLLOWING_PATH for a moment every time it
@@ -281,25 +295,39 @@ class UnitreeSkillContainer(Module):
         """
         # TODO: Improve this. This is not a nice way to do it. I should
         # subscribe to arrival/cancellation events instead.
-        time.sleep(1.0)
+        completed = False
+        try:
+            time.sleep(1.0)
 
-        deadline = time.monotonic() + timeout
-        idle_since: float | None = None
-        while time.monotonic() < deadline:
-            if self._navigation.is_goal_reached():
-                return "Navigation goal reached"
-            if self._navigation.get_state() == NavigationState.FOLLOWING_PATH:
-                idle_since = None
-            elif idle_since is None:
-                idle_since = time.monotonic()
-            elif time.monotonic() - idle_since > settle:
-                reason = self._navigation.get_goal_cancel_reason()
+            deadline = time.monotonic() + timeout
+            idle_since: float | None = None
+            while time.monotonic() < deadline:
+                if self._navigation.is_goal_reached(goal):
+                    completed = True
+                    return "Navigation goal reached"
+                reason = self._navigation.get_goal_cancel_reason(goal)
                 if reason is not None:
-                    outcome = "cancelled" if self._navigation.is_goal_cancelled() else "failed"
+                    completed = True
+                    outcome = "cancelled" if self._navigation.is_goal_cancelled(goal) else "failed"
                     return f"Navigation {outcome}: {reason}"
-                return "Navigation was cancelled or failed"
-            time.sleep(0.1)
-        return "Navigation timed out"
+                if self._navigation.get_state() == NavigationState.FOLLOWING_PATH:
+                    idle_since = None
+                elif idle_since is None:
+                    idle_since = time.monotonic()
+                elif time.monotonic() - idle_since > settle:
+                    completed = True
+                    return "Navigation was cancelled or failed"
+                time.sleep(0.1)
+            completed = True
+            self._navigation.cancel_goal(
+                reason="UnitreeSkillContainer.move_to: navigation timed out", goal=goal
+            )
+            return "Navigation timed out"
+        finally:
+            if not completed:
+                self._navigation.cancel_goal(
+                    reason="UnitreeSkillContainer.move_to: navigation interrupted", goal=goal
+                )
 
     @skill
     def wait(self, seconds: float) -> str:

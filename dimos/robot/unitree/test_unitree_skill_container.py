@@ -13,7 +13,9 @@
 # limitations under the License.
 
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from itertools import count
+from threading import Event
 
 from dimos_lcm.std_msgs import Bool
 import numpy as np
@@ -220,3 +222,116 @@ def test_move_to_reports_external_cancellation(
     navigation.set_goal(PoseStamped(position=[3.0, 1.0, 0.3]))
     assert not navigation.is_goal_cancelled()
     assert navigation.get_goal_cancel_reason() is None
+
+
+@pytest.mark.parametrize("second_x", [5.0, 3.0], ids=["different_goal", "same_coordinates"])
+def test_move_to_reports_replaced_goal_when_superseded(
+    skill: UnitreeSkillContainer,
+    navigation: ReplanningAStarPlanner,
+    mocker: MockerFixture,
+    second_x: float,
+) -> None:
+    planner = navigation._planner
+    current_pose = [Transform(translation=Vector3(1.0, 1.0, 0.3), child_frame_id="base_link")]
+    planner.handle_odom(current_pose[0].to_pose())
+    planner.handle_global_costmap(
+        OccupancyGrid(grid=np.zeros((80, 80), dtype=np.int8), resolution=0.1, origin=Pose())
+    )
+    mocker.patch.object(
+        LocalPlanner,
+        "start_planning",
+        side_effect=lambda _path: planner._local_planner._change_state("path_following"),
+    )
+    tfbuffer = mocker.patch.object(
+        UnitreeSkillContainer, "tfbuffer", new_callable=mocker.PropertyMock
+    )
+    tfbuffer.return_value.get.side_effect = lambda *_args, **_kwargs: current_pose[0]
+    clock = mocker.patch.object(unitree_skill_container, "time")
+    clock.monotonic.return_value = 0.0
+    first_waiting, release_both = Event(), Event()
+
+    def on_sleep(seconds: float) -> None:
+        if seconds == 1.0 and not first_waiting.is_set():
+            planner._local_planner._change_state("path_following")
+            first_waiting.set()
+            assert release_both.wait(timeout=5)
+        elif seconds == 1.0:
+            current_pose[0] = Transform(
+                translation=Vector3(second_x, 1.0, 0.3), child_frame_id="base_link"
+            )
+            planner.handle_odom(current_pose[0].to_pose())
+            planner._handle_stop_message("arrived")
+            release_both.set()
+
+    clock.sleep.side_effect = on_sleep
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_call = pool.submit(skill.move_to, x=3.0, y=1.0)
+        assert first_waiting.wait(timeout=5)
+        second_call = pool.submit(skill.move_to, x=second_x, y=1.0)
+        first_result = first_call.result(timeout=5)
+        second_result = second_call.result(timeout=5)
+
+    assert first_result == (
+        "Navigation cancelled: replaced by a newer goal. "
+        f"Robot is at x={second_x:.2f} y=1.00 heading=0deg; goal was x=3.00 y=1.00 heading=0deg."
+    )
+    assert second_result == (
+        "Navigation goal reached. "
+        f"Robot is at x={second_x:.2f} y=1.00 heading=0deg; goal was x={second_x:.2f} y=1.00 heading=0deg."
+    )
+
+
+@pytest.mark.parametrize(
+    "mode, expected_reason",
+    [
+        ("timeout", "UnitreeSkillContainer.move_to: navigation timed out"),
+        ("interrupt", "UnitreeSkillContainer.move_to: navigation interrupted"),
+    ],
+)
+def test_move_to_cancels_goal_when_giving_up(
+    skill: UnitreeSkillContainer,
+    navigation: ReplanningAStarPlanner,
+    mocker: MockerFixture,
+    mode: str,
+    expected_reason: str,
+) -> None:
+    planner = navigation._planner
+    pose = Transform(translation=Vector3(1.0, 1.0, 0.3), child_frame_id="base_link")
+    planner.handle_odom(pose.to_pose())
+    planner.handle_global_costmap(
+        OccupancyGrid(grid=np.zeros((50, 50), dtype=np.int8), resolution=0.1, origin=Pose())
+    )
+    mocker.patch.object(
+        LocalPlanner,
+        "start_planning",
+        side_effect=lambda _path: planner._local_planner._change_state("path_following"),
+    )
+    tfbuffer = mocker.patch.object(
+        UnitreeSkillContainer, "tfbuffer", new_callable=mocker.PropertyMock
+    )
+    tfbuffer.return_value.get.return_value = pose
+    clock = mocker.patch.object(unitree_skill_container, "time")
+    clock.monotonic.side_effect = [0.0, 101.0] if mode == "timeout" else count()
+
+    def on_sleep(seconds: float) -> None:
+        if seconds == 1.0:
+            planner._local_planner._change_state("path_following")
+        elif mode == "interrupt":
+            raise RuntimeError("caller aborted")
+
+    clock.sleep.side_effect = on_sleep
+
+    if mode == "timeout":
+        result = skill.move_to(x=2, relative=True)
+        assert result == (
+            "Navigation timed out. "
+            "Robot is at x=1.00 y=1.00 heading=0deg; goal was x=3.00 y=1.00 heading=0deg."
+        )
+    else:
+        with pytest.raises(RuntimeError, match="caller aborted"):
+            skill.move_to(x=2, relative=True)
+
+    assert navigation.get_state() == NavigationState.IDLE
+    assert navigation.is_goal_cancelled()
+    assert navigation.get_goal_cancel_reason() == expected_reason
