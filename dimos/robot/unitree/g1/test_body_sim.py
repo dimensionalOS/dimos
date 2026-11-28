@@ -22,6 +22,8 @@ import pytest
 
 pytest.importorskip("pxr")
 pytest.importorskip("mujoco")
+# Its USD names its Git LFS meshes, over the hosted runner's pull cap.
+pytestmark = pytest.mark.self_hosted
 
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import G1_GROOT_KD, G1_GROOT_KP
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -85,7 +87,6 @@ def test_its_lidar_and_camera_mounts_and_its_pelvis_imu_are_isaac_sim_sites(
     assert g1.frame.camera == f"{MOUNT}/camera"
 
 
-@pytest.mark.self_hosted  # MuJoCo compiles the G1 from its Git LFS meshes
 def test_odom_is_from_the_mount_so_the_pelvis_stands_above_it(g1: G1BodySim) -> None:
     scene = UsdModel.from_file(SCENE).with_frames(
         {"g1": ("scene", MOUNT_XYZ, (0.0, 0.0, MOUNT_YAW))}
