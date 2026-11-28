@@ -20,6 +20,7 @@ from multiprocessing.connection import Connection
 import socket
 import subprocess
 import sys
+from typing import Any
 
 import mujoco
 import numpy as np
@@ -161,14 +162,52 @@ class RenderProcess:
         lightings: Sequence[tuple[float, bool]],
     ) -> list[NDArray[np.uint8]]:
         """`camera`'s image of `data` under each of `lightings`, in one exchange with the process."""
+        images: list[NDArray[np.uint8]] = self._exchange(
+            data, camera, width, height, lightings, None
+        )
+        return images
+
+    def render_toned(
+        self,
+        data: mujoco.MjData,
+        camera: str,
+        width: int,
+        height: int,
+        lightings: Sequence[tuple[float, bool]],
+        headrooms: Sequence[float],
+        curve: str,
+    ) -> NDArray[np.uint8]:
+        """`camera`'s image of `data` under each of `lightings`, made one displayed image (look.toned) in the process, which holds no lock of this one's."""
+        image: NDArray[np.uint8] = self._exchange(
+            data, camera, width, height, lightings, (list(headrooms), curve)
+        )
+        return image
+
+    def _exchange(
+        self,
+        data: mujoco.MjData,
+        camera: str,
+        width: int,
+        height: int,
+        lightings: Sequence[tuple[float, bool]],
+        tone: tuple[list[float], str] | None,
+    ) -> Any:
         self._connection.send(
-            (data.qpos, data.mocap_pos, data.mocap_quat, camera, width, height, list(lightings))
+            (
+                data.qpos,
+                data.mocap_pos,
+                data.mocap_quat,
+                camera,
+                width,
+                height,
+                list(lightings),
+                tone,
+            )
         )
         reply = self._connection.recv()
         if isinstance(reply, BaseException):
             raise reply
-        images: list[NDArray[np.uint8]] = reply
-        return images
+        return reply
 
     def close(self) -> None:
         self._connection.close()
@@ -183,7 +222,9 @@ def _serve(descriptor: int) -> None:
     try:
         while True:
             try:
-                qpos, mocap_pos, mocap_quat, camera, width, height, lightings = connection.recv()
+                qpos, mocap_pos, mocap_quat, camera, width, height, lightings, tone = (
+                    connection.recv()
+                )
             except EOFError:
                 return
             data.qpos[:], data.mocap_pos[:], data.mocap_quat[:] = qpos, mocap_pos, mocap_quat
@@ -191,7 +232,13 @@ def _serve(descriptor: int) -> None:
             mujoco.mj_comPos(renders.model, data)
             mujoco.mj_camlight(renders.model, data)
             try:
-                connection.send(renders.render_each(data, camera, width, height, lightings))
+                images = renders.render_each(data, camera, width, height, lightings)
+                if tone is not None:
+                    from dimos.sim2.mujoco.look import toned
+
+                    connection.send(toned(images, *tone))
+                else:
+                    connection.send(images)
             except Exception as error:
                 connection.send(error)
     finally:
