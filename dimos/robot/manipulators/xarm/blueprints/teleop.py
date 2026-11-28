@@ -16,8 +16,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import movable_joints
@@ -43,6 +41,7 @@ from dimos.robot.manipulators.xarm.blueprints.basic import (
     XArmCoordinator,
     xarm_coordinator,
     xarm_gripper_task,
+    xarm_planning_model,
 )
 from dimos.robot.manipulators.xarm.config import (
     XARM_ARMS,
@@ -97,17 +96,11 @@ def xarm_jog_task(
     )
 
 
-def _arm_model(arm: XArmType, **kwargs: Any) -> RobotModelConfig:
-    """The arm's planning or IK model, its joints named ``arm/joint1`` ..."""
-    dof, robot_type = XARM_ARMS[arm]
-    return make_xarm_model_config(dof, robot_type=robot_type, robot="arm", **kwargs)
-
-
 def _keyboard_teleop(arm: XArmType, *, gripper: bool = True) -> MetaBlueprint:
     """Jog an xArm's end from the keyboard and plan its motions; in MuJoCo under
     ``--simulation``. The Lite 6's gripper has no joint, so it is not driven."""
     dof = XARM_ARMS[arm][0]
-    jog = xarm_jog_task(_arm_model(arm, add_gripper=False), f"link{dof}", timeout=0.0)
+    jog = xarm_jog_task(xarm_planning_model(arm, add_gripper=False), f"link{dof}", timeout=0.0)
     return autoconnect(
         KeyboardTeleopModule.blueprint(),
         xarm_coordinator(
@@ -119,7 +112,7 @@ def _keyboard_teleop(arm: XArmType, *, gripper: bool = True) -> MetaBlueprint:
         ),
         ManipulationModule.blueprint(
             gripper_tasks={"manipulator": "arm_gripper"} if gripper else {},
-            model=_arm_model(arm, add_gripper=True),
+            model=xarm_planning_model(arm, add_gripper=True),
             visualization={"backend": "viser"},
         ),
     )
@@ -184,7 +177,7 @@ def _vr_teleop(
                     },
                 ),
                 xarm_jog_task(
-                    _arm_model(arm, add_gripper=False), f"link{dof}", timeout=jog_timeout
+                    xarm_planning_model(arm, add_gripper=False), f"link{dof}", timeout=jog_timeout
                 ),
                 xarm_gripper_task(stream_bind={"gripper_command": "right_gripper_command"}),
                 joint_trajectory_task(
@@ -211,7 +204,7 @@ def _vr_teleop(
 coordinator_teleop_xarm7 = autoconnect(
     _vr_teleop(
         "xarm7",
-        _arm_model(
+        xarm_planning_model(
             "xarm7",
             add_gripper=True,
             tf_extra_links=xarm_link_frames(7),
@@ -224,7 +217,10 @@ coordinator_teleop_xarm7 = autoconnect(
 )
 coordinator_teleop_xarm6 = autoconnect(
     _vr_teleop(
-        "xarm6", _arm_model("xarm6", add_gripper=True), jog_timeout=0.0, trajectory_priority=10
+        "xarm6",
+        xarm_planning_model("xarm6", add_gripper=True),
+        jog_timeout=0.0,
+        trajectory_priority=10,
     )
 )
 

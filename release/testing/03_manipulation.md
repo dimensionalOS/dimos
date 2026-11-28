@@ -164,7 +164,7 @@ Expected result: the arm moves home, follows each command, and moves home again 
 
 ## 3.9 xArm7 and xArm6 planning on hardware
 
-Needs the matching real xArm7 or xArm6 with an xArm Gripper and the `manipulation` extra, which includes the xArm Python SDK. These two planner blueprints use `XArmConnection` and require `--xarmconnection.ip` or `XARMCONNECTION__IP`. They do not switch to a mock or MuJoCo under `--simulation`.
+Needs the matching real xArm7 or xArm6 with an xArm Gripper and the `manipulation` extra, which includes the xArm Python SDK. On hardware these planner blueprints use `XArmConnection` and require `--xarmconnection.ip` or `XARMCONNECTION__IP`. To check either planner in its MuJoCo scene, put `--simulation` before `run` and omit the arm address.
 
 Run each command separately with the matching arm connected, replacing the example IP with that arm's address. Clear its workspace and keep the emergency stop within reach.
 

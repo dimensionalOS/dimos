@@ -128,6 +128,9 @@ _SIM_BLUEPRINTS: dict[str, ModuleType] = {
     "coordinator_teleop_xarm6": teleop,
     "coordinator_teleop_xarm7": teleop,
     "coordinator_xarm6": basic,
+    "coordinator_xarm7": basic,
+    "xarm6_planner_coordinator": basic,
+    "xarm7_planner_coordinator": basic,
 }
 
 
@@ -157,11 +160,20 @@ def test_simulation_runs_the_arm_and_gripper_in_mujoco(
     blueprint = autoconnect(_under_simulation(_SIM_BLUEPRINTS[name], monkeypatch)[name]).solidify()
     connection = next(atom for atom in blueprint.blueprints if atom.module is MujocoArmConnection)
     sim = next(atom for atom in blueprint.blueprints if atom.module is MujocoSimModule)
+    dof = len(movable_joints(connection.kwargs["model"])) - 1
 
     assert not any(atom.module is XArmConnection for atom in blueprint.blueprints)
     assert connection.kwargs["gripper_joint"] == "arm/drive_joint"
     # The sim finds the gripper only in a scene joint past its dof.
-    assert sim.kwargs["dof"] == len(movable_joints(connection.kwargs["model"])) - 1
+    assert sim.kwargs["dof"] == dof
+    reset = sim.kwargs["reset_joint_positions"]
+    assert reset == (xarm_config.XARM6_SIM_HOME if dof == 6 else xarm_config.XARM7_SIM_HOME)
+    for planner in blueprint.blueprints:
+        if not issubclass(planner.module, ManipulationModule):
+            continue
+        model = ManipulationModuleConfig.model_validate(planner.kwargs).model
+        assert model.base_pose == xarm_config.XARM7_SIM_BASE_POSE
+        assert model.home_joints == reset
 
 
 @pytest.mark.parametrize(
