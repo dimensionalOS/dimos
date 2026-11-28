@@ -16,7 +16,6 @@
 """A simulated G1 body: its 29 joints driven by joint commands, its joint states and pelvis IMU read off the world, and mounts for a lidar and a camera."""
 
 import math
-from pathlib import Path
 
 from pydantic import Field
 
@@ -33,6 +32,7 @@ from dimos.robot.unitree.g1.g1_tf_publisher import (
     G1TfPublisherConfig,
 )
 from dimos.sim2.body import SimBody, SimBodyConfig, with_sites
+from dimos.utils.data import get_data
 
 # Its root link, the pelvis; named here so building a blueprint needs no USD read.
 G1_BODY = "g1_29dof_rev_1_0/Geometry/pelvis"
@@ -53,7 +53,7 @@ G1_ODOM_TF: dict[str, dict[str, str]] = {
 
 def g1_body_usd() -> UsdModel:
     """The G1, with its Mid-360 and D435 mounts (each x forward) and its pelvis IMU marked as Isaac Sim sites."""
-    framed = UsdModel.from_file(Path(__file__).parent / "assets" / "g1.usda").with_frames(
+    framed = UsdModel.from_file(get_data("g1_sim_usd") / "g1.usda").with_frames(
         {
             # The real Mid-360 hangs upside down under the head.
             "lidar": (G1_TORSO, _TORSO_MID360_XYZ, (math.pi, MID360_PITCH, 0.0)),
