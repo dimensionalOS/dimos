@@ -77,7 +77,7 @@ modules need glibc 2.42.
 | `opt/models` | A Hugging Face cache with the models of [`models.tsv`](models.tsv). `HF_HOME` |
 | `opt/robot_assets` | The robot descriptions of [`robot_descriptions.tsv`](robot_descriptions.tsv). `DIMOS_ROBOT_ASSETS_DIR` |
 | `opt/deno-dir`, `usr/bin/deno` | Deno and its module cache, for the relay and the cockpit. |
-| `usr/lib` | PortAudio, TurboJPEG and quadmath. |
+| `usr/lib` | PortAudio, TurboJPEG, quadmath and a link to Open3D's TBB for Numba. |
 | `licences` | What the image redistributes, and under which terms. |
 
 `AppRun` sets the variables in the table, and `HF_HUB_OFFLINE=1`. A value that is
@@ -150,7 +150,8 @@ The `check` stage stops the build when:
 - Ultralytics or one of its weight files is in the tree,
 - there is more than one `libcublasLt`,
 - a file is an LFS pointer,
-- a binary needs a library that Ubuntu 26.04 with the packages above does not have,
+- the loader cannot resolve a native executable's libraries, a required wheel
+  library is missing, or the tested Python packages or Numba's TBB backend fail to load,
 - `dimos --help`, `dimos list` or the relay with the cockpit do not run there, without
   network.
 

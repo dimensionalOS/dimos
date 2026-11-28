@@ -202,7 +202,8 @@ link_cuda() {
 
 stage_syslibs() {
   log "syslibs: system libraries from the build machine"
-  local soname path
+  local soname path site
+  site="$(site_packages)"
   rm -rf "$APPDIR/usr/lib"
   mkdir -p "$APPDIR/usr/lib"
   : > "$OUT/system-libraries.tsv"
@@ -213,8 +214,10 @@ stage_syslibs() {
     cp -L "$path" "$APPDIR/usr/lib/$soname"
     printf '%s\t%s\n' "$soname" "$(dpkg -S "$(readlink -f "$path")" | cut -d: -f1)" >> "$OUT/system-libraries.tsv"
   done
-  # sitecustomize.py makes ctypes.util.find_library see them.
-  cp "$HERE/sitecustomize.py" "$(site_packages)/"
+  # Numba loads TBB by soname. Reuse the copy shipped by the Open3D wheel.
+  ln -sr "$site/open3d/libtbb.so.12" "$APPDIR/usr/lib/libtbb.so.12"
+  # sitecustomize.py makes ctypes.util.find_library see the bundled libraries.
+  cp "$HERE/sitecustomize.py" "$site/"
   ls "$APPDIR/usr/lib"
 }
 
