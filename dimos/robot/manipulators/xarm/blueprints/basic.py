@@ -32,6 +32,7 @@ from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, MetaBluepr
 from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators._modeling import joint_names
 from dimos.robot.manipulators.common.blueprints import planner
@@ -224,26 +225,28 @@ def xarm_coordinator(
     )
 
 
-def _planner_coordinator(arm: XArmType, *, simulated: bool = False) -> MetaBlueprint:
-    """Plan and run motions of an xArm with the xArm Gripper; see ``xarm_coordinator``."""
+def xarm_planning_model(arm: XArmType, **kwargs: Any) -> RobotModelConfig:
+    """Planning and IK model for a single arm in its default scene."""
     dof, robot_type = XARM_ARMS[arm]
+    if SIMULATED and arm in XARM_SIM_HOMES:
+        kwargs.setdefault("base_pose", XARM7_SIM_BASE_POSE)
+        kwargs.setdefault("home_joints", XARM_SIM_HOMES[arm])
+    return make_xarm_model_config(dof, robot_type=robot_type, robot="arm", **kwargs)
+
+
+def _planner_coordinator(arm: XArmType) -> MetaBlueprint:
+    """Plan and run motions of an xArm with the xArm Gripper; see ``xarm_coordinator``."""
     return autoconnect(
         planner(
-            model=make_xarm_model_config(
-                dof,
-                robot_type=robot_type,
-                robot="arm",
-                base_pose=XARM7_SIM_BASE_POSE if simulated else None,
-                home_joints=list(XARM_SIM_HOMES[arm]) if simulated else None,
-            ),
+            model=xarm_planning_model(arm),
             gripper_tasks={"manipulator": "arm_gripper"},
         ),
-        xarm_coordinator(arm, simulated=simulated),
+        xarm_coordinator(arm, simulated=SIMULATED),
     )
 
 
-xarm7_planner_coordinator = autoconnect(_planner_coordinator("xarm7", simulated=SIMULATED))
-xarm6_planner_coordinator = autoconnect(_planner_coordinator("xarm6", simulated=SIMULATED))
+xarm7_planner_coordinator = autoconnect(_planner_coordinator("xarm7"))
+xarm6_planner_coordinator = autoconnect(_planner_coordinator("xarm6"))
 
 # The real arm has no gripper here; the MuJoCo scene's comes with the arm.
 coordinator_xarm7 = autoconnect(xarm_coordinator("xarm7", gripper=SIMULATED, simulated=SIMULATED))

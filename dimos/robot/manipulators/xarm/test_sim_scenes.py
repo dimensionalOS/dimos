@@ -14,6 +14,8 @@
 
 """xArm MuJoCo scenes: arm weight cancelled within actuator limits, shapes rest on the table."""
 
+from pathlib import Path
+
 import mujoco
 import numpy as np
 import pytest
@@ -22,6 +24,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.xarm.blueprints.basic import xarm_connection
 from dimos.robot.manipulators.xarm.config import XArmType
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
+from dimos.simulation.utils.xml_parser import build_joint_mappings
 from dimos.utils.data import LfsPath
 
 pytestmark = pytest.mark.self_hosted
@@ -79,17 +82,22 @@ def test_default_sim_start_pose_clears_the_table(arm: XArmType) -> None:
     )
     model = mujoco.MjModel.from_xml_path(sim.kwargs["address"])
     data = mujoco.MjData(model)
-    reset = sim.kwargs.get("reset_joint_positions") or []
-    data.qpos[: len(reset)] = reset
+    reset = sim.kwargs["reset_joint_positions"]
+    mappings = build_joint_mappings(Path(sim.kwargs["address"]), model)
+    for mapping, angle in zip(mappings[: len(reset)], reset, strict=True):
+        assert mapping.qpos_adr is not None
+        data.qpos[mapping.qpos_adr] = angle
     mujoco.mj_forward(model, data)
 
     table = model.geom("table_top").id
+    arm_root = model.body_rootid[model.body("link_base").id]
     touching_bodies = {
         model.body(model.geom_bodyid[geom]).name
-        for i in range(data.ncon)
-        if table in (data.contact[i].geom1, data.contact[i].geom2)
-        for geom in (data.contact[i].geom1, data.contact[i].geom2)
-    } - {"world", "green_block"}
+        for contact in data.contact
+        if table in contact.geom
+        for geom in contact.geom
+        if model.body_rootid[model.geom_bodyid[geom]] == arm_root
+    }
     assert not touching_bodies
 
 
