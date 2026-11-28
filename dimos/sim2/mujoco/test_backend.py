@@ -117,6 +117,22 @@ def test_a_robot_mounted_in_a_scene_is_still_free_to_move(
     assert data.body("dog/base").xpos[2] < started - 0.5, "the dog is welded to the room"
 
 
+def test_a_robot_that_is_not_free_stays_on_its_mount(
+    world: UsdModel, robot_model: UsdModel
+) -> None:
+    model = compile_world(
+        usd_layer(world), [SimulatedRobot("dog", robot_model, free=False)]
+    ).compile()
+
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    started = data.body("dog/base").xpos[2]
+    for _ in range(300):
+        mujoco.mj_step(model, data)
+
+    assert data.body("dog/base").xpos[2] > started - 0.5, "the dog fell off its mount"
+
+
 def test_a_robot_mounted_under_a_frame_still_reports_its_own_pose(robot_model: UsdModel) -> None:
     """The frame a robot hangs off is jointed and shortens to the robot's name; it must not take the robot's place."""
     mount = 2.0

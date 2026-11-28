@@ -113,8 +113,10 @@ def compile_world(
             )
     for key in list(world.keys) if robots else ():
         world.delete(key)
+    fixed = {robot.robot_id for robot in robots if not robot.free}
     for robot_id in owners:
-        _free_if_unjointed(world, robot_id)
+        if robot_id not in fixed:
+            _free_if_unjointed(world, robot_id)
     return world
 
 
