@@ -1,6 +1,7 @@
 <?xml version="1.0"?>
-<!-- One OpenYAM v2 arm with the Anvil gripper as bare masses: the model Anvil's
-     gravity compensation uses (anvil-robotics SDK 2.0.0b9). Fingers are fixed closed. -->
+<!-- One OpenYAM v2 arm with its gripper as bare masses, for gravity compensation. Links 2 to 6 are
+     the mean of two arms' gravity fits (docs/capabilities/manipulation/arm_calibration.md), each lumped
+     with what it carries: link6 holds the gripper, its fingers and a wrist camera. -->
 <robot name="openyam">
   <link name="base_link">
     <inertial>
@@ -25,7 +26,7 @@
   </joint>
   <link name="link2">
     <inertial>
-      <origin xyz="0.156500918 0.0169758057 0.000293073" rpy="0 0 0"/>
+      <origin xyz="0.225772911 -0.0186774379 0.000293073" rpy="0 0 0"/>
       <mass value="1.24434"/>
       <inertia ixx="0.000683304" ixy="0.00000000199503" ixz="0.00000000368337" iyy="0.0121902" iyz="0.00000000320067" izz="0.0121318"/>
     </inertial>
@@ -39,8 +40,8 @@
   </joint>
   <link name="link3">
     <inertial>
-      <origin xyz="-0.0963507918 -0.0355265402 -0.0000771271338" rpy="0 0 0"/>
-      <mass value="1.22947334"/>
+      <origin xyz="-0.174433377 -0.0501090796 -0.000105629513" rpy="0 0 0"/>
+      <mass value="0.898559071"/>
       <inertia ixx="0.00120255" ixy="-0.000772865" ixz="-0.0000148502" iyy="0.0100088" iyz="-0.00000919678" izz="0.0100264"/>
     </inertial>
   </link>
@@ -53,8 +54,8 @@
   </joint>
   <link name="link4">
     <inertial>
-      <origin xyz="-0.0172346674 -0.0265532195 0.000106646061" rpy="0 0 0"/>
-      <mass value="0.673213752"/>
+      <origin xyz="-0.0117889277 -0.0271520036 0.00013609323" rpy="0 0 0"/>
+      <mass value="0.527035603"/>
       <inertia ixx="0.000845853" ixy="-0.000363695" ixz="-0.0000103957" iyy="0.000713327" iyz="-0.00000468386" izz="0.00108188"/>
     </inertial>
   </link>
@@ -67,8 +68,8 @@
   </joint>
   <link name="link5">
     <inertial>
-      <origin xyz="0.00087215762 -0.0075561134 0.0408136765" rpy="0 0 0"/>
-      <mass value="0.39491887"/>
+      <origin xyz="-0.0255813445 -0.0472290424 0.0547185002" rpy="0 0 0"/>
+      <mass value="0.411727707"/>
       <inertia ixx="0.000222572" ixy="-0.000000360083" ixz="-0.000000227026" iyy="0.000194234" iyz="-0.00001249" izz="0.000171365"/>
     </inertial>
   </link>
@@ -81,8 +82,8 @@
   </joint>
   <link name="link6">
     <inertial>
-      <origin xyz="0.00125289685124 0.0111037437594 -0.06596259975" rpy="0 0 0"/>
-      <mass value="0.573229843134"/>
+      <origin xyz="0.00410321257 0.00591195399 0.0469252171" rpy="0 0 0"/>
+      <mass value="1.25176964"/>
       <inertia ixx="0.000649266" ixy="0.0000100035" ixz="-0.00000369568" iyy="0.000517148" iyz="0.0000722837" izz="0.00034546"/>
     </inertial>
   </link>
@@ -93,37 +94,19 @@
     <axis xyz="0 0 1"/>
     <limit lower="-2.35619" upper="1.8326" effort="10" velocity="10"/>
   </joint>
-  <link name="hand">
-    <inertial>
-      <origin xyz="0 0.002 0.03" rpy="0 0 0"/>
-      <mass value="0.7"/>
-      <inertia ixx="0.0002473" ixy="0.000001" ixz="0.000001" iyy="0.00001763" iyz="0.000001" izz="0.0002521"/>
-    </inertial>
-  </link>
+  <link name="hand"/>
   <joint name="hand_joint" type="fixed">
     <parent link="link6"/>
     <child link="hand"/>
     <origin xyz="0 0 0.05" rpy="0 0 1.5708"/>
   </joint>
-  <link name="right_finger">
-    <inertial>
-      <origin xyz="0.0064528 -0.01702 0.0219685" rpy="0 0 0"/>
-      <mass value="0.03602545343277134"/>
-      <inertia ixx="0.0000023749999999999997" ixy="0.000001" ixz="0.000001" iyy="0.0000023749999999999997" iyz="0.000001" izz="0.00000075"/>
-    </inertial>
-  </link>
+  <link name="right_finger"/>
   <joint name="right_finger_joint" type="fixed">
     <parent link="hand"/>
     <child link="right_finger"/>
     <origin xyz="0 -0.006 0.015" rpy="0 0 0"/>
   </joint>
-  <link name="left_finger">
-    <inertial>
-      <origin xyz="0.0064528 0.01702 0.0219685" rpy="0 0 0"/>
-      <mass value="0.03602545343277134"/>
-      <inertia ixx="0.0000023749999999999997" ixy="0.000001" ixz="0.000001" iyy="0.0000023749999999999997" iyz="0.000001" izz="0.00000075"/>
-    </inertial>
-  </link>
+  <link name="left_finger"/>
   <joint name="left_finger_joint" type="fixed">
     <parent link="hand"/>
     <child link="left_finger"/>

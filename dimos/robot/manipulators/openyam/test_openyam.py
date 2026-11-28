@@ -120,13 +120,13 @@ def test_openyam_jaw_is_joint7_and_joint8_copies_it() -> None:
     assert follower.mimic == ("arm/joint7", 1.0, 0.0)
 
 
-def test_openyam_gravity_torques_are_the_v2_arms_with_the_anvil_gripper() -> None:
+def test_openyam_gravity_torques_are_the_calibrated_v2_arms() -> None:
     arm = PhysicalModel(OPENYAM.gravity_model, list(OPENYAM_ARM_JOINTS), gravity_comp=True)
 
     torques = arm.gravity(np.asarray([0.3, 0.8, 0.6, -0.3, 0.9, 0.4]))
 
-    # N m, from Anvil's own model of the arm at this pose.
-    np.testing.assert_allclose(torques, [0.0, -1.1034, 8.8588, 1.6676, 0.2627, -0.0061], atol=1e-4)
+    # N m, the mean of two arms' gravity fits at this pose.
+    np.testing.assert_allclose(torques, [0.0, -0.9340, 8.5915, 1.5807, 0.3329, 0.0484], atol=1e-4)
 
 
 def test_make_openyam_model_config_preserves_explicit_home() -> None:
