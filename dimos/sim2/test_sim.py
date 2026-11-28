@@ -17,6 +17,9 @@ import sys
 
 import pytest
 
+# Before importing the sim, whose spawn points register a USD schema on import.
+pytest.importorskip("pxr")
+
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.hardware_module import HardwareSpec
 from dimos.robot.assets.model import UsdModel
@@ -26,8 +29,6 @@ from dimos.sim2.assets.logistics import LOGISTICS
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.sim import SimulatedRobotSpec, SimWorld, compose_usds, meeting, sim
 from dimos.sim2.spec import SimulatedRobot, validate
-
-pytest.importorskip("pxr")
 
 
 def _room() -> str:
