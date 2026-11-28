@@ -281,6 +281,7 @@ all_modules = {
     "flow-base-connection": "dimos.robot.flowbase.connection.FlowBaseConnection",
     "flow-base-coordinator": "dimos.control.blueprints.mobile.FlowBaseCoordinator",
     "front-camera": "dimos.teleop.hosted.blueprints.cloudflare.FrontCamera",
+    "g1-body-sim": "dimos.robot.unitree.g1.body_sim.G1BodySim",
     "g1-collection-recorder": "dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop.G1CollectionRecorder",
     "g1-high-level-dds-sdk": "dimos.robot.unitree.g1.effectors.high_level.dds_sdk.G1HighLevelDdsSdk",
     "g1-high-level-web-rtc": "dimos.robot.unitree.g1.effectors.high_level.webrtc.G1HighLevelWebRtc",
