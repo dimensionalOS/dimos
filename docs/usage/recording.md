@@ -76,7 +76,9 @@ stored ID or a shorter unique prefix, not the full upload ID.
 
 Inspection and replay open SQLite recordings and their external SQLite payload
 and vector files read-only. Python callers can use `SqliteStore(path=path, read_only=True)`
-for the same behavior. Readers include committed samples in a live recorder's
+for the same behavior. Recording previews refuse an output that refers to the input database,
+a SQLite sidecar, an external SQLite blob or vector database, or a file-backed payload.
+This includes symlinks and hard links. Readers include committed samples in a live recorder's
 write-ahead log. SQLite may create coordination files beside a recording in a writable
 directory. A closed recording on read-only media, or one sealed by removing write
 permission from the file and its directory, can be opened without these files.

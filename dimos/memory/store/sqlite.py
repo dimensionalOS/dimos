@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import os
+from pathlib import Path
 import sqlite3
 from typing import Annotated, Any
 
@@ -22,6 +24,7 @@ from pydantic import BeforeValidator
 
 from dimos.memory.backend import Backend
 from dimos.memory.blobstore.base import BlobStore
+from dimos.memory.blobstore.file import FileBlobStore, blob_files
 from dimos.memory.blobstore.sqlite import SqliteBlobStore
 from dimos.memory.codecs.base import codec_id
 from dimos.memory.observationstore.sqlite import SqliteObservationStore
@@ -35,6 +38,8 @@ from dimos.memory.utils.sqlite import (
 from dimos.memory.utils.validation import validate_identifier
 from dimos.memory.vectorstore.base import VectorStore
 from dimos.memory.vectorstore.sqlite import SqliteVectorStore
+
+SQLITE_SIDECARS = ("-wal", "-shm", "-journal")
 
 
 class SqliteStoreConfig(StoreConfig):
@@ -214,6 +219,33 @@ class SqliteStore(Store):
         )
 
         return backend
+
+    def backing_files(self, *, include_blob_files: bool = True) -> Iterator[Path]:
+        """Local storage used by this recording, without opening any external component."""
+        databases = {Path(self.config.path)}
+        blob_streams: list[tuple[Path, str]] = []
+        for name in self._registry.list_streams():
+            stored = self._registry.get(name)
+            if stored is None:
+                continue
+            for key in ("blob_store", "vector_store"):
+                component = stored.get(key)
+                if not component:
+                    continue
+                config = component["config"]
+                if component["class"] in (qual(SqliteBlobStore), qual(SqliteVectorStore)):
+                    if path := config.get("path"):
+                        databases.add(Path(path))
+                elif include_blob_files and component["class"] == qual(FileBlobStore):
+                    blob_streams.append((Path(config["root"]), name))
+
+        for db in databases:
+            yield db
+            resolved = db.resolve()
+            for suffix in SQLITE_SIDECARS:
+                yield Path(f"{resolved}{suffix}")
+        for directory, name in blob_streams:
+            yield from blob_files(directory, name)
 
     def list_streams(self) -> list[str]:
         db_names = set(self._registry.list_streams())

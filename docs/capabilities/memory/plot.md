@@ -62,7 +62,7 @@ from dimos.memory.vis.plot.elements import Series
 from dimos.memory.vis.plot.plot import Plot
 from dimos.utils.data import get_data
 
-store = SqliteStore(path=get_data("go2_bigoffice.db"))
+store = SqliteStore(path=get_data("go2_bigoffice.db"), read_only=True)
 images = store.streams.color_image
 
 plot = Plot()

@@ -14,11 +14,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 from dimos.memory.blobstore.base import BlobStore, BlobStoreConfig
 from dimos.memory.utils.validation import validate_identifier
+
+
+def blob_files(root: Path, stream_name: str) -> Iterator[Path]:
+    """Files written by FileBlobStore for one stream."""
+    validate_identifier(stream_name)
+    for path in (root / stream_name).glob("*.bin"):
+        if path.stem.isdigit() and path.is_file():
+            yield path
 
 
 class FileBlobStoreConfig(BlobStoreConfig):
@@ -66,11 +75,4 @@ class FileBlobStore(BlobStore):
             raise KeyError(f"No blob for stream={stream_name!r}, key={key}") from None
 
     def size_bytes(self, stream_name: str) -> int | None:
-        validate_identifier(stream_name)
-        stream_dir = self._root / stream_name
-        if not stream_dir.is_dir():
-            return 0
-        # Only integer-keyed files — the layout put() writes.
-        return sum(
-            p.stat().st_size for p in stream_dir.glob("*.bin") if p.is_file() and p.stem.isdigit()
-        )
+        return sum(p.stat().st_size for p in blob_files(self._root, stream_name))

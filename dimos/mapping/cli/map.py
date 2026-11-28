@@ -316,6 +316,7 @@ def _log_reconstruction(
 
 
 def main(
+    ctx: typer.Context,
     dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
     lidar_stream: str = typer.Option(
         "lidar", "--lidar", help="Lidar point-cloud stream to reconstruct"
@@ -450,7 +451,7 @@ def main(
     """
     import rerun as rr
 
-    from dimos.memory.cli.dataset import open_cli_dataset
+    from dimos.memory.cli.dataset import check_recording_output, open_cli_dataset
     from dimos.memory.transform import QualityWindow, SpeedLimit
     from dimos.memory.utils.progress import progress
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -463,6 +464,7 @@ def main(
     from dimos.visualization.rerun.init import rerun_init
 
     db_path, store = open_cli_dataset(dataset)
+    ctx.with_resource(store)
     # A read-only recording does not grow a stream on request: refuse one it lacks
     # at its option, before the map is built.
     needed = {"--lidar": lidar_stream}
@@ -473,12 +475,20 @@ def main(
     for option, name in needed.items():
         if name not in store.streams:
             recorded = ", ".join(store.list_streams())
-            store.stop()
             raise typer.BadParameter(
                 f"The recording has no {name!r} stream. Recorded: {recorded}", param_hint=option
             )
     if out is None:
         out = Path.cwd() / f"{db_path.stem}.rrd"
+    check_recording_output(db_path, out, store=store)
+    if export_cloud:
+        out_path = Path.cwd() / f"{db_path.stem}_map.db"
+        check_recording_output(db_path, out_path, store=store)
+    if export:
+        from dimos.navigation.go2.loop_closure.premap import MAP_SUFFIX
+
+        map_path = Path.cwd() / f"{db_path.stem}{MAP_SUFFIX}"
+        check_recording_output(db_path, map_path, store=store)
     if export_cloud or full_pgo:
         pgo = True
 
@@ -725,7 +735,6 @@ def main(
         from dimos.mapping.relocalization.utils import map_cloud_stream, named_map_frame
         from dimos.memory.store.sqlite import SqliteStore
 
-        out_path = Path.cwd() / f"{db_path.stem}_map.db"
         out_path.unlink(missing_ok=True)
         # A .db stream name is a SQL identifier, so no slashes
         stream = map_cloud_stream(map_name, slashed=False)
@@ -738,9 +747,7 @@ def main(
 
     if export:
         from dimos.navigation.go2.loop_closure.pgo_map import PGOMap
-        from dimos.navigation.go2.loop_closure.premap import MAP_SUFFIX
 
-        map_path = Path.cwd() / f"{db_path.stem}{MAP_SUFFIX}"
         print(f"exporting PGO graph to {map_path}...")
         # the live mapper over every frame, so a map built here is one the robot would build
         world_map = PGOMap(voxel_size=voxel)

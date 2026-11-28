@@ -23,6 +23,8 @@ when the path is already resolved.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+import os
 from pathlib import Path
 import re
 from typing import TYPE_CHECKING
@@ -151,6 +153,49 @@ def open_cli_dataset(dataset: str | Path, *, param_hint: str = "DATASET") -> tup
         return path, open_store(path)
     except (FileNotFoundError, AmbiguousDatasetError, ValueError) as exc:
         raise typer.BadParameter(str(exc), param_hint=param_hint) from exc
+
+
+def check_recording_output(
+    source: str | Path, output: str | Path | None, *, store: Store | None = None
+) -> None:
+    """Refuse output that aliases any input file or a reserved SQLite sidecar."""
+    if output is None:
+        return
+    from dimos.memory.store.sqlite import SQLITE_SIDECARS, SqliteStore
+
+    target = Path(output)
+    try:
+        target_stat = target.stat()
+    except FileNotFoundError:
+        target_stat = None
+    resolved = target.resolve()
+    if target_stat is None and not resolved.name.endswith(SQLITE_SIDECARS):
+        return  # A new file cannot alias an existing payload.
+
+    def aliases(path: Path) -> bool:
+        if target_stat is None:
+            return path.resolve() == resolved
+        try:
+            return os.path.samestat(target_stat, path.stat())
+        except FileNotFoundError:
+            return False
+
+    collides = aliases(Path(source))
+    is_sqlite = isinstance(store, SqliteStore) or (store is None and Path(source).suffix != ".mcap")
+    if not collides and is_sqlite:
+        manager = (
+            nullcontext(store)
+            if isinstance(store, SqliteStore)
+            else SqliteStore(path=source, read_only=True)
+        )
+        with manager as reader:
+            collides = any(
+                aliases(p) for p in reader.backing_files(include_blob_files=target_stat is not None)
+            )
+    if collides:
+        import typer
+
+        raise typer.BadParameter(f"Output {output} refers to the input recording {source}")
 
 
 def open_dataset(dataset: str | Path) -> Store:

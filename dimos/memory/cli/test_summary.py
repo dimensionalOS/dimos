@@ -20,6 +20,7 @@ import sqlite3
 
 import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 from typer.testing import CliRunner
 
 from dimos.cli.dimos import main as cli_app
@@ -215,3 +216,89 @@ def test_sealed_recording_still_reads_committed_wal(tmp_path: Path) -> None:
         finally:
             tmp_path.chmod(0o755)
             path.chmod(0o644)
+
+
+@pytest.mark.parametrize(
+    ("command", "alias", "option"),
+    [
+        ("map replay --no-gui", "source.db", "--out"),
+        ("map replay-marker --no-gui", "symlink.rrd", "--out"),
+        ("map global --no-gui", "source.rrd", ""),
+        ("map global --no-gui", "source.map.db", "--export"),
+        ("map global --no-gui", "source_map.db", "--export-cloud"),
+        ("map view --stream lidar", "hardlink.rrd", "--out"),
+        ("mem rerun --no-gui", "source.rrd", ""),
+    ],
+)
+def test_recording_output_cannot_alias_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str, alias: str, option: str
+) -> None:
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "source.db"
+    with SqliteStore(path=source) as store:
+        cloud = PointCloud2.from_numpy(np.ones((1, 3)), frame_id="world", timestamp=1.0)
+        store.stream("lidar", PointCloud2).append(cloud, ts=1.0)
+        if "replay-marker" in command:
+            from dimos.msgs.sensor_msgs.Image import Image
+
+            store.stream("color_image", Image)
+    output = tmp_path / alias
+    if alias == "symlink.rrd":
+        output.symlink_to(source)
+    elif output != source:
+        output.hardlink_to(source)
+    args = [*command.split(), str(source)]
+    if command.startswith("map global"):
+        args.extend(["--device", "CPU:0", "--block-count", "16"])
+    if option:
+        args.append(option)
+    if option == "--out":
+        args.append(str(output))
+    before = source.read_bytes()
+    result = CliRunner().invoke(cli_app, args)
+    assert source.read_bytes() == before
+    assert result.exit_code == 2, result.output
+    assert "input recording" in result.output
+    with open_dataset(source) as reader:
+        assert reader.stream("lidar").count() == 1
+
+
+def test_rerun_preserves_recording_components(tmp_path: Path, mocker: MockerFixture) -> None:
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+    source, blobs, vectors = (tmp_path / f"{name}.db" for name in ("scan", "blobs", "vectors"))
+    files = tmp_path / "payloads"
+    embedding = Embedding(vector=np.array([1.0, 0.0], dtype=np.float32))
+    with SqliteStore(path=source) as writer:
+        cloud = PointCloud2.from_numpy(np.ones((1, 3)), frame_id="world", timestamp=1.0)
+        writer.stream(
+            "lidar",
+            PointCloud2,
+            blob_store=SqliteBlobStore(path=str(blobs)),
+            vector_store=SqliteVectorStore(path=str(vectors)),
+        ).append(cloud, ts=1.0, embedding=embedding)
+        writer.stream("notes", str, blob_store=FileBlobStore(root=str(files))).append("sample")
+
+    for db in (source, blobs, vectors):
+        with closing(sqlite3.connect(db)) as conn:
+            conn.execute("PRAGMA journal_mode=DELETE")
+    (blob_file,) = (files / "notes").glob("*.bin")
+    originals = {p: p.read_bytes() for p in (source, blobs, vectors, blob_file)}
+    out = tmp_path / "preview.rrd"
+    sink = mocker.patch("rerun.save", side_effect=AssertionError("sink opened"))
+    for target in (blobs, vectors, blob_file):
+        out.hardlink_to(target)
+        try:
+            result = CliRunner().invoke(
+                mem_app, ["rerun", str(source), "--out", str(out), "--no-gui"]
+            )
+            assert {p: p.read_bytes() for p in originals} == originals
+            sink.assert_not_called()
+            assert result.exit_code == 2 and "input recording" in result.output
+        finally:
+            out.unlink()
+    with open_dataset(source) as reader:
+        assert len(reader.stream("lidar").search(embedding, k=1).first().data) == 1
+        assert reader.stream("notes").first().data == "sample"

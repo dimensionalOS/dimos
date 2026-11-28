@@ -182,7 +182,11 @@ def main(
     import rerun as rr
 
     from dimos.mapping.voxels.module import VoxelMapTransformer
-    from dimos.memory.cli.dataset import open_cli_dataset, stream_payload_types
+    from dimos.memory.cli.dataset import (
+        check_recording_output,
+        open_cli_dataset,
+        stream_payload_types,
+    )
     from dimos.memory.transform import throttle
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -193,9 +197,9 @@ def main(
     src_path, store = open_cli_dataset(dataset)
     if out is None:
         out = Path.cwd() / f"{src_path.stem}.rrd"
-    cam_info = _camera_info_static()
-
     with store:
+        check_recording_output(src_path, out, store=store)
+        cam_info = _camera_info_static()
         # Resolve which streams to voxelize: all PointCloud2 streams, or the
         # explicit --map-source subset. Validate up front so typos fail fast.
         pc_streams = [n for n, t in stream_payload_types(store).items() if t is PointCloud2]

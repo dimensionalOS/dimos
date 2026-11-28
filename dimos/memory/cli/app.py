@@ -49,4 +49,5 @@ def rerun(
     from dimos.memory.cli.render import render_store
 
     _, store = open_cli_dataset(path, param_hint="PATH")
-    render_store(store, out=out, seconds=seconds, no_gui=no_gui, root=root)
+    with store:
+        render_store(store, out=out, seconds=seconds, no_gui=no_gui, root=root)

@@ -42,8 +42,9 @@ from dimos.mapping.relocalization.cloud_relocalizer import (
 )
 from dimos.mapping.relocalization.replay import main as replay_main
 from dimos.mapping.relocalization.utils import load_premap
+from dimos.memory.cli.dataset import check_recording_output
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.utils.data import get_data
+from dimos.utils.data import get_data, resolve_named_path
 from dimos.utils.executable import find_executable
 
 if TYPE_CHECKING:
@@ -459,6 +460,12 @@ def view(name: str, probes: list[Probe], out: str | None) -> None:
 
     from dimos.visualization.rerun.init import rerun_init
 
+    if out is not None:
+        from pathlib import Path
+
+        ds = DATASETS[name]
+        check_recording_output(get_data(ds.recording), out)
+        check_recording_output(resolve_named_path(ds.premap, Path(ds.premap).suffix), out)
     premap, _ = fixtures(name)
     rerun_init("dimos relocalize eval")
     if out is not None:

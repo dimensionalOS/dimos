@@ -20,7 +20,7 @@ from dimos.memory.vis.space.elements import Point
 we init our recording, investigate available streams
 
 ```python title="Python" session=mem
-store = SqliteStore(path=get_data("go2_bigoffice.db"))
+store = SqliteStore(path=get_data("go2_bigoffice.db"), read_only=True)
 
 for name, stream in store.streams.items():
    print(stream.summary())

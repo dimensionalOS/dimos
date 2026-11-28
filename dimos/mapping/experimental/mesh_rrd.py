@@ -24,6 +24,7 @@ import typer
 from dimos.mapping.experimental.mesh import Mesh, MeshColours
 from dimos.mapping.experimental.simplify import parse_chain
 from dimos.mapping.ray_tracing.transformer import RayTraceMap, pose_from_tf
+from dimos.memory.cli.dataset import check_recording_output
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.memory.transform import FnTransformer
@@ -95,6 +96,7 @@ def main(
             )
 
     db = dataset if dataset.endswith(".db") else str(get_data(f"{dataset}.db"))
+    check_recording_output(db, out)
     rr.init("mesh")
     if out is not None and live:
         rr.spawn(connect=False, executable_path=find_executable("rerun"))

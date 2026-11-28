@@ -28,6 +28,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from dimos.memory.cli.dataset import check_recording_output
 from dimos.utils.executable import find_executable, spawn_detached
 
 if TYPE_CHECKING:
@@ -133,9 +134,11 @@ def render_store(
     from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
     from dimos.visualization.rerun.init import rerun_init
 
+    src = getattr(store.config, "path", None)
     if out is None:
-        src = getattr(store.config, "path", None) or "store"
-        out = str(Path(src).with_suffix(".rrd"))
+        out = str(Path(src or "store").with_suffix(".rrd"))
+    if src:
+        check_recording_output(src, out, store=store)
 
     base = root.strip("/") if root else ""
 
