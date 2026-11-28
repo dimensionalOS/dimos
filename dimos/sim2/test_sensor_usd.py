@@ -13,23 +13,27 @@
 # limitations under the License.
 
 
-from typing import Any
+from typing import Any, get_origin, get_type_hints
 
 import pytest
 
+from dimos.core.hardware_module import HardwareModule
+from dimos.core.stream import In, Out
 from dimos.robot.assets.usd_utils.frames import usd_frame_names
 
 pytest.importorskip("pxr")
 
 _SENSORS = [
     ("imu", {"left/sim_imu/imu_link"}),
+    ("livox", {"left/mid360/lidar_link", "left/mid360/lidar_link/imu_link"}),
 ]
 
 
 def _sensor(kind: str) -> Any:
     from dimos.sim2.imu import SimImu
+    from dimos.sim2.livox import LivoxSim
 
-    sensor = {"imu": SimImu}[kind]
+    sensor = {"imu": SimImu, "livox": LivoxSim}[kind]
     return sensor(instance_name=f"left/{kind}")
 
 
@@ -42,3 +46,29 @@ def test_a_sensor_serves_its_usd_under_its_namespace(kind: str, frames: set[str]
         sensor.stop()
 
     assert frames <= usd_frame_names(usd), f"{kind}'s layer names {sorted(usd_frame_names(usd))}"
+
+
+def _streams(module: type, *, direction: type) -> dict[str, type]:
+    hints = get_type_hints(module)
+    return {name: hint.__args__[0] for name, hint in hints.items() if get_origin(hint) is direction}
+
+
+def test_a_livox_is_hardware_sending_what_a_real_mid360_sends() -> None:
+    from dimos.hardware.sensors.lidar.livox.module import Mid360
+    from dimos.sim2.livox import LivoxSim
+    from dimos.sim2.sim import SimSensor
+
+    assert issubclass(LivoxSim, HardwareModule)
+    assert _streams(LivoxSim, direction=Out) == {
+        **_streams(SimSensor, direction=Out),
+        **_streams(Mid360, direction=Out),
+    }
+    # It reads the world where the real one reads its network.
+    assert _streams(LivoxSim, direction=In) == _streams(SimSensor, direction=In)
+    # Namespaced, it puts its namespace on its IMU frame too.
+    lidar = _sensor("livox")
+    try:
+        assert lidar.frame_id == "left/mid360/lidar_link"
+        assert lidar.imu_frame_id == "left/mid360/lidar_link/imu_link"
+    finally:
+        lidar.stop()

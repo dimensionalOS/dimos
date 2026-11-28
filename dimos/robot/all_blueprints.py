@@ -322,6 +322,7 @@ all_modules = {
     "keyboard-teleop": "dimos.robot.unitree.keyboard_teleop.KeyboardTeleop",
     "keyboard-teleop-module": "dimos.teleop.keyboard.keyboard_teleop_module.KeyboardTeleopModule",
     "le-robot-policy-module": "dimos.imitation.policy.lerobot.module.LeRobotPolicyModule",
+    "livox-sim": "dimos.sim2.livox.LivoxSim",
     "local-planner-native": "dimos.navigation.local_planner.native.LocalPlannerNative",
     "logistics": "dimos.sim2.scene.Logistics",
     "m20-camera-relay": "dimos.robot.deeprobotics.m20.camera.M20CameraRelay",
