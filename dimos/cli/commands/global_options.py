@@ -16,8 +16,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import inspect
+import sys
 import types
 from typing import Any, get_args, get_origin
 
@@ -25,7 +26,10 @@ from pydantic import ValidationError
 import typer
 from typer.core import TyperGroup
 
-from dimos.core.global_config import GlobalConfig, get_global_config
+from dimos.core.global_config import DEFAULT_SIMULATOR, GlobalConfig, get_global_config
+
+BLUEPRINT_COMMANDS = {"run", "rerun-bridge"}
+OPTIONAL_VALUE_FLAGS = {"--simulation": DEFAULT_SIMULATOR, "--record": "sqlite"}
 
 
 class GlobalOptionsGroup(TyperGroup):
@@ -34,14 +38,65 @@ class GlobalOptionsGroup(TyperGroup):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         # These two commands merge root flags with blueprint-specific options.
-        commands = [
-            cmd for name, cmd in self.commands.items() if name not in {"run", "rerun-bridge"}
-        ]
+        commands = [cmd for name, cmd in self.commands.items() if name not in BLUEPRINT_COMMANDS]
         while commands:
             command = commands.pop()
             command.context_class = _GlobalOptionsContext
             if isinstance(command, TyperGroup):
                 commands.extend(command.commands.values())
+
+    def normalize_argv(self, argv: list[str]) -> list[str]:
+        """Expand bare settings only in the root or a blueprint's option list."""
+        if not any(arg in OPTIONAL_VALUE_FLAGS for arg in argv[1:]):
+            return argv.copy()
+        value_options = {
+            opt
+            for param in self.params
+            if not getattr(param, "is_flag", False)
+            for opt in param.opts
+        }
+        out = argv[:1]
+        at_root = True
+        index = 1
+        while index < len(argv):
+            arg = argv[index]
+            if arg == "--":
+                # A root terminator ends global options, then Click enters the
+                # next command. A terminator within that command protects its tail.
+                if (
+                    not at_root
+                    or index + 1 == len(argv)
+                    or argv[index + 1] not in BLUEPRINT_COMMANDS
+                ):
+                    break
+                out.append(arg)
+                index += 1
+                arg = argv[index]
+            if at_root and not arg.startswith("-"):
+                if arg not in BLUEPRINT_COMMANDS:
+                    break
+                at_root = False
+            out.append(arg)
+            index += 1
+            following = argv[index] if index < len(argv) else None
+            if arg in OPTIONAL_VALUE_FLAGS and (
+                following is None
+                or following.startswith("-")
+                or (at_root and following in self.commands)
+            ):
+                out.append(OPTIONAL_VALUE_FLAGS[arg])
+            elif at_root and arg in value_options and following is not None:
+                # A root option's value may itself spell a command name.
+                out.append(following)
+                index += 1
+        return [*out, *argv[index:]]
+
+    def main(self, args: Sequence[str] | None = None, *rest: Any, **kwargs: Any) -> Any:
+        if args is None:
+            sys.argv = self.normalize_argv(sys.argv)
+        else:
+            args = self.normalize_argv(["dimos", *args])[1:]
+        return super().main(args, *rest, **kwargs)
 
 
 class _GlobalOptionsContext(typer.Context):

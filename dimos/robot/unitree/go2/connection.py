@@ -28,6 +28,7 @@ from reactivex.observable import Observable
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
+from dimos.core.global_config import SIMULATORS
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
@@ -199,7 +200,9 @@ def make_connection(
             velocity_api=velocity_api,
         )
     else:
-        raise ValueError(f"Unknown simulator {cfg.g.simulation!r}. Choose from: mujoco, dimsim")
+        raise ValueError(
+            f"Unknown simulator {cfg.g.simulation!r}. Choose from: {', '.join(SIMULATORS)}"
+        )
 
 
 _T = TypeVar("_T")

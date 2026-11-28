@@ -20,8 +20,8 @@ up, in the order that defines `dimos --help`.
 
 from __future__ import annotations
 
+from functools import cache
 import os
-import sys
 
 # Native thread-pool hygiene. Every OpenMP/BLAS runtime sizes its pool to all
 # cores and spin-waits at barriers (libgomp: ~300k pause iterations per region;
@@ -60,7 +60,11 @@ from dimos.cli.commands.bake import bake
 from dimos.cli.commands.cameracalibrate import cameracalibrate
 from dimos.cli.commands.data import data_app
 from dimos.cli.commands.docs import docs
-from dimos.cli.commands.global_options import GlobalOptionsGroup, create_dynamic_callback
+from dimos.cli.commands.global_options import (
+    OPTIONAL_VALUE_FLAGS,
+    GlobalOptionsGroup,
+    create_dynamic_callback,
+)
 from dimos.cli.commands.graph import graph
 from dimos.cli.commands.host import host_app
 from dimos.cli.commands.imitation import imitation_app
@@ -74,7 +78,6 @@ from dimos.cli.commands.tuis import agentspy, humancli, lcmspy, spy, top
 from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
 from dimos.cli.vqa import app as vqa_app
-from dimos.core.global_config import DEFAULT_SIMULATOR
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 
 main = typer.Typer(
@@ -83,34 +86,22 @@ main = typer.Typer(
     no_args_is_help=True,
 )
 
-# Flags with an optional value. A following subcommand is not its argument.
-OPTIONAL_VALUE_FLAGS = {"--simulation": DEFAULT_SIMULATOR, "--record": "sqlite"}
+
+@cache
+def _standalone_group() -> GlobalOptionsGroup:
+    root = typer.main.get_group(main)
+    assert isinstance(root, GlobalOptionsGroup)
+    return root
 
 
 def normalize_argv(argv: list[str]) -> list[str]:
-    out: list[str] = []
-    for arg, nxt in zip(argv, [*argv[1:], None], strict=False):
-        out.append(arg)
-        default = OPTIONAL_VALUE_FLAGS.get(arg)
-        if default is None:
-            continue
-        if nxt is None or nxt.startswith("-"):
-            out.append(default)
-            continue
-        root = typer.main.get_group(main)
-        if nxt in root.commands:
-            # In "run robot --simulation status", status is a value. Insert the
-            # default only if Click would consume this word as the root subcommand.
-            with root.make_context(
-                argv[0], [*out[1:], default, nxt], resilient_parsing=True
-            ) as ctx:
-                if not ctx.args:
-                    out.append(default)
-    return out
+    """Normalize an explicit argument list outside CLI dispatch."""
+    if not any(arg in OPTIONAL_VALUE_FLAGS for arg in argv[1:]):
+        return argv.copy()
+    return _standalone_group().normalize_argv(argv)
 
 
 def cli_main() -> None:
-    sys.argv = normalize_argv(sys.argv)
     main()
 
 
