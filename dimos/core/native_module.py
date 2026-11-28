@@ -41,6 +41,7 @@ Example usage::
 
 from __future__ import annotations
 
+from collections import deque
 import enum
 import functools
 import json
@@ -118,17 +119,28 @@ _NATIVE_TO_PYTHON_LEVELS = {
     "critical": "critical",
 }
 
+_NO_MESSAGE = "<no message>"
+
 # convert to Rust levels
 _PYTHON_TO_RUST_LEVELS = {
     "DEBUG": "debug",
     "INFO": "info",
     "WARNING": "warn",
+    "WARN": "warn",
     "ERROR": "error",
     "CRITICAL": "error",
+    "FATAL": "error",
+    "TRACE": "trace",
 }
 
 
-_NO_MESSAGE = "<no message>"
+def native_log_filter(*, ready_target: str | None = None) -> str:
+    """Translate the Python log level, keeping a native readiness event visible."""
+    level = _PYTHON_TO_RUST_LEVELS.get(os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info")
+    directives = f"{level},{ZENOH_LOG_DIRECTIVES}"
+    if ready_target and level in {"warn", "error"}:
+        directives += f",{ready_target}=info"
+    return directives
 
 
 def _check_legacy_cwd(values: Any) -> Any:
@@ -207,6 +219,69 @@ class NativeModuleConfig(ModuleConfig):
 
     def _ignore_fields(self) -> set[str]:
         return set(NativeModuleConfig.model_fields) - self.base_fields
+
+    def prepare_executable(
+        self, cwd: str | None, exe: Path, module: str, *, build_native: bool
+    ) -> Path:
+        """Build the executable if needed and surface the tail of a failed build."""
+        if self.build_command is None:
+            if not exe.exists():
+                raise FileNotFoundError(
+                    f"[{module}] Executable not found: {exe}. "
+                    "Set build_command in config to auto-build, or build it manually."
+                )
+            return exe
+
+        if exe.exists() and not self.auto_build and not build_native:
+            return exe
+
+        logger.info(
+            "Building native module",
+            executable=str(exe),
+            build_command=self.build_command,
+        )
+        build_start = time.perf_counter()
+        proc = subprocess.Popen(
+            self.build_command,
+            shell=True,
+            cwd=cwd,
+            env={**os.environ, **self.extra_env},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        assert proc.stdout is not None
+        output: deque[str] = deque(maxlen=20)
+        for raw in proc.stdout:
+            line = raw.decode("utf-8", errors="replace").rstrip()
+            if line:
+                output.append(line)
+                logger.info(line, module=module)
+        returncode = proc.wait()
+        build_elapsed = time.perf_counter() - build_start
+
+        if returncode != 0:
+            summary = output.pop() if output else self.build_command
+            message = (
+                f"{module} build failed after {build_elapsed:.2f}s (exit {returncode}): {summary}"
+            )
+            if summary != self.build_command:
+                message += f"\nCommand: {self.build_command}"
+            if output:
+                message += "\nPreceding build output:\n" + "\n".join(output)
+            logger.error(message, module=module)
+            raise RuntimeError(message)
+        if not exe.exists():
+            raise FileNotFoundError(
+                f"[{module}] Build command succeeded but executable still not found: {exe}"
+            )
+
+        logger.info(
+            "Build command completed",
+            module=module,
+            executable=str(exe),
+            duration_sec=round(build_elapsed, 3),
+        )
+        return exe
 
     def to_config_dict(self) -> dict[str, Any]:
         """Module-specific config fields as a plain dict, for the stdin JSON."""
@@ -296,7 +371,7 @@ class NativeModule(Module):
     def _prepare_native(self, *, force: bool = False) -> None:
         if self._prepared and not force:
             return
-        if not self._executable:
+        if not self._executable or (force and self.config.source_dir is not None):
             self._cwd, self._executable = self.config.resolve_paths()
         self._prepared = False
         self._maybe_build()
@@ -307,8 +382,7 @@ class NativeModule(Module):
 
         env["DIMOS_TRANSPORT"] = global_config.transport
 
-        level = _PYTHON_TO_RUST_LEVELS.get(os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info")
-        env["RUST_LOG"] = f"{level},{ZENOH_LOG_DIRECTIVES}"
+        env["RUST_LOG"] = native_log_filter()
         return env
 
     def _session(self) -> SessionConfig:
@@ -544,56 +618,13 @@ class NativeModule(Module):
         stream.close()
 
     def _maybe_build(self) -> None:
-        exe = Path(self._executable)
-
-        if self.config.build_command is None:
-            if not exe.exists():
-                raise FileNotFoundError(
-                    f"[{self._module_label}] Executable not found: {exe}. "
-                    "Set build_command in config to auto-build, or build it manually."
-                )
-            return
-
-        if exe.exists() and not self.config.auto_build and not self.config.g.build_native:
-            return
-
-        logger.info(
-            "Building native module",
-            executable=str(exe),
-            build_command=self.config.build_command,
-        )
-        build_start = time.perf_counter()
-        proc = subprocess.Popen(
-            self.config.build_command,
-            shell=True,
-            cwd=self._cwd,
-            env={**os.environ, **self.config.extra_env},
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        assert proc.stdout is not None
-        for raw in iter(proc.stdout.readline, b""):
-            line = raw.decode("utf-8", errors="replace").rstrip()
-            if line:
-                logger.info(line, module=self._module_label)
-        proc.wait()
-        build_elapsed = time.perf_counter() - build_start
-
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"[{self._module_label}] Build command failed after {build_elapsed:.2f}s "
-                f"(exit {proc.returncode}): {self.config.build_command}"
+        self._executable = str(
+            self.config.prepare_executable(
+                self._cwd,
+                Path(self._executable),
+                self._module_label,
+                build_native=self.config.g.build_native,
             )
-        if not exe.exists():
-            raise FileNotFoundError(
-                f"[{self._module_label}] Build command succeeded but executable still not found: {exe}"
-            )
-
-        logger.info(
-            "Build command completed",
-            module=self._module_label,
-            executable=str(exe),
-            duration_sec=round(build_elapsed, 3),
         )
 
     def _collect_topics(self) -> dict[str, str]:

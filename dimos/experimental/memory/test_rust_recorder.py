@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
+import socket
 from typing import Any, TypeVar
 
 import pytest
@@ -22,12 +24,14 @@ import pytest
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import In
+from dimos.experimental.memory.rust_cli_recorder import prepare_rust_recorder
 from dimos.experimental.memory.rust_recorder import (
     RustMcapStoreConfig,
     RustRecorder,
     RustRecorderConfig,
     RustSqliteStoreConfig,
     RustStreamSpec,
+    _source_digest,
 )
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.recording import OnExisting
@@ -370,3 +374,103 @@ def test_replay_never_prepares_native_sources_or_process(tmp_path, make_recorder
     spawn.assert_not_called()
     start.assert_called_once_with(recorder)
     assert not path.exists()
+
+
+@pytest.mark.parametrize("launch", ["cli", "module"])
+def test_managed_recorder_checks_sources_before_reusing_a_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_recorder: Any, launch: str
+) -> None:
+    source = tmp_path / "checkout"
+    source.mkdir()
+    (source / "Cargo.lock").write_text("locked input")
+    package = tmp_path / "package"
+    executable = package / "bin/dimos-memory-recorder"
+    executable.parent.mkdir(parents=True)
+    executable.touch(mode=0o755)
+    (source / "result").symlink_to(package, target_is_directory=True)
+    managed = source / "result/bin/dimos-memory-recorder"
+    monkeypatch.setattr(
+        RustRecorderConfig, "resolve_paths", lambda self: (str(source), str(managed))
+    )
+    monkeypatch.setenv("PATH", str(tmp_path / "no-nix"))
+    recorder = make_recorder(RustRecorder)
+
+    def prepare() -> Path:
+        if launch == "cli":
+            return prepare_rust_recorder()
+        recorder.build()
+        return Path(recorder._argv({})[0])
+
+    # A managed executable from before the source check carries no provenance.
+    with pytest.raises(RuntimeError, match="exit 127"):
+        prepare()
+    shutil.copytree(source, package / "recorder-source", ignore=shutil.ignore_patterns("result"))
+    (source / "result-tests").symlink_to(package, target_is_directory=True)
+    pinned = prepare()
+    assert pinned == executable
+    (source / "result").unlink()
+    (source / "result").symlink_to(tmp_path / "replacement", target_is_directory=True)
+    assert pinned.is_file()
+    (source / "result").unlink()
+    (source / "result").symlink_to(package, target_is_directory=True)
+    executable.chmod(0o644)
+    with pytest.raises(RuntimeError, match="exit 127"):
+        prepare()
+    executable.chmod(0o755)
+    with pytest.raises(RuntimeError, match="exit 127"):
+        prepare_rust_recorder(build_native=True)
+
+    # A newly added input and an edited lockfile each invalidate the same package.
+    added = source / "build.rs"
+    added.write_text("fn main() {}")
+    with pytest.raises(RuntimeError, match="exit 127"):
+        prepare()
+    added.unlink()
+    (source / "Cargo.lock").write_text("edited input")
+    with pytest.raises(RuntimeError, match="exit 127"):
+        prepare()
+
+
+def test_recorder_source_uses_only_owner_execute_permission(tmp_path):
+    source = tmp_path / "lib.rs"
+    source.touch()
+    source.chmod(0o444)
+    regular = _source_digest(tmp_path)
+    source.chmod(0o654)
+    assert _source_digest(tmp_path) == regular
+    source.chmod(0o744)
+    assert _source_digest(tmp_path) != regular
+
+
+def test_recorder_source_includes_empty_directories(tmp_path):
+    empty_tree = _source_digest(tmp_path)
+    directory = tmp_path / "assets"
+    directory.mkdir()
+    with_directory = _source_digest(tmp_path)
+    assert with_directory != empty_tree
+    directory.chmod(0o700)
+    assert _source_digest(tmp_path) == with_directory
+
+
+def test_recorder_source_keeps_the_literal_symlink_target(tmp_path):
+    link = tmp_path / "input"
+    link.symlink_to("./absent")
+    original = _source_digest(tmp_path)
+    link.unlink()
+    link.symlink_to("absent")
+    assert _source_digest(tmp_path) != original
+
+
+def test_recorder_source_refuses_special_files(tmp_path, monkeypatch):
+    # A relative socket path also works in long checkout or temporary directories.
+    monkeypatch.chdir(tmp_path)
+    with socket.socket(socket.AF_UNIX) as special:
+        special.bind("input.sock")
+        with pytest.raises(RuntimeError, match="input.sock"):
+            _source_digest(tmp_path)
+
+
+def test_recorder_source_refuses_an_unreadable_directory(tmp_path, mocker):
+    mocker.patch("os.scandir", side_effect=PermissionError)
+    with pytest.raises(PermissionError):
+        _source_digest(tmp_path)

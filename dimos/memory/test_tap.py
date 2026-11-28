@@ -202,7 +202,7 @@ def test_recording_delegates_to_rust_session(
     monkeypatch.setattr(global_config, "record_topics", "*")
 
     with tap.recording(coordinator):
-        session.start.assert_called_once_with()
+        session.start.assert_called_once_with(None)
 
     make_plan.assert_called_once_with(transports)
     create_session.assert_called_once_with("plan")
