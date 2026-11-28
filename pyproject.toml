@@ -902,6 +902,8 @@ ignore = [
     "dimos/manipulation/manipulation_module.py",
     "dimos/manipulation/test_roboplan.py",
     "misc/DimSim/scenes/apartment/objects/manifest.json",
+    # A robot as a USD layer: text on purpose, so a change to one is a reviewable diff.
+    "dimos/robot/*/*/assets/*.usda",
     "misc/DimSim/src/engine.js",
     # Generated golden vectors (web/shared/fixtures/gen.ts); grows per panel kind.
     "web/shared/fixtures/manifests.json",
