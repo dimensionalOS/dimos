@@ -373,6 +373,66 @@ def test_launch_applies_module_defaults_at_the_selected_parser_leaves(
     assert "module_defaults" not in remembered
 
 
+def test_layered_collection_masks_survive_edits_and_relaunch(
+    client: TestClient, launch_targets: AsyncMock, mocker: MockerFixture
+) -> None:
+    launch_targets.side_effect = None
+    launch_targets.return_value = {"reader": ["accounts", "providers"]}
+    mocker.patch.object(launches, "launch_env_defaults", return_value={})
+    spawn = mocker.patch.object(launches, "_spawn", return_value=2_000_000_000)
+    saved = {
+        "reader": {
+            "accounts": {
+                "Keep": {"token": "dummy-A", "label": "old"},
+                "keep": {"token": "dummy-B"},
+                "drop": {},
+            },
+            "providers": [{"token": "dummy-C", "label": "old"}],
+        }
+    }
+
+    def post(edits: dict[str, Any]) -> Any:
+        return client.post(
+            "/active/launch-with-defaults",
+            json={"blueprint": "demo", "module_defaults": saved, "config": {"modules": edits}},
+        )
+
+    edits = post({}).json()["config"]["modules"]
+    assert edits["reader"]["providers"][0]["token"] == launches.HIDDEN
+    edits["reader"]["providers"][0]["label"] = "new"
+    edits["reader"]["accounts"]["Keep"]["label"] = "•"
+    edits["reader"]["accounts"]["keep"]["token"] = "dummy-new"
+    edits["reader"]["accounts"].pop("drop")
+    edits["reader"]["accounts"]["added"] = {"token": launches.HIDDEN}
+    response = post(edits)
+    assert response.status_code == 200, response.text
+    for action in ("launch", "relaunch"):
+        if action == "relaunch":
+            assert client.post("/active/relaunch").status_code == 200
+        argv, _, _, env = spawn.call_args.args
+        assert not any("dummy-" in arg for arg in argv)
+        assert json.loads(env["READER__ACCOUNTS"]) == {
+            "Keep": {"token": "dummy-A", "label": "•"},
+            "keep": {"token": "dummy-new"},
+            "added": {},
+        }
+        assert json.loads(env["READER__PROVIDERS"]) == [{"token": "dummy-C", "label": "new"}]
+    new_entry = {"providers": [{"label": "first", "token": launches.HIDDEN}]}
+    assert launches.LaunchConfig(
+        modules={"reader": new_entry}, module_defaults={}
+    ).with_module_defaults({"reader": ["providers"]}).modules == {
+        "reader": {"providers": [{"label": "first"}]}
+    }
+    # The masked second entry moves to a position whose original entry had no token.
+    del saved["reader"]["providers"][0]["token"]
+    saved["reader"]["providers"].append({"token": "dummy-D", "label": "second"})
+    edits = post({}).json()["config"]["modules"]
+    edits["reader"]["providers"].reverse()
+    spawn.reset_mock()
+    assert post(edits).status_code == 400
+    spawn.assert_not_called()
+
+
 def test_layered_launch_keeps_bullet_text_and_only_preserves_masked_secrets(
     client: TestClient, launch_targets: AsyncMock, mocker: MockerFixture
 ) -> None:

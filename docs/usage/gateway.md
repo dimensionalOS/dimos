@@ -20,7 +20,9 @@ The catalog reads blueprints from the checkout it serves. It uses the default op
    with a separate `module_defaults` object. The explicit value wins for each CLI field. Nested model fields
    keep untouched siblings. Dictionary and list fields are replaced as a whole. A null clears the saved field.
    Bullet-only text is literal in ordinary fields; for a secret field it stands for the saved value, and
-   sets nothing when none is saved (an empty `module_defaults` included). `POST /active/launch` has no
+   sets nothing when none is saved (an empty `module_defaults` included). Within a dictionary the exact key identifies
+   the saved secret. When editing a list with multiple entries, supply its secret values again so a mask cannot
+   restore a different entry’s value. `POST /active/launch` has no
    saved layer and launches its config as sent.
 4. **Secrets** (keys like `*_key`, `*token*`) reach dimos through the environment, never its command line, and come
    back as `•••`.

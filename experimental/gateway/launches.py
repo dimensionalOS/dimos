@@ -93,7 +93,11 @@ class LaunchConfig:
         names = {_option_name(name.replace("/", "_")): name for name in targets}
         secret_fields = [
             _secret_path(path, targets)
-            for path in [*self.secrets, *secret_paths({}, self.module_defaults, targets=targets)]
+            for path in [
+                *self.secrets,
+                *secret_paths({}, self.module_defaults, targets=targets),
+                *secret_paths({}, self.modules, targets=targets),
+            ]
         ]
         for saved, layer in ((True, self.module_defaults), (False, self.modules)):
             seen: set[tuple[str, str]] = set()
@@ -108,7 +112,12 @@ class LaunchConfig:
                         _option_name(leaf)
                         for leaf in leaves
                         if is_secret_name(leaf)
-                        or _contains_secret(_secret_path(f"{root}.{leaf}", targets), secret_fields)
+                        or (
+                            secret_fields
+                            and _contains_secret(
+                                _secret_path(f"{root}.{leaf}", targets), secret_fields
+                            )
+                        )
                     }
                 )
                 for path, value in configured_fields(
@@ -120,6 +129,17 @@ class LaunchConfig:
                     seen.add((root, key))
                     if edit_secrets is not None and key in edit_secrets and _is_hidden(value):
                         continue
+                    if (
+                        edit_secrets is not None
+                        and key in edit_secrets
+                        and isinstance(value, (dict, list))
+                    ):
+                        value = _restore_collection_masks(
+                            value,
+                            values.get(key),
+                            _secret_path(f"{root}.{key}", targets),
+                            secret_fields,
+                        )
                     if value is None:
                         values.pop(key, None)
                     else:
@@ -197,7 +217,7 @@ def secret_paths(
     explicit = [_secret_path(path, targets) for path in listed]
 
     def visit(value: Any, path: str, name: str) -> None:
-        comparable = _secret_path(path, targets)
+        comparable = _secret_path(path, targets) if explicit else path
         if is_secret_name(name) or any(_within(comparable, parent) for parent in explicit):
             paths.append(path)
         elif isinstance(value, dict):
@@ -321,18 +341,57 @@ def without_secrets(
 def redact(
     global_: dict[str, Any], modules: ModuleValues, paths: list[str]
 ) -> tuple[dict[str, Any], ModuleValues]:
-    def visit(value: Any, path: str) -> Any:
-        if value is not None and any(_within(path, secret) for secret in paths):
-            return HIDDEN
-        if isinstance(value, dict):
-            return {
-                key: visit(child, f"{path}.{key}" if path else key) for key, child in value.items()
-            }
-        if isinstance(value, list):
-            return [visit(child, f"{path}.{index}") for index, child in enumerate(value)]
-        return value
+    return _redact(global_, "", paths), {
+        module: _redact(fields, module, paths) for module, fields in modules.items()
+    }
 
-    return visit(global_, ""), {module: visit(fields, module) for module, fields in modules.items()}
+
+def _redact(value: Any, path: str, paths: list[str]) -> Any:
+    if value is not None and any(_within(path, secret) for secret in paths):
+        return HIDDEN
+    if isinstance(value, dict):
+        return {
+            key: _redact(child, f"{path}.{key}" if path else key, paths)
+            for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact(child, f"{path}.{index}", paths) for index, child in enumerate(value)]
+    return value
+
+
+def _restore_collection_masks(
+    edit: Any, saved: Any, path: str, secrets: list[str], *, ambiguous: bool = False
+) -> Any:
+    """Restore exact dictionary keys. A changed multi-entry list has no stable item identity."""
+    if _is_hidden(edit) and any(_within(path, secret) for secret in secrets):
+        if ambiguous:
+            raise LaunchConfigError(f"resubmit secret values for the edited list at {path}")
+        return saved
+    if isinstance(edit, dict):
+        previous = saved if isinstance(saved, dict) else {}
+        result = {}
+        for key, value in edit.items():
+            child = _restore_collection_masks(
+                value, previous.get(key), f"{path}.{key}", secrets, ambiguous=ambiguous
+            )
+            if child is not None or value is None:
+                result[key] = child
+        return result
+    if isinstance(edit, list):
+        original = saved if isinstance(saved, list) else []
+        if original and not (len(original) == len(edit) == 1):
+            ambiguous = ambiguous or edit != _redact(original, path, secrets)
+        return [
+            _restore_collection_masks(
+                value,
+                original[i] if i < len(original) else None,
+                f"{path}.{i}",
+                secrets,
+                ambiguous=ambiguous,
+            )
+            for i, value in enumerate(edit)
+        ]
+    return edit
 
 
 def flag_fields() -> set[str]:
