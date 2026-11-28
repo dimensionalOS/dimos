@@ -344,6 +344,9 @@ def test_an_arm_stopped_outside_dimos_takes_no_command_until_its_errors_are_clea
 
     r.module.clear_errors()
     resets = len(r.sdk.sent("MotionCtrl_1"))
+    # Joint targets need a reading at most 0.1 s old: move on the first one since the clear.
+    count = len(r.readings())
+    wait_until(lambda: len(r.readings()) > count, timeout=2.0, interval=0.01)
     r.move(joint1=0.1)
     assert r.sdk.sent("JointCtrl")[-1][0] == 5_730
     # Already taking commands: a second clear does not reset the arm again.

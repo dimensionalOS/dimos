@@ -23,62 +23,28 @@ relocalizer. In Rerun, `loaded_map` appears once a fix lands, on top of
 
 from typing import Any
 
-from reactivex.disposable import CompositeDisposable
-
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.relocalization.module import PremapModule
-from dimos.memory.replay import ReplayStream
-from dimos.memory.replay_progress import ReplayProgress
-from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.replay_module import ReplayModule, ReplayModuleConfig
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.utils.data import resolve_named_path
 from dimos.visualization.vis_module import vis_module
 
 WORLD = "odom"
 
 
-class RecordingPlayerConfig(ModuleConfig):
+class RecordingPlayerConfig(ReplayModuleConfig):
     dataset: str = "go2_mid360_sf_office_outdoors_2026-05-29"  # recording stem or path; `.db`, LFS-fetched on miss
-    stream: str = "pointlio_lidar"
-    speed: float = 1.0
-    seek: float | None = None
-    duration: float | None = None
 
 
-class RecordingPlayer(Module):
+class RecordingPlayer(ReplayModule):
     """Replay a recording's lidar and tf exactly as the sensors published them."""
 
     config: RecordingPlayerConfig
-    lidar: Out[PointCloud2]
+    pointlio_lidar: Out[PointCloud2]
     tf: Out[TFMessage]
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-        path = resolve_named_path(self.config.dataset, ".db")
-        store = SqliteStore(path=str(path), must_exist=True)
-        subscriptions = CompositeDisposable()
-        # One disposer drains the subscriptions before closing their store,
-        # even when stop() is called concurrently or setup fails partway through.
-        self.register_disposable(CompositeDisposable(subscriptions, store))
-        store.start()
-        replay = store.replay(
-            speed=self.config.speed,
-            seek=self.config.seek,
-            duration=self.config.duration,
-        )
-        lidar: ReplayStream[PointCloud2] = replay.stream(self.config.stream)
-        tf: ReplayStream[TFMessage] = replay.stream("tf")
-        progress = ReplayProgress(str(path))
-        progress.start(replay, [lidar, tf])
-        subscriptions.add(progress.track(lidar.observable()).subscribe(self.lidar.publish))
-        subscriptions.add(progress.track(tf.observable()).subscribe(self.tf.publish))
-        progress.seal()
 
 
 def _fine_points(cloud: Any) -> Any:
@@ -106,7 +72,7 @@ def _view() -> Any:
 
 
 relocalize_mid360 = autoconnect(
-    RecordingPlayer.blueprint(),
+    RecordingPlayer.blueprint().remappings([(RecordingPlayer, "pointlio_lidar", "lidar")]),
     RayTracingVoxelMap.blueprint(voxel_size=0.1, world_frame=WORLD, global_emit_every=5).remappings(
         [(RayTracingVoxelMap, "loaded_map", "loaded_map_unused")]
     ),

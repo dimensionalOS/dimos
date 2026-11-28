@@ -159,6 +159,39 @@ def test_pull_lfs_archive_initializes_lfs_before_pull(
     ]
 
 
+def test_installed_package_finds_archive_added_after_clone(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    lfs_dir = tmp_path / "data/.lfs"
+    lfs_dir.mkdir(parents=True)
+    mocker.patch.object(data, "get_project_root", return_value=tmp_path)
+    mocker.patch.object(data, "_get_lfs_dir", return_value=lfs_dir)
+
+    def refresh(
+        command: list[str], *, cwd: Path, **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        assert command == ["git", "pull", "--ff-only", "origin", "main"]
+        (cwd / "data/.lfs/sample.tar.gz").write_bytes(b"new archive")
+        return subprocess.CompletedProcess(command, 0)
+
+    mocker.patch.object(data.subprocess, "run", side_effect=refresh)
+
+    assert data._pull_lfs_archive("sample").read_bytes() == b"new archive"
+
+
+def test_source_checkout_missing_archive_does_not_fetch(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    mocker.patch.object(data, "DIMOS_PROJECT_ROOT", tmp_path)
+    mocker.patch.object(data, "get_project_root", return_value=tmp_path)
+    mocker.patch.object(data, "_get_lfs_dir", return_value=tmp_path / "data/.lfs")
+    run = mocker.patch.object(data.subprocess, "run")
+
+    with pytest.raises(FileNotFoundError, match="absent"):
+        data._pull_lfs_archive("absent")
+    run.assert_not_called()
+
+
 def test_resolve_named_path_appends_the_suffix_to_a_path(tmp_path: Path) -> None:
     (tmp_path / "premap.map.db").touch()
     assert resolve_named_path(tmp_path / "premap", ".map.db") == tmp_path / "premap.map.db"

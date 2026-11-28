@@ -13,12 +13,12 @@ Expected result: each blueprint starts, processes the replay data, and displays 
 
 ## 2.2 MuJoCo simulation
 
-The first runs pull the MuJoCo scenes and models from LFS and download the MuJoCo Menagerie robot descriptions from GitHub. Allow the initial asset downloads to finish before checking the viewers.
+The first runs download missing MuJoCo scenes and models from DimOS Git LFS, including the Unitree meshes in the `mujoco_menagerie` archive. Allow the downloads to finish before checking the viewers.
 
 ```bash
 uv run dimos --simulation run unitree-go2
 uv run dimos --simulation run unitree-go2-agentic
-uv run dimos --simulation run unitree-g1-sim
+uv run dimos --simulation run unitree-g1
 ```
 
 * With `unitree-go2` running, click a visible point on the mapped floor in the Rerun 3D view. Clicking empty background/grid space only selects the view and sends no goal. The robot walks to the selected point, and the planner logs `arrived=True`.

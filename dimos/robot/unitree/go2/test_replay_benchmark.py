@@ -49,8 +49,7 @@ PERF_EVENTS = os.environ.get("DIMOS_BENCH_PERF_EVENTS") if METRICS_PATH else Non
 def _expected_counts(db_path: str) -> dict[str, int]:
     """Per-stream message totals straight from the DB.
 
-    Mirrors ReplayConnection's stream-name fallback (mid360-era recordings use
-    go2_lidar/go2_odom, older ones lidar/odom).
+    Names the streams Go2Replay plays (lidar, odom), or the mid360-era go2_lidar/go2_odom.
     """
     from dimos.memory.store.sqlite import SqliteStore
 
@@ -204,7 +203,7 @@ def _perf_counts(path: Path, events: list[str]) -> tuple[dict[str, float], float
 @pytest.mark.timeout(900)
 def test_go2_replay_realtime_load() -> None:
     """Run `dimos --replay run unitree-go2 --go2connection.replay-exit=true` to completion."""
-    from dimos.memory.replay import resolve_db_path
+    from dimos.memory.cli.dataset import resolve_db_path
 
     db_path = str(resolve_db_path(REPLAY_DB))  # LFS pull/extract on miss
     expected = _expected_counts(db_path)
