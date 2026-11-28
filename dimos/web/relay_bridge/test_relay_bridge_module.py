@@ -38,10 +38,10 @@ import time
 from typing import Any
 import zlib
 
-import certifi
 import numpy as np
 from pydantic import ValidationError
 import pytest
+from requests.utils import DEFAULT_CA_BUNDLE_PATH
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -1023,7 +1023,7 @@ def test_discovered_ephemeral_cert_is_refused_off_loopback(monkeypatch) -> None:
 
 def test_relay_ca_reaches_discovery_and_connect(monkeypatch, tmp_path: Path) -> None:
     ca = str(tmp_path / "ca.pem")
-    Path(ca).write_bytes(Path(certifi.where()).read_bytes())
+    Path(ca).write_bytes(Path(DEFAULT_CA_BUNDLE_PATH).read_bytes())
     seen: list[tuple[Any, ...]] = []
     client = FakeClient()
 
@@ -1280,7 +1280,7 @@ def test_relay_ca_must_be_an_existing_file_for_the_relay_it_is_used_with(tmp_pat
     ca.touch()
     with pytest.raises(BlueprintConfigError, match="relay_ca"):
         parser.parse(["--relay-ca", str(ca)], environ={}, global_overrides=external)
-    ca.write_bytes(Path(certifi.where()).read_bytes())
+    ca.write_bytes(Path(DEFAULT_CA_BUNDLE_PATH).read_bytes())
     parser.parse(["--relay-ca", str(ca)], environ={}, global_overrides=external)
 
 
