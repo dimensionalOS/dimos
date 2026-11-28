@@ -69,24 +69,43 @@ class MavlinkConnection:
         self.flying_to_target = False
 
     def connect(self) -> bool:
-        """Connect to drone via MAVLink."""
+        """Connect to the vehicle, returning False on failure."""
+        try:
+            self.connect_or_raise()
+        except ConnectionError as exc:
+            logger.error(str(exc))
+            return False
+        return True
+
+    def connect_or_raise(self) -> None:
+        """Open the link and wait for a heartbeat from its selected vehicle."""
         try:
             logger.info(f"Connecting to {self.connection_string}")
             self.mavlink = mavutil.mavlink_connection(self.connection_string)
-            if self.mavlink.wait_heartbeat(timeout=30) is None:
-                raise TimeoutError("No MAVLink heartbeat received within 30 seconds")
+            deadline = time.monotonic() + 30
+            while (remaining := deadline - time.monotonic()) > 0:
+                # The log reader's blocking recv_match can wait indefinitely at EOF.
+                msg = self.mavlink.recv_match(blocking=False)
+                if msg is None:
+                    time.sleep(min(remaining, 0.05))
+                elif (
+                    msg.get_type() == "HEARTBEAT"
+                    and self.mavlink.probably_vehicle_heartbeat(msg)
+                    and self.mavlink.target_system
+                    and msg.get_srcSystem() == self.mavlink.target_system
+                ):
+                    break
+            else:
+                raise TimeoutError("No vehicle heartbeat received within 30 seconds")
             self.connected = True
             logger.info(f"Connected to system {self.mavlink.target_system}")
-
             self.update_telemetry()
-            return True
-        except Exception as e:
-            logger.error(f"Connection failed: {e}")
+        except Exception as exc:
             try:
                 self.disconnect()
             except Exception as close_error:
                 logger.warning(f"Failed to close MAVLink connection: {close_error}")
-            return False
+            raise ConnectionError(f"MAVLink connection failed: {exc}") from exc
 
     def update_telemetry(self, timeout: float = 0.1) -> None:
         """Update telemetry data from available messages."""

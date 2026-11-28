@@ -269,8 +269,7 @@ dimos --replay run drone-basic
 
 Set `--droneconnectionmodule.connection-string` to `replay` or a connection
 string supported by your installed pymavlink. A blank value fails configuration.
-A live run requires a heartbeat within 30 seconds. If opening the endpoint or
-waiting for its heartbeat fails, startup stops before video starts.
+After opening the link, startup waits up to 30 seconds for a heartbeat from the selected vehicle. Ground-station heartbeats do not satisfy this check. An opening, read or timeout error stops startup before video and reports the cause.
 
 - Check Android and computer are on same network
 - Verify IP address in RosettaDrone matches computer

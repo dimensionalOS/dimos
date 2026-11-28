@@ -118,10 +118,7 @@ class DroneConnectionModule(Module):
             self.connection = MavlinkConnection(
                 self.config.connection_string, outdoor=self.config.outdoor
             )
-            if not self.connection.connect():
-                raise ConnectionError(
-                    f"Failed to connect to MAVLink endpoint {self.config.connection_string}"
-                )
+            self.connection.connect_or_raise()
 
             self.video_stream = DJIDroneVideoStream(port=self.config.video_port)
 

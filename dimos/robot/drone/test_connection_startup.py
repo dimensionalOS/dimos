@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from itertools import count
 from typing import TYPE_CHECKING
 
 import pytest
@@ -41,28 +42,44 @@ def test_start_reports_connection_failure(mocker: MockerFixture) -> None:
         side_effect=ConnectionRefusedError("connection refused"),
     )
     video = mocker.patch("dimos.robot.drone.connection_module.DJIDroneVideoStream")
-    module = DroneConnectionModule(connection_string="tcp:localhost:5760")
+    module = DroneConnectionModule(connection_string="test-link")
     try:
-        with pytest.raises(ConnectionError, match="MAVLink"):
+        with pytest.raises(ConnectionError, match="MAVLink") as exc:
             module.start()
+        assert isinstance(exc.value.__cause__, ConnectionRefusedError)
         video.assert_not_called()
     finally:
         module.stop()
 
 
-def test_heartbeat_timeout_closes_connection_and_allows_retry(mocker: MockerFixture) -> None:
-    link = mocker.patch("dimos.robot.drone.mavlink_connection.mavutil.mavlink_connection")
-    first, second = mocker.Mock(), mocker.Mock()
-    first.wait_heartbeat.return_value = None
-    second.recv_match.return_value = None
-    link.side_effect = [first, second]
-    conn = MavlinkConnection("udp:localhost:14550")
+@pytest.mark.parametrize("input_kind", ["ground-station", "empty"])
+def test_heartbeat_timeout_closes_connection_and_allows_retry(
+    mocker: MockerFixture, input_kind: str
+) -> None:
+    clock = mocker.patch("dimos.robot.drone.mavlink_connection.time")
+    clock.monotonic.side_effect = count(0, 5)
+    factory = mocker.patch("dimos.robot.drone.mavlink_connection.mavutil.mavlink_connection")
+    first, second = mocker.Mock(), mocker.Mock(target_system=1)
+    station, vehicle = mocker.Mock(), mocker.Mock()
+    for msg in (station, vehicle):
+        msg.get_type.return_value = "HEARTBEAT"
+    vehicle.get_srcSystem.return_value = 1
+    first.recv_match.return_value = station if input_kind == "ground-station" else None
+    first.probably_vehicle_heartbeat.return_value = False
+    second.recv_match.side_effect = [station, vehicle]
+    second.probably_vehicle_heartbeat.side_effect = [False, True]
+    factory.side_effect = [first, second]
+    conn = MavlinkConnection("test-link")
+    mocker.patch.object(conn, "update_telemetry")
+
     assert not conn.connect()
     assert not conn.connected
     first.close.assert_called_once_with()
+    assert 1 <= first.recv_match.call_count <= 6
 
     assert conn.connect()
     assert conn.connected
+    assert second.recv_match.call_count == 2
     conn.disconnect()
     second.close.assert_called_once_with()
 
@@ -71,13 +88,13 @@ def test_failed_close_preserves_connection_error(mocker: MockerFixture) -> None:
     link = mocker.patch(
         "dimos.robot.drone.mavlink_connection.mavutil.mavlink_connection"
     ).return_value
-    link.recv_match.side_effect = OSError("initial telemetry unavailable")
+    link.recv_match.side_effect = OSError("link read failed")
     link.close.side_effect = OSError("close failed")
-    conn = MavlinkConnection()
+    conn = MavlinkConnection("test-link")
 
     with capture_logs() as logs:
         assert not conn.connect()
 
-    assert any("initial telemetry unavailable" in entry["event"] for entry in logs)
+    assert any("link read failed" in entry["event"] for entry in logs)
     assert not conn.connected
     assert conn.mavlink is None
