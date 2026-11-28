@@ -240,12 +240,19 @@ stage_models() {
   rm -rf "$APPDIR/opt/models"
   rows models.tsv | while IFS=$'\t' read -r repo revision _; do
     HF_HOME="$APPDIR/opt/models" "$PY" -P -c 'import sys
+from pathlib import Path
 from huggingface_hub import snapshot_download
-print(snapshot_download(sys.argv[1], revision=sys.argv[2]))' "$repo" "$revision"
-    # A download by commit writes no ref. DimOS asks for the default branch, and an
-    # offline lookup of that branch reads refs/main.
-    mkdir -p "$APPDIR/opt/models/hub/models--${repo//\//--}/refs"
-    printf '%s' "$revision" > "$APPDIR/opt/models/hub/models--${repo//\//--}/refs/main"
+
+repo, revision, cache = sys.argv[1:]
+snapshot = Path(snapshot_download(repo, revision=revision, cache_dir=cache))
+# Downloads by commit do not create the default-branch ref used by DimOS.
+refs = snapshot.parent.parent / "refs"
+refs.mkdir(exist_ok=True)
+(refs / "main").write_text(revision)
+offline = snapshot_download(repo, cache_dir=cache, local_files_only=True)
+if Path(offline) != snapshot or snapshot.name != revision:
+    sys.exit(f"{repo}: offline lookup did not resolve to {revision}")
+print(offline)' "$repo" "$revision" "$APPDIR/opt/models/hub"
   done
   # Download bookkeeping, not part of the cache that is read.
   rm -rf "$APPDIR/opt/models/hub/.locks" "$APPDIR/opt/models/xet"
