@@ -12,7 +12,7 @@ provides:
     title: dimos gateway
     # the gateway API's version (Desktop's contract; its implementation and metadata stay experimental): what
     # Desktop's `requires: dimos` range and the desktop-gateway-v tags go by. `version:` above is dimos's own.
-    version: 9.2.0
+    version: 9.4.0
     description: >-
       The stable API for building apps on top of dimos: the catalog of blueprints, modules, RPCs, robots and config schemas; the running blueprint (launch,
       stop, its module instances, RPCs and streams); past runs (logs, recordings); and recording uploads to the Dimensional cloud. It saves no config: each launch
@@ -120,11 +120,12 @@ provides:
       post:
         description: >-
           202 {job}: scan every blueprint and module again (or join the running scan); the catalog changes when it finishes;
-          follow it at jobs/{job}
+          follow it at jobs/{job}. A scan that cannot start reading the checkout fails the job and keeps the previous catalog.
     /catalog/scan/blueprints/{name}:
       post:
         description: >-
           Scan just this blueprint and its modules, and update their entries in the cache (or join the running full scan).
+          A failure to read the checkout keeps the previous entries.
         parameters:
           - name: name
             in: path
@@ -173,7 +174,10 @@ provides:
         summary: Run exactly `dimos run <args>` (args[0] is the blueprint or module)
     /active/relaunch:
       post:
-        summary: Stop the running blueprint and start the same launch again (one started elsewhere as a copy of its command)
+        description: >-
+          Stop the running blueprint and start the same launch again, or the {blueprint|module, config} body in its place
+          (one started elsewhere repeats as a copy of its command). A structured launch is first checked by the checkout's
+          own `dimos run`: 400 if it refuses, and the current run keeps running; 409 if what runs changes during the check
     /active/stop:
       post:
         summary: Exactly `dimos stop`
@@ -192,9 +196,24 @@ provides:
             required: true
             schema:
               type: string
+    /active/modules/{id}/config:
+      get:
+        description: >-
+          The config the instance runs with (its get_config RPC): {config: {field: value}, readonly: [field]}, without
+          rpc_transport, g, instance_name and rpc_name; a readonly field is a secret (sent as •••) or isn't JSON-able
+          (config has its text). 404 when the instance's dimos has no get_config.
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              type: string
     /active/modules/{id}/restart:
       post:
-        summary: Restart that instance, reloading its source
+        description: >-
+          Restart that one instance (a namespaced robot's, not every copy of its class), reloading its source unless
+          {reloadSource: false}; {config: {field: value}} is merged over its config first, so a changed setting takes
+          effect (and stays for later restarts). The `modules` event says when it's back
         parameters:
           - name: id
             in: path
@@ -203,7 +222,7 @@ provides:
               type: string
     /active/modules/{id}/stop:
       post:
-        summary: Unload that instance; the rest keep running
+        summary: Unload that one instance (not every copy of its class); the rest keep running
         parameters:
           - name: id
             in: path
@@ -222,7 +241,8 @@ provides:
     /active/modules/{id}/rpcs/{name}:
       post:
         description: >-
-          Call the RPC with {args?, kwargs?}: {ok, result, error}. For buttons: called directly, not through MCP, so skills'
+          Call the RPC with {args?, kwargs?}: {ok, result, error}. Any RPC the instance has, including the base-class
+          ones (get_config, ...) its listing leaves out. For buttons: called directly, not through MCP, so skills'
           capability holds don't apply; agents use the python API.
         parameters:
           - name: id

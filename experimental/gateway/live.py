@@ -18,6 +18,7 @@ from collections.abc import Callable
 import importlib
 import inspect
 import threading
+import typing
 from typing import Any
 
 from fastapi.encoders import jsonable_encoder
@@ -25,6 +26,9 @@ import psutil
 
 from dimos.core.run_registry import RunEntry
 from experimental.gateway.errors import ApiError
+
+# ModuleConfig fields the coordinator sets for its own wiring, not for editing
+INFRASTRUCTURE_FIELDS = frozenset({"rpc_transport", "g", "instance_name", "rpc_name"})
 
 
 class NothingRunningError(ApiError):
@@ -83,10 +87,14 @@ def connect_dimos() -> Any:
     return Dimos.connect()
 
 
-def load_class(path: str) -> Any:
-    """A module class from its class path (what Dimos.restart and Dimos.unload take)."""
-    module, name = path.rsplit(".", 1)
-    return getattr(importlib.import_module(module), name)
+def config_fields(class_path: str) -> dict[str, Any]:
+    """The pydantic fields of a module class's config, by name (none when the class can't be loaded)."""
+    try:
+        module, name = class_path.rsplit(".", 1)
+        config_cls = typing.get_type_hints(getattr(importlib.import_module(module), name))["config"]
+        return dict(config_cls.model_fields)
+    except Exception:  # the class is the module's own code
+        return {}
 
 
 def live_run_id() -> str | None:
@@ -194,13 +202,17 @@ class Live:
         kwargs: dict[str, Any],
     ) -> dict[str, Any]:
         module = self.module(scanned, module_id)
-        if name not in {rpc["name"] for rpc in module["rpcs"]}:
-            listed = ", ".join(rpc["name"] for rpc in module["rpcs"])
-            raise ApiError(404, f"{module_id} has no RPC {name} (its RPCs: {listed})")
-        # porcelain takes a namespaced instance's key, or an un-namespaced one's class name
-        handle = self.app().get_module(
-            module_id.replace(":", "/") if ":" in module_id else module["class"]
+        # every RPC the instance has, including the base-class ones (get_config, ...) that modules() leaves out of its list
+        callable_rpcs = sorted(
+            rpc.name
+            for instance in self.app().list_modules()
+            if instance_id(instance.instance_name) == module_id
+            for rpc in instance.rpcs
         )
+        if name not in callable_rpcs:
+            listed = ", ".join(callable_rpcs)
+            raise ApiError(404, f"{module_id} has no RPC {name} (its RPCs: {listed})")
+        handle = self._handle(module_id, module)
         try:
             result = getattr(handle, name)(*args, **kwargs)
         except TimeoutError:
@@ -213,19 +225,80 @@ class Live:
             encoded = str(result)
         return {"ok": True, "result": encoded, "error": None}
 
-    # TODO(core): Dimos.restart and Dimos.unload take a module class, so with several namespaced copies of one class
-    # (robot0:go2connection, robot1:go2connection) they refuse ("Multiple instances"). Doing this cleanly needs them
-    # to take an instance name: the coordinator already has restart_module_by_name, but unloading by name has no RPC.
-    def restart(self, module_id: str) -> dict[str, Any]:
-        return self._try(lambda app, module_class: app.restart(module_class), module_id)
+    def _handle(self, module_id: str, module: dict[str, Any]) -> Any:
+        # porcelain takes a namespaced instance's key, or an un-namespaced one's class name
+        return self.app().get_module(
+            module_id.replace(":", "/") if ":" in module_id else module["class"]
+        )
+
+    def config(self, module_id: str) -> dict[str, Any]:
+        """The instance's config fields (its `get_config` RPC); a secret, or a field JSON can't carry, is readonly."""
+        from experimental.gateway.introspect import field_schema, is_secret_name, secret_annotation
+        from experimental.gateway.launches import HIDDEN
+
+        module = self.module(None, module_id)
+        instance = next(
+            found
+            for found in self.app().list_modules()
+            if instance_id(found.instance_name) == module_id
+        )
+        if "get_config" not in {rpc.name for rpc in instance.rpcs}:
+            raise ApiError(
+                404, f"{module_id} has no get_config RPC (its dimos is older than the gateway)"
+            )
+        try:
+            result = self._handle(module_id, module).get_config()
+        except TimeoutError:
+            raise ApiError(500, f"{module_id}/get_config didn't answer in time")
+        fields = config_fields(module["catalogId"])
+        config: dict[str, Any] = {}
+        readonly: list[str] = []
+        for field, value in dict(result).items():
+            if field in INFRASTRUCTURE_FIELDS:
+                continue
+            kind = fields[field].annotation if field in fields else None
+            if is_secret_name(field) or secret_annotation(kind):
+                config[field] = HIDDEN
+                readonly.append(field)
+                continue
+            try:
+                config[field] = jsonable_encoder(value)
+            except ValueError:  # jsonable_encoder's error for a value with no fields it can read
+                config[field] = str(value)
+                readonly.append(field)
+                continue
+            # get_config sends what JSON can't carry as its repr: the field's type says which those are
+            if field in fields and field_schema(kind) is None:
+                readonly.append(field)
+        return {"config": config, "readonly": readonly}
+
+    def module_ids(self) -> set[str]:
+        """The running blueprint's instance ids (empty when nothing runs)."""
+        try:
+            app = self.app()
+        except NothingRunningError:
+            return set()
+        return {instance_id(instance.instance_name) for instance in app.list_modules()}
+
+    def restart(
+        self, module_id: str, config: dict[str, Any] | None = None, reload_source: bool = True
+    ) -> dict[str, Any]:
+        """Restart that one instance (a namespaced robot's, not every copy of its class), with `config` (field ->
+        value) merged over its config first, so a changed setting takes effect."""
+        self.module(None, module_id)
+        try:
+            self.app().restart_instance(
+                module_id.replace(":", "/"), reload_source=reload_source, config=config
+            )
+        except Exception as error:
+            return {"ok": False, "error": f"{type(error).__name__}: {error}"}
+        return {"ok": True, "error": None}
 
     def unload(self, module_id: str) -> dict[str, Any]:
-        return self._try(lambda app, module_class: app.unload(module_class), module_id)
-
-    def _try(self, action: Callable[[Any, Any], None], module_id: str) -> dict[str, Any]:
-        module = self.module(None, module_id)
+        """Stop and remove that one instance (a namespaced robot's, not every copy of its class)."""
+        self.module(None, module_id)
         try:
-            action(self.app(), load_class(module["catalogId"]))
+            self.app().unload_instance(module_id.replace(":", "/"))
         except Exception as error:
             return {"ok": False, "error": f"{type(error).__name__}: {error}"}
         return {"ok": True, "error": None}

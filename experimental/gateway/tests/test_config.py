@@ -254,6 +254,29 @@ def test_robots_list_their_blueprints_which_carry_the_annotations(client: TestCl
     assert any(setting["kind"] == "pick" for setting in unitree_go2["recommended_config"])
 
 
+@pytest.mark.parametrize(
+    ("name", "keys"),
+    [
+        ("go2-dds", ["go2dds.iface"]),
+        ("go2-dds-mid360", ["go2dds.iface"]),
+        ("go2-nav", ["go2dds.iface"]),
+        ("go2-nav-l1", ["go2dds.iface"]),
+        ("go2-nav-hosted", ["go2dds.iface"]),
+        ("go2-nav-viewer", ["zenoh_connect"]),
+        ("go2-nav-viewer-mesh", ["zenoh_connect"]),
+        ("unitree-go2-keyboard-teleop", []),
+        ("go2-sim-nav-episode", []),
+    ],
+)
+def test_go2_launch_settings_match_the_blueprints_connection(
+    client: TestClient, state: State, name: str, keys: list[str]
+) -> None:
+    state.listed = [{"name": name, "kind": "builtin"}]
+    records = client.get("/catalog/blueprints").json()["blueprints"]
+    record = next(record for record in records if record["name"] == name)
+    assert [setting["key"] for setting in record["recommended_config"]] == keys
+
+
 def test_annotations_name_registered_blueprints_and_real_fields() -> None:
     source = annotation_file.load()
     for robot_id, robot in source["robots"].items():
