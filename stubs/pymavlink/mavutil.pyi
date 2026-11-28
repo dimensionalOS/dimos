@@ -1,6 +1,8 @@
 from typing import Any
 
 class _MavlinkMessage:
+    def get_srcSystem(self) -> int: ...
+    def get_type(self) -> str: ...
     base_mode: int
     command: int
     result: int
@@ -14,7 +16,8 @@ class MavlinkConnection:
     target_system: int
     target_component: int
     mav: _MavSender
-    def wait_heartbeat(self, timeout: float | None = ...) -> _MavlinkMessage: ...
+    def probably_vehicle_heartbeat(self, msg: _MavlinkMessage) -> bool: ...
+    def wait_heartbeat(self, timeout: float | None = ...) -> _MavlinkMessage | None: ...
     def recv_match(
         self,
         type: str | list[str] | None = ...,

@@ -22,6 +22,7 @@ import time
 from typing import Any
 
 from dimos_lcm.std_msgs import String
+from pydantic import field_validator
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -48,6 +49,13 @@ class Config(ModuleConfig):
     connection_string: str = "udp:0.0.0.0:14550"
     video_port: int = 5600
     outdoor: bool = False
+
+    @field_validator("connection_string")
+    @classmethod
+    def _reject_blank_connection_string(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("MAVLink connection string cannot be blank")
+        return value
 
 
 class DroneConnectionModule(Module):
@@ -110,13 +118,9 @@ class DroneConnectionModule(Module):
             self.connection = MavlinkConnection(
                 self.config.connection_string, outdoor=self.config.outdoor
             )
-            self.connection.connect()
+            self.connection.connect_or_raise()
 
             self.video_stream = DJIDroneVideoStream(port=self.config.video_port)
-
-        if not self.connection.connected:
-            logger.error("Failed to connect to drone")
-            return
 
         # Start video stream (already created above)
         if self.video_stream.start():
