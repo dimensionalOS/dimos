@@ -170,7 +170,11 @@ class DuplexCameraConfig(ModuleConfig):
 
 class DuplexCamera(Module):
     config: DuplexCameraConfig
-    color_image: IO[Image]
+    sensor_image: IO[Image]
+
+
+class DuplexBytes(Module):
+    color_image: IO[bytes]
 
 
 def test_collection_records_a_camera_that_publishes_on_a_bidirectional_port(
@@ -178,12 +182,17 @@ def test_collection_records_a_camera_that_publishes_on_a_bidirectional_port(
 ) -> None:
     # as in simulation: the teleop stack brings the camera, no RealSense is added
     monkeypatch.setattr(collection.global_config, "simulation", "mujoco")
-    teleop = autoconnect(coordinator_mock, DuplexCamera.blueprint())
+    teleop = autoconnect(
+        coordinator_mock, DuplexBytes.blueprint(), DuplexCamera.blueprint()
+    ).remappings([(DuplexCamera, "sensor_image", "color_image")])
 
     recorder, *_ = collection._collection_components("demo", teleop, task="Teleoperate")
 
     schema = recorder.active_blueprints[0].kwargs["recording_schema"]
     assert schema.observation["camera"].shape == (2, 4, 3)
+    disconnected = teleop.remappings([(DuplexCamera, "sensor_image", "aux")])
+    with pytest.raises(ValueError, match="color_image"):
+        collection._collection_components("demo", disconnected, task="Teleoperate")
 
 
 @pytest.mark.parametrize("name", ["collection-recorder", "collection-module"])

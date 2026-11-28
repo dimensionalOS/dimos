@@ -155,7 +155,7 @@ def render(
     # Module name -> module class (for getting package info)
     module_classes: dict[str, type[ModuleBase]] = {}
 
-    for bp in blueprint_set.blueprints:
+    for bp in blueprint_set.active_blueprints:
         module_classes[bp.module.__name__] = bp.module
         for conn in bp.streams:
             # Apply remapping

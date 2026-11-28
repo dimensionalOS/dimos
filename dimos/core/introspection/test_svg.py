@@ -36,6 +36,9 @@ def test_duplex_port_has_edges_in_both_directions() -> None:
     assert "frame:bytes" in graph
     assert len(edges) == 2
     assert edges[0] == edges[1][::-1]
+    disabled = render(Duplex.blueprint().disabled_modules(Duplex))
+    assert "frame:bytes" not in disabled
+    assert "Duplex" not in disabled
 
 
 @pytest.mark.parametrize(
