@@ -42,6 +42,7 @@ from dimos.robot.manipulators.openyam.config import (
     OPENYAM_HOME_JOINTS,
     OPENYAM_KD,
     OPENYAM_KP,
+    OPENYAM_MAX_JOINT_SPEEDS,
 )
 
 DUAL_OPENYAM_SIDES = ("left", "right")
@@ -71,11 +72,17 @@ def dual_openyam_arm_joints(side: str) -> list[str]:
 def dual_openyam_model_config(*, robot: str | None = None) -> RobotModelConfig:
     """Build the combined arm-only planning model."""
     model = DUAL_OPENYAM_MODEL
+    speeds: dict[str, float] = {}
     for side in DUAL_OPENYAM_SIDES:
-        for joint, (lower, upper) in zip(
-            dual_openyam_arm_joints(side), DUAL_OPENYAM_JOINT_LIMITS, strict=True
+        for joint, (lower, upper), speed in zip(
+            dual_openyam_arm_joints(side),
+            DUAL_OPENYAM_JOINT_LIMITS,
+            OPENYAM_MAX_JOINT_SPEEDS,
+            strict=True,
         ):
             model = model.with_joint_position_limits(joint, lower=lower, upper=upper)
+            speeds[joint] = speed
+    model = model.with_joint_velocity_limits(speeds)
     return named_for_robot(
         RobotModelConfig(
             model=model.with_default_joint_acceleration_limit(1.0),

@@ -37,6 +37,7 @@ from dimos.robot.manipulators.openyam.config import (
     OPENYAM,
     OPENYAM_ARM_JOINTS,
     OPENYAM_HOME_JOINTS,
+    OPENYAM_MAX_JOINT_SPEEDS,
     OPENYAM_MODEL_PATH,
     make_openyam_model_config,
 )
@@ -143,7 +144,7 @@ def test_quest_teleop_matches_dual_openyam_response_tuning() -> None:
 
     assert teleop.params["pink"].gain == 1.0
     assert teleop.params["solver_type"] is OpenYamPinkPoseTargetSolver
-    assert teleop.params["max_joint_velocity_rad_s"] == 2.0
+    assert teleop.params["max_joint_velocity_rad_s"] == max(OPENYAM_MAX_JOINT_SPEEDS)
     assert teleop.params["joint_command_filter_cutoff_hz"] == 30.0
 
 

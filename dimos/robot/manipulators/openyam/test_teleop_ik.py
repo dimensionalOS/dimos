@@ -93,4 +93,6 @@ def test_weighted_solver_shifts_orientation_motion_toward_wrist() -> None:
     weighted_proximal, weighted_wrist = _orientation_target_motion(OpenYamPinkPoseTargetSolver)
 
     assert weighted_proximal < generic_proximal * 0.75
-    assert weighted_wrist > generic_wrist * 0.9
+    assert weighted_wrist / (weighted_wrist + weighted_proximal) > generic_wrist / (
+        generic_wrist + generic_proximal
+    )

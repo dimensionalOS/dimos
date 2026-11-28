@@ -30,7 +30,10 @@ from dimos.robot.manipulators.damiao.damiao_blueprint import (
     arm_remaps,
 )
 from dimos.robot.manipulators.openyam.blueprints.basic import _gripper_task, _trajectory_task
-from dimos.robot.manipulators.openyam.config import make_openyam_model_config
+from dimos.robot.manipulators.openyam.config import (
+    OPENYAM_MAX_JOINT_SPEEDS,
+    make_openyam_model_config,
+)
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.openyam.joints import OPENYAM_GRIPPER_JOINT
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
@@ -109,7 +112,8 @@ _openyam_webxr_task = TaskConfig(
         "pink": OPENYAM_QUEST_KINEMATICS,
         "timeout": 0.5,
         "max_command_tracking_error_deg": 10.0,
-        "max_joint_velocity_rad_s": 2.0,
+        # The model limits each joint; the task's own cap only has to clear the fastest.
+        "max_joint_velocity_rad_s": max(OPENYAM_MAX_JOINT_SPEEDS),
         "joint_command_filter_cutoff_hz": 30.0,
     },
 )

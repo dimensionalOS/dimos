@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
@@ -43,6 +44,8 @@ OPENYAM_HOME_JOINTS = [0.0, 1.047, 1.047, 0.0, 0.0, 0.0]
 #: Holding gains for joint1 to joint6; every OpenYAM arm takes them.
 OPENYAM_KP = [40.0, 65.0, 65.0, 25.0, 12.0, 12.0]
 OPENYAM_KD = [3.0, 4.5, 4.5, 0.7, 0.2, 0.2]
+#: Top speeds for joint1 to joint6, rad/s: 216 deg/s on the DM4340 joints, 720 on the DM4310.
+OPENYAM_MAX_JOINT_SPEEDS = [*[math.radians(216.0)] * 3, *[math.radians(720.0)] * 3]
 OPENYAM_DESCRIPTION_SOURCE = RobotDescriptionSource(
     url="https://github.com/dimensionalOS/dim_description",
     ref="f9853344bbc9fa00aade6ff3ffb7db6532d185e1",
@@ -96,6 +99,9 @@ def make_openyam_model_config(
             }
         )
         .with_fixed_frame("gripper_tip", "arm_tcp")
+        .with_joint_velocity_limits(
+            dict(zip(model_joint_names, OPENYAM_MAX_JOINT_SPEEDS, strict=True))
+        )
     )
     return named_for_robot(
         RobotModelConfig(

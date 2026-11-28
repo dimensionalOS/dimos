@@ -38,6 +38,7 @@ from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnecti
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (
     DualOpenYamPinkPoseTargetSolver,
 )
+from dimos.robot.manipulators.openyam.config import OPENYAM_MAX_JOINT_SPEEDS
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 DUAL_OPENYAM_WEBXR_TASK_NAME = "teleop_dual_openyam"
@@ -65,7 +66,8 @@ _dual_openyam_webxr_tasks = {
             "pink": _dual_openyam_webxr_pink,
             "timeout": 0.5,
             "max_command_tracking_error_deg": 10.0,
-            "max_joint_velocity_rad_s": 2.0,
+            # The model limits each joint; the task's own cap only has to clear the fastest.
+            "max_joint_velocity_rad_s": max(OPENYAM_MAX_JOINT_SPEEDS),
             "joint_command_filter_cutoff_hz": 30.0,
         },
     )
