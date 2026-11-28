@@ -45,23 +45,18 @@ def test_a_frame_path_is_prim_names_joined_by_slashes(path: str, complaint: str 
 def test_a_frame_with_two_parents_is_found_both_ways() -> None:
     buffer = MultiTBuffer()
     buffer.receive_transform(
-        Transform(
-            translation=Vector3(0.0, 0.0, 0.3), frame_id="go2", child_frame_id="go2/base", ts=1.0
-        ),
-        Transform(
-            translation=Vector3(2.0, 0.0, 0.0), frame_id="odom", child_frame_id="go2/base", ts=1.0
-        ),
-        Transform(
-            translation=Vector3(0.1, 0.0, 0.0),
-            frame_id="go2/base",
-            child_frame_id="go2/base/lidar",
-            ts=1.0,
-        ),
+        *(
+            Transform(translation=Vector3(*xyz), frame_id=parent, child_frame_id=child, ts=1.0)
+            for parent, child, xyz in (
+                ("go2", "go2/base", (0.0, 0.0, 0.3)),
+                ("odom", "go2/base", (2.0, 0.0, 0.0)),
+                ("go2/base", "go2/base/lidar", (0.1, 0.0, 0.0)),
+            )
+        )
     )
 
     lidar = buffer.get("odom", "go2/base/lidar", time_tolerance=10.0)
-    assert lidar is not None
-    assert lidar.translation.x == pytest.approx(2.1)
+    assert lidar is not None and lidar.translation.x == pytest.approx(2.1)
     top = buffer.get("odom", "go2", time_tolerance=10.0)
     assert top is not None
     assert (top.translation.x, top.translation.z) == pytest.approx((2.0, -0.3))
