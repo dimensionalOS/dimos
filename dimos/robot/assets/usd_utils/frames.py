@@ -110,7 +110,7 @@ def _weld_frame(
     """Weld the added frame where its own transform puts it.
 
     A joint's local frames are what a reader has to go on -- the prim transform places the
-    body, but anything rebuilding the kinematics (usd_to_urdf, and so tf) reads body0's local
+    body, but anything rebuilding the kinematics (usd_joints, and so tf) reads body0's local
     pose. Leaving them identity says the child sits on top of its parent, which silently drops
     the offset and the rotation the frame was added for.
     """
