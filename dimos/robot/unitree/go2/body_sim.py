@@ -25,14 +25,13 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     CAMERA_XYZ,
     MID360_PITCH_DOWN,
     MID360_XYZ,
-    OPTICAL_RPY,
 )
 from dimos.sim2.body import SimBody, SimBodyConfig, with_sites
 
 # Its root link: the prim the real Go2's base_link is.
 GO2_BODY = "go2/Geometry/base_link"
-# Its front camera's housing, which the lidar bracket sits on as on the real rig.
-GO2_FRONT_CAMERA = f"{GO2_BODY}/front_camera"
+# Its front camera's mount (x forward), which the lidar bracket sits on as on the real rig.
+GO2_CAMERA = f"{GO2_BODY}/camera"
 # Its IMU, a site on its root link.
 GO2_IMU = f"{GO2_BODY}/imu"
 
@@ -42,19 +41,18 @@ GO2_JOINT_NAMES = tuple(
 
 
 def go2_body_usd() -> UsdModel:
-    """The articulated Go2, with its lidar and camera mounts (the camera's an optical frame) and its IMU marked as Isaac Sim sites."""
+    """The articulated Go2, with its lidar and camera mounts (each x forward) and its IMU marked as Isaac Sim sites."""
     framed = UsdModel.from_file(Path(__file__).parent / "assets" / "go2.usda").with_frames(
         {
-            "front_camera": (GO2_BODY, CAMERA_XYZ, (0.0, 0.0, 0.0)),
-            "camera": (GO2_FRONT_CAMERA, (0.0, 0.0, 0.0), OPTICAL_RPY),
-            "lidar": (GO2_FRONT_CAMERA, MID360_XYZ, (0.0, MID360_PITCH_DOWN, 0.0)),
+            "camera": (GO2_BODY, CAMERA_XYZ, (0.0, 0.0, 0.0)),
+            "lidar": (GO2_CAMERA, MID360_XYZ, (0.0, MID360_PITCH_DOWN, 0.0)),
         }
     )
     return with_sites(
         framed,
         {
-            f"{GO2_FRONT_CAMERA}/camera": ("front camera mount, an optical frame", "Z"),
-            f"{GO2_FRONT_CAMERA}/lidar": ("lidar mount", "X"),
+            GO2_CAMERA: ("front camera mount", "X"),
+            f"{GO2_CAMERA}/lidar": ("lidar mount", "X"),
             GO2_IMU: ("IMU", "X"),
         },
     )
@@ -71,4 +69,4 @@ class Go2BodySim(SimBody):
     """A Go2 body in a simulated world, held at its USD's standing pose until a joint command comes."""
 
     config: Go2BodySimConfig
-    mounts = Mounts(f"{GO2_FRONT_CAMERA}/lidar", f"{GO2_FRONT_CAMERA}/camera")
+    mounts = Mounts(f"{GO2_CAMERA}/lidar", GO2_CAMERA)

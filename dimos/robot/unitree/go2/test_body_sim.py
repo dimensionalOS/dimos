@@ -81,7 +81,7 @@ def test_its_odometry_holds_its_body_and_nothing_static_places_it(go2: Go2BodySi
     assert go2.body_frame == go2.tf_frames[GO2_BODY] == f"{_SPOT}/base_link"
     assert (_SPOT, go2.attach_frame) in static
     assert not any(child == go2.body_frame for _, child in static)
-    assert (go2.body_frame, f"{_SPOT}/{GO2_BODY}/front_camera") in static
+    assert (go2.body_frame, f"{_SPOT}/camera") in static
 
 
 def test_a_position_command_is_a_world_action_on_its_joints_with_its_usd_s_gains(
