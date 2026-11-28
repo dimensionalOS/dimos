@@ -48,6 +48,12 @@ def main(
     from dimos.mapping.relocalization.utils import load_premap
     from dimos.visualization.rerun.init import rerun_init
 
+    if out is not None:
+        from dimos.memory.cli.dataset import check_recording_output
+        from dimos.utils.data import resolve_named_path
+
+        path = resolve_named_path(path, path.suffix)
+        check_recording_output(path, out)
     cloud = load_premap(str(path), stream)
     print(f"{path}: {len(cloud.pointcloud.points)} points in {cloud.frame_id!r}")
 

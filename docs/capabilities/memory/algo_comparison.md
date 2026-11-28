@@ -12,7 +12,7 @@ from dimos.memory.vis.plot.plot import Plot
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.data import get_data
 
-store = SqliteStore(path=get_data("go2_bigoffice.db"))
+store = SqliteStore(path=get_data("go2_bigoffice.db"), read_only=True)
 images = store.streams.color_image
 
 
@@ -103,7 +103,7 @@ from dimos.memory.vis.plot.plot import Plot
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.data import get_data
 
-store = SqliteStore(path=get_data("go2_bigoffice.db"))
+store = SqliteStore(path=get_data("go2_bigoffice.db"), read_only=True)
 images = store.streams.color_image
 
 

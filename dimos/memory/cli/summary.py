@@ -69,14 +69,10 @@ def main(
     ),
 ) -> None:
     """Print per-stream counts, time ranges, and payload sizes for a recorded dataset."""
-    from dimos.memory.cli.dataset import AmbiguousDatasetError, open_store, resolve_dataset
+    from dimos.memory.cli.dataset import open_cli_dataset
     from dimos.memory.store.sqlite import SqliteStore
 
-    try:
-        db_path = resolve_dataset(dataset)
-        store = open_store(db_path)
-    except (FileNotFoundError, AmbiguousDatasetError) as exc:
-        raise typer.BadParameter(str(exc), param_hint="DATASET") from exc
+    db_path, store = open_cli_dataset(dataset)
     if not isinstance(store, SqliteStore):
         # mcap stores don't speak the sqlite _streams table; print the store's own
         # summary. Codecless channels appear as Stream[bytes], flagged [raw bytes: …].

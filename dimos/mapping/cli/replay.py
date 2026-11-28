@@ -182,7 +182,11 @@ def main(
     import rerun as rr
 
     from dimos.mapping.voxels.module import VoxelMapTransformer
-    from dimos.memory.cli.dataset import open_store, resolve_dataset, stream_payload_types
+    from dimos.memory.cli.dataset import (
+        check_recording_output,
+        open_cli_dataset,
+        stream_payload_types,
+    )
     from dimos.memory.transform import throttle
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -190,13 +194,12 @@ def main(
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
     from dimos.robot.unitree.go2.connection import _camera_info_static
 
-    src_path = resolve_dataset(dataset)
-    store = open_store(src_path)
+    src_path, store = open_cli_dataset(dataset)
     if out is None:
         out = Path.cwd() / f"{src_path.stem}.rrd"
-    cam_info = _camera_info_static()
-
     with store:
+        check_recording_output(src_path, out, store=store)
+        cam_info = _camera_info_static()
         # Resolve which streams to voxelize: all PointCloud2 streams, or the
         # explicit --map-source subset. Validate up front so typos fail fast.
         pc_streams = [n for n, t in stream_payload_types(store).items() if t is PointCloud2]
@@ -230,13 +233,14 @@ def main(
         def clipped(name: str, ptype: type[Any]) -> Stream[Any]:
             return window.apply(store.stream(name, ptype))
 
-        lidar = clipped("lidar", PointCloud2)
-        color_image = clipped("color_image", Image)
         has_livox = "fastlio_lidar" in store.streams
         livox = clipped("fastlio_lidar", PointCloud2) if has_livox else None
 
         # Per-frame raw clouds.
-        _log_clouds("       lidar", lidar, "world/lidar", voxel, point_mode)
+        if "lidar" in store.streams:
+            _log_clouds(
+                "       lidar", clipped("lidar", PointCloud2), "world/lidar", voxel, point_mode
+            )
         if livox is not None:
             _log_clouds("fastlio_lidar", livox, "world/fastlio_lidar", voxel, point_mode)
 
@@ -330,12 +334,15 @@ def main(
             )
 
         # Pass 2: camera pose + image per color_image.
+        color_image = clipped("color_image", Image) if "color_image" in store.streams else None
         cam_pipeline = (
-            color_image.transform(throttle(1.0 / camera_hz)) if camera_hz > 0 else color_image
+            color_image.transform(throttle(1.0 / camera_hz))
+            if color_image is not None and camera_hz > 0
+            else color_image
         )
-        n_img = cam_pipeline.count()
+        n_img = cam_pipeline.count() if cam_pipeline is not None else 0
         with progress(n_img, "  color_image") as bar:
-            for img_obs in cam_pipeline:
+            for img_obs in cam_pipeline or ():
                 bar(img_obs)
                 rr.set_time(TIMELINE, timestamp=img_obs.ts)
                 if img_obs.pose_tuple is not None:

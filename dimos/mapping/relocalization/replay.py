@@ -33,6 +33,7 @@ from dimos.mapping.ray_tracing.viz import PREMAP_POINT_RADIUS, log_loaded_map, v
 from dimos.mapping.relocalization.cloud_relocalizer import DEFAULT_PRESET, PRESETS, CloudRelocalizer
 from dimos.mapping.relocalization.module import Config
 from dimos.mapping.relocalization.utils import fix_error, load_premap, yaw_deg
+from dimos.memory.cli.dataset import check_recording_output
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
@@ -231,10 +232,13 @@ def main(
 ) -> None:
     """Replay a recording through the relocalizer and compare its fix with the robot's."""
     db_path = resolve_named_path(recording, ".db")
+    check_recording_output(db_path, out)
+    if out is not None:
+        check_recording_output(resolve_named_path(premap, Path(premap).suffix), out)
     premap_cloud = load_premap(premap)
     _init_recording(db_path.stem, out)
     print(f"relocalizing {db_path.name} against {premap} ({len(premap_cloud)} points, {preset})")
-    store = SqliteStore(path=str(db_path))
+    store = SqliteStore(path=str(db_path), must_exist=True, read_only=not write_loaded_map_stream)
     with store:
         result = replay(
             store,

@@ -67,7 +67,7 @@ def _eval_recording(
     db_path = get_data(f"{name}.db")
     cam_info = _camera_info_static()
 
-    store = SqliteStore(path=str(db_path))
+    store = SqliteStore(path=str(db_path), read_only=True)
     with store:
         lidar = store.streams.lidar
 
@@ -75,6 +75,8 @@ def _eval_recording(
         graph = lidar.transform(PGO()).last().data
         pgo_time = time.perf_counter() - t0
 
+        if "color_image" not in store.streams:
+            return pgo_time, 0.0
         color_image = store.stream("color_image", Image)
         xf = DetectMarkers(
             camera_info=cam_info,

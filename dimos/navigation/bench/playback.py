@@ -59,11 +59,13 @@ class Frame:
 
 def frames(recording: Path) -> list[Frame]:
     """Recorded body poses paired with the joint state nearest in time."""
-    store = SqliteStore(path=str(recording))
+    store = SqliteStore(path=str(recording), read_only=True)
     store.start()
     try:
-        poses = store.stream("ground_truth", PoseStamped).to_list()
         names = set(store.list_streams())
+        poses = (
+            store.stream("ground_truth", PoseStamped).to_list() if "ground_truth" in names else []
+        )
         joints: list[Observation[JointState]] = []
         for name in JOINT_STREAMS:
             if name in names and (joints := store.stream(name, JointState).to_list()):

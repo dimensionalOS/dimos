@@ -38,6 +38,7 @@ from dimos.mapping.ray_tracing.utils.loaded_map import (
 )
 from dimos.mapping.ray_tracing.viz import log_loaded_map
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
+from dimos.memory.cli.dataset import check_recording_output
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.memory.vis.utils import DEFAULT_RENDER_VOXEL, default_render_voxel
@@ -173,6 +174,7 @@ def main(
 
     db_path = resolve_named_path(dataset, ".db")
 
+    check_recording_output(db_path, out)
     rr.init("raytrace_rrd", recording_id=db_path.stem)
     if out is not None:
         rr.save(str(out))
@@ -201,7 +203,7 @@ def main(
         ),
     }
 
-    store = SqliteStore(path=str(db_path))
+    store = SqliteStore(path=str(db_path), read_only=True)
     with store:
         if lidar_stream not in store.list_streams():
             raise typer.BadParameter(

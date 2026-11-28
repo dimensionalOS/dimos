@@ -264,7 +264,7 @@ class PiAdapter(EvalSubject):
             parts.append(
                 "The recording is a dimos memory store (sqlite). In Python:\n"
                 "  from dimos.memory.store.sqlite import SqliteStore\n"
-                "  store = SqliteStore(path=PATH, must_exist=True)\n"
+                "  store = SqliteStore(path=PATH, read_only=True)\n"
                 "store.streams.<name> is a stream, .last().data its latest message; iterating "
                 "a stream yields observations with .ts and .data. Inspect with dir() and help()."
             )

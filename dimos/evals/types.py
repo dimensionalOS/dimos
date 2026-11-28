@@ -163,7 +163,7 @@ def recording(o: Outcome) -> Store:
     """The memory recording an environment produced, opened for grading."""
     from dimos.memory.store.sqlite import SqliteStore
 
-    return SqliteStore(path=str(o.artifacts["recording"]), must_exist=True)
+    return SqliteStore(path=str(o.artifacts["recording"]), read_only=True)
 
 
 @dataclass(frozen=True, kw_only=True)

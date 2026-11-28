@@ -259,7 +259,7 @@ class WorldBeliefModule(Module):
 
         rec_path = self._recording_path()
 
-        with SqliteStore(path=rec_path, must_exist=True) as read_store:
+        with SqliteStore(path=rec_path, read_only=True) as read_store:
             with self._engine() as (scanner, belief):
                 vocabulary = tuple(prompts)
                 active = getattr(self, "_active_scan_prompts", None)
@@ -336,6 +336,7 @@ class WorldBeliefModule(Module):
 
         from dimos.experimental.world_belief.recall import recall as _recall
         from dimos.memory.store.sqlite import SqliteStore
+        from dimos.memory.utils.sqlite import RecordingRegistryError
 
         text = text.strip()
         if not text:
@@ -345,11 +346,19 @@ class WorldBeliefModule(Module):
 
         rec_path = self._recording_path()
         with (
-            SqliteStore(path=rec_path, must_exist=True) as read_store,
+            SqliteStore(path=rec_path, read_only=True) as read_store,
             SqliteStore(path=str(self.config.history_path)) as hist_store,
         ):
             with self._engine() as (scanner, _belief):
                 clip = self._get_recall_clip()
+
+                def open_session(recording: str) -> SqliteStore | None:
+                    try:
+                        return SqliteStore(path=recording, read_only=True)
+                    except (FileNotFoundError, OSError, RecordingRegistryError) as exc:
+                        logger.warning("recall skipped recording %s: %s", recording, exc)
+                        return None
+
                 # Index each immutable session incrementally. Historical localization uses
                 # a throwaway belief so it cannot mutate the live fold.
                 current_path = Path(rec_path).resolve()
@@ -357,11 +366,10 @@ class WorldBeliefModule(Module):
                     if Path(recording).resolve() == current_path:
                         self._index_recall_frames(read_store, hist_store, rec_path)
                         continue
-                    try:
-                        with SqliteStore(path=recording, must_exist=True) as old_store:
+                    old_store = open_session(recording)
+                    if old_store is not None:
+                        with old_store:
                             self._index_recall_frames(old_store, hist_store, recording)
-                    except (FileNotFoundError, OSError) as exc:
-                        logger.warning("recall skipped recording %s: %s", recording, exc)
                 hit, obj_center = _recall(
                     hist_store,
                     text,
@@ -371,11 +379,7 @@ class WorldBeliefModule(Module):
                     detector=scanner.detector,
                     visual_embedder=scanner.visual_embedder,
                     open_recording=lambda rec: (
-                        nullcontext(read_store)
-                        if rec == rec_path
-                        else SqliteStore(path=rec, must_exist=True)
-                        if Path(rec).exists()
-                        else None
+                        nullcontext(read_store) if rec == rec_path else open_session(rec)
                     ),
                 )
         if hit is None:

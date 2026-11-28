@@ -46,6 +46,8 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos.memory.utils.sqlite import connect_existing_sqlite
+
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import MetaBlueprint
 
@@ -199,7 +201,7 @@ def _odom_stats(db_path: Path, table: str) -> tuple[int, float, float]:
     """(count, min_ts, max_ts) for the odom table; zeros if absent."""
     if not db_path.exists():
         return 0, 0.0, 0.0
-    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+    con = connect_existing_sqlite(db_path, read_only=True, timeout=2.0)
     try:
         try:
             row = con.execute(f"SELECT COUNT(*), MIN(ts), MAX(ts) FROM '{table}'").fetchone()
@@ -232,13 +234,18 @@ def _write_rrd(db_path: Path, odom_stream: str, lidar_stream: str, voxel: float)
     import numpy as np
     import rerun as rr
 
+    from dimos.memory.cli.dataset import check_recording_output
     from dimos.memory.store.sqlite import SqliteStore
     from dimos.msgs.nav_msgs.Odometry import Odometry
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.visualization.rerun.init import rerun_init
 
-    store = SqliteStore(path=str(db_path), must_exist=True)
+    rrd = db_path.with_suffix(".rrd")
+    check_recording_output(db_path, rrd)
+    store = SqliteStore(path=str(db_path), read_only=True)
     try:
+        if not {odom_stream, lidar_stream}.issubset(store.list_streams()):
+            return None
         odom = list(store.stream(odom_stream, Odometry).order_by("ts"))
         if not odom:
             return None
@@ -289,7 +296,6 @@ def _write_rrd(db_path: Path, odom_stream: str, lidar_stream: str, voxel: float)
         high = np.array([60, 0, 80], dtype=np.float64)
         colors = (low * (1 - zn)[:, None] + high * zn[:, None]).astype(np.uint8)
 
-        rrd = db_path.with_suffix(".rrd")
         rerun_init("pcap_to_db")
         rr.save(str(rrd))
         rr.log("world/map", rr.Points3D(positions=agg, colors=colors, radii=[voxel / 8]))

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import sqlite3
 import threading
@@ -58,31 +59,83 @@ def close_sqlite_connection(conn: sqlite3.Connection) -> None:
         _locks.pop(id(conn), None)
 
 
-def open_sqlite_connection(path: str | Path, *, read_only: bool = False) -> sqlite3.Connection:
-    """Open SQLite with sqlite-vec, using WAL only for writable connections."""
+class RecordingRegistryError(ValueError):
+    """The input database does not provide a readable dimOS stream registry."""
+
+
+def connect_existing_sqlite(
+    path: str | Path, *, read_only: bool, timeout: float = 5.0
+) -> sqlite3.Connection:
+    """Open an existing SQLite file without creating it or changing its journal mode."""
+    path = Path(path).resolve()
+    try:
+        file_mode = path.stat().st_mode
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"SQLite database not found: {path}") from exc
+    options = "mode=ro" if read_only else "mode=rw"
+    if read_only:
+        # A directory writable by another user can still acquire a live WAL.
+        # Only bypass SQLite's locking on read-only media or explicitly sealed archives.
+        sealed = (file_mode | path.parent.stat().st_mode) & 0o222 == 0
+        if not sealed and hasattr(os, "statvfs") and not os.access(path.parent, os.W_OK):
+            sealed = bool(os.statvfs(path.parent).f_flag & os.ST_RDONLY)
+        if sealed and not any(Path(f"{path}{suffix}").exists() for suffix in ("-wal", "-journal")):
+            options += "&immutable=1"
+    return sqlite3.connect(
+        f"{path.as_uri()}?{options}", uri=True, timeout=timeout, check_same_thread=False
+    )
+
+
+def connect_to_recording(path: str | Path, *, read_only: bool) -> sqlite3.Connection:
+    """Open an existing recording without creating a file or initializing an unrelated DB."""
+    try:
+        conn = connect_existing_sqlite(path, read_only=read_only)
+        try:
+            # Validate on the same handle before WAL mode or registry setup can change the file.
+            conn.execute("SELECT name, config FROM _streams LIMIT 0")
+        except sqlite3.Error:
+            conn.close()
+            raise
+    except sqlite3.Error as exc:
+        raise RecordingRegistryError(
+            f"Cannot read SQLite recording registry in {path}: {exc}"
+        ) from exc
+    return conn
+
+
+def open_sqlite_connection(
+    path: str | Path, *, existing_recording: bool = False, read_only: bool = False
+) -> sqlite3.Connection:
+    """Open a SQLite connection with sqlite-vec loaded, enabling WAL for writers."""
     import sqlite_vec
 
-    if read_only:
-        uri = Path(path).resolve().as_uri() + "?mode=ro"
-        conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+    if existing_recording:
+        conn = connect_to_recording(path, read_only=read_only)
+    elif read_only:
+        conn = connect_existing_sqlite(path, read_only=True)
     else:
         conn = sqlite3.connect(path, check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-    # WAL has one writer; concurrent writer threads outlast the 5s default
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.enable_load_extension(True)
-    sqlite_vec.load(conn)
-    conn.enable_load_extension(False)
+    try:
+        if not read_only:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+        # WAL has one writer; concurrent writer threads outlast the 5s default
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+    except BaseException:
+        conn.close()
+        raise
     return conn
 
 
 def open_disposable_sqlite_connection(
-    path: str | Path, *, read_only: bool = False
+    path: str | Path, *, existing_recording: bool = False, read_only: bool = False
 ) -> tuple[Disposable, sqlite3.Connection]:
-    """Open SQLite and return (disposable, connection).
+    """Open a SQLite connection and return (disposable, connection).
 
     The disposable closes the connection and releases its lock when disposed.
     """
-    conn = open_sqlite_connection(path, read_only=read_only)
+    conn = open_sqlite_connection(path, existing_recording=existing_recording, read_only=read_only)
     return Disposable(lambda: close_sqlite_connection(conn)), conn

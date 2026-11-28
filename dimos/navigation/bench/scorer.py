@@ -137,7 +137,7 @@ class Recording:
 
     @classmethod
     def from_store(cls, path: Path) -> Recording:
-        store = SqliteStore(path=str(path))
+        store = SqliteStore(path=str(path), read_only=True)
         store.start()
         try:
             names = set(store.list_streams())

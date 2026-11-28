@@ -32,6 +32,10 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
 # These drive the real CLI against an LFS recording (CPU voxel accumulation,
 # multi-second runs) — self-hosted runner only.
 pytestmark = pytest.mark.self_hosted
@@ -254,3 +258,44 @@ def test_view_map_cloud(tmp_path: Path) -> None:
     assert res.returncode == 0, res.stderr
     assert "256 points" in res.stdout
     assert out.exists() and out.stat().st_size > 0
+
+
+def test_replay_odometry_without_creating_camera_or_lidar(tmp_path: Path) -> None:
+    path = tmp_path / "odom.db"
+    with SqliteStore(path=path) as store:
+        odom = store.stream("odom", PoseStamped)
+        odom.append(PoseStamped(), ts=1.0, pose=(1.0, 0.0, 0.0))
+    out = tmp_path / "odom.rrd"
+    result = _run("replay", str(path), "--no-gui", "--out", str(out))
+    assert result.returncode == 0, result.stderr
+    assert "/world/odom" in _entity_paths(out)
+    with SqliteStore(path=path, must_exist=True) as store:
+        assert store.list_streams() == ["odom"]
+
+
+@pytest.mark.parametrize(
+    ("recorded", "options", "missing"),
+    [
+        ((), ["--lidar", "scan"], "scan"),
+        ((), ["--markers"], "color_image"),
+        (("color_image",), ["--markers", "--image-pose", "fastlio_odometry"], "fastlio_odometry"),
+    ],
+)
+def test_global_refuses_a_missing_stream_before_mapping(
+    tmp_path: Path, recorded: tuple[str, ...], options: list[str], missing: str
+) -> None:
+    import numpy as np
+
+    path = tmp_path / "lidar.db"
+    with SqliteStore(path=path) as store:
+        cloud = PointCloud2.from_numpy(np.zeros((1, 3)), timestamp=1.0)
+        store.stream("lidar", PointCloud2).append(cloud, ts=1.0)
+        for name in recorded:
+            store.stream(name, PoseStamped)
+    out = tmp_path / "map.rrd"
+    result = _run("global", str(path), "--no-gui", "--out", str(out), *options)
+    assert result.returncode == 2, result.stderr
+    assert missing in result.stdout
+    assert not out.exists()
+    with SqliteStore(path=path, must_exist=True) as store:
+        assert missing not in store.list_streams()

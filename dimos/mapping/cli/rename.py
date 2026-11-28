@@ -23,9 +23,9 @@ immediately. Streams not mentioned in ``--rename`` are copied verbatim.
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import closing
 import json
 from pathlib import Path
-import sqlite3
 import time
 from typing import Any
 
@@ -35,6 +35,7 @@ from dimos.memory.codecs.base import resolve_payload_type
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
 from dimos.memory.type.observation import Observation
+from dimos.memory.utils.sqlite import RecordingRegistryError, connect_to_recording
 from dimos.memory.utils.time_window import RecordingWindow
 from dimos.utils.data import resolve_named_path
 
@@ -73,11 +74,8 @@ def progress(total: int, label: str = "") -> Callable[[Observation[Any]], None]:
 
 def _stream_payload_types(db_path: Path) -> dict[str, type]:
     """Read each stream's registered payload type from the _streams table."""
-    conn = sqlite3.connect(str(db_path))
-    try:
+    with closing(connect_to_recording(db_path, read_only=True)) as conn:
         rows = conn.execute("SELECT name, config FROM _streams").fetchall()
-    finally:
-        conn.close()
     return {name: resolve_payload_type(json.loads(cfg)["payload_module"]) for name, cfg in rows}
 
 
@@ -114,13 +112,16 @@ def main(
     ),
 ) -> None:
     """Copy a recording into a new .db, renaming and/or dropping streams."""
-    src_path = resolve_named_path(dataset, ".db")
     if out.exists():
         raise typer.BadParameter(f"Output already exists: {out}")
 
-    print(f"analizing dataset {src_path}")
     rename_map = _parse_renames(rename)
-    payload_types = _stream_payload_types(src_path)
+    try:
+        src_path = resolve_named_path(dataset, ".db")
+        payload_types = _stream_payload_types(src_path)
+    except (FileNotFoundError, RecordingRegistryError) as exc:
+        raise typer.BadParameter(str(exc), param_hint="DATASET") from exc
+    print(f"analizing dataset {src_path}")
 
     drop_set = set(drop)
     missing = sorted((set(rename_map) | drop_set) - set(payload_types))
@@ -152,7 +153,7 @@ def main(
             print(f"  {src_name:>16s} {arrow} {dst_name}")
     print()
 
-    src = SqliteStore(path=str(src_path))
+    src = SqliteStore(path=str(src_path), read_only=True)
     with src:
         window = RecordingWindow.from_store(src, seek, duration)
         dst = SqliteStore(path=str(out))

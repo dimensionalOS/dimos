@@ -146,7 +146,7 @@ class SpotReplay(Module):
     async def main(self) -> AsyncIterator[None]:
         db_path = self._resolve_db_path()
 
-        store = SqliteStore(path=str(db_path), must_exist=True)
+        store = SqliteStore(path=str(db_path), read_only=True)
         subscriptions = CompositeDisposable()
         # One disposer drains the subscriptions before closing their store,
         # even when stop() is called concurrently or setup fails partway through.

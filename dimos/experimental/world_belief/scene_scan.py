@@ -209,8 +209,10 @@ class SceneScanner:
         elif callable(set_prompts):
             raise ValueError("scan requires at least one text prompt")
 
+        streams = store.list_streams()
+        if "color_image" not in streams:
+            raise ScanIncompleteError("recording has no color frames")
         color = store.stream("color_image", Image)
-        depth = store.stream("depth_image", Image)
         window = self._resolve_window(belief, color, start, end, initial_lookback_s)
         if window is None:
             raise ScanIncompleteError("recording has no color frames")
@@ -218,6 +220,8 @@ class SceneScanner:
         source_end_ts = end
         previous_as_of = belief.last_fold_ts
 
+        if "camera_info" not in streams:
+            raise ScanIncompleteError("recording has no camera_info")
         info = store.stream("camera_info", CameraInfo)
         try:
             camera_info = info.last().data
@@ -260,10 +264,15 @@ class SceneScanner:
                 )
             raise ScanIncompleteError("recording has no eligible posed color frames")
 
+        depth = store.stream("depth_image", Image) if "depth_image" in streams else None
         selected = self._select_frames(frames)
         folded = 0
         for obs in selected:
-            got = self._detect_frame(obs, camera_info, depth, self._depth_tolerance_s, detector)
+            got = (
+                self._detect_frame(obs, camera_info, depth, self._depth_tolerance_s, detector)
+                if depth is not None
+                else None
+            )
             if got is None:
                 skipped += 1
                 continue

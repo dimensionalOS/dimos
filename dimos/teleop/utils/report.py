@@ -67,7 +67,7 @@ def generate_report(db_path: Path, out_dir: Path | None = None) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Pull each stream's rows out of the SqliteStore + decode by typed schema.
-    store = SqliteStore(path=str(db_path))
+    store = SqliteStore(path=str(db_path), read_only=True)
     store.start()
     try:
         records = _read_all(store)

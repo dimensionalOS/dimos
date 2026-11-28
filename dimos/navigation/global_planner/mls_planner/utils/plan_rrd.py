@@ -38,6 +38,7 @@ from dimos.mapping.ray_tracing.utils.loaded_map import (
     place_loaded_map,
 )
 from dimos.mapping.ray_tracing.viz import log_loaded_map, voxel_map_points
+from dimos.memory.cli.dataset import check_recording_output
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF, tf_stream
 from dimos.memory.type.observation import Observation
@@ -615,10 +616,11 @@ def main(
         render_voxel = default_render_voxel(voxel_size, DEFAULT_VOXEL_SIZE)
 
     db_path = resolve_named_path(dataset, ".db")
+    check_recording_output(db_path, out)
     crop = LocalCrop(local_radius, local_above, local_below)
     _init_recording(db_path, out, live, crop)
 
-    store = SqliteStore(path=str(db_path))
+    store = SqliteStore(path=str(db_path), read_only=True)
     with store:
         if lidar_stream not in store.list_streams():
             raise typer.BadParameter(

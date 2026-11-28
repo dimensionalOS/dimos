@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import os
+from pathlib import Path
 import sqlite3
 from typing import Annotated, Any
 
@@ -22,6 +24,7 @@ from pydantic import BeforeValidator
 
 from dimos.memory.backend import Backend
 from dimos.memory.blobstore.base import BlobStore
+from dimos.memory.blobstore.file import FileBlobStore, blob_files
 from dimos.memory.blobstore.sqlite import SqliteBlobStore
 from dimos.memory.codecs.base import codec_id
 from dimos.memory.observationstore.sqlite import SqliteObservationStore
@@ -35,6 +38,8 @@ from dimos.memory.utils.sqlite import (
 from dimos.memory.utils.validation import validate_identifier
 from dimos.memory.vectorstore.base import VectorStore
 from dimos.memory.vectorstore.sqlite import SqliteVectorStore
+
+SQLITE_SIDECARS = ("-wal", "-shm", "-journal")
 
 
 class SqliteStoreConfig(StoreConfig):
@@ -55,13 +60,7 @@ class SqliteStore(Store):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        if (self.config.must_exist or self.config.read_only) and not os.path.exists(
-            self.config.path
-        ):
-            raise FileNotFoundError(
-                f"SQLite database not found: {os.path.abspath(self.config.path)}"
-            )
-        if not self.config.must_exist and not self.config.read_only:
+        if not (self.config.must_exist or self.config.read_only):
             parent = os.path.dirname(self.config.path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
@@ -70,13 +69,30 @@ class SqliteStore(Store):
         self._registry = RegistryStore(conn=self._registry_conn)
         self._stopped = False
 
-    def _open_connection(self) -> sqlite3.Connection:
-        """Open a connection respecting the store's access mode."""
+    def _open_connection(self, path: str | None = None) -> sqlite3.Connection:
         disposable, connection = open_disposable_sqlite_connection(
-            self.config.path, read_only=self.config.read_only
+            self.config.path if path is None else path,
+            existing_recording=path is None and (self.config.must_exist or self.config.read_only),
+            read_only=self.config.read_only,
         )
         self.register_disposable(disposable)
         return connection
+
+    def _restore_component(
+        self,
+        stored: dict[str, Any] | None,
+        default: type[SqliteBlobStore] | type[SqliteVectorStore],
+        conn: sqlite3.Connection,
+    ) -> Any:
+        if stored is None:
+            return default(conn=conn)
+        if stored["class"] == qual(default):
+            path = stored.get("config", {}).get("path")
+            if path is None:
+                return default(conn=conn)
+            if self.config.read_only:
+                return default(conn=self._open_connection(path))
+        return deserialize_component(stored)
 
     def _assemble_backend(self, name: str, stored: dict[str, Any]) -> Backend[Any]:
         """Reconstruct a Backend from a stored config dict."""
@@ -90,26 +106,8 @@ class SqliteStore(Store):
 
         backend_conn = self._open_connection()
 
-        # Reconstruct components from serialized config
-        bs_data = stored.get("blob_store")
-        if bs_data is not None:
-            bs_cfg = bs_data.get("config", {})
-            if bs_cfg.get("path") is None and bs_data["class"] == qual(SqliteBlobStore):
-                bs: Any = SqliteBlobStore(conn=backend_conn)
-            else:
-                bs = deserialize_component(bs_data)
-        else:
-            bs = SqliteBlobStore(conn=backend_conn)
-
-        vs_data = stored.get("vector_store")
-        if vs_data is not None:
-            vs_cfg = vs_data.get("config", {})
-            if vs_cfg.get("path") is None and vs_data["class"] == qual(SqliteVectorStore):
-                vs: Any = SqliteVectorStore(conn=backend_conn)
-            else:
-                vs = deserialize_component(vs_data)
-        else:
-            vs = SqliteVectorStore(conn=backend_conn)
+        bs = self._restore_component(stored.get("blob_store"), SqliteBlobStore, backend_conn)
+        vs = self._restore_component(stored.get("vector_store"), SqliteVectorStore, backend_conn)
 
         notifier_data = stored.get("notifier")
         if notifier_data is not None:
@@ -175,6 +173,11 @@ class SqliteStore(Store):
                     )
             return self._assemble_backend(name, stored)
 
+        if self.config.read_only:
+            raise sqlite3.OperationalError(
+                f"No stream {name!r} in a readonly recording. Available: {self.list_streams()}"
+            )
+
         # Create path: inject conn-shared defaults, then delegate to base
         if payload_type is None:
             raise TypeError(f"Stream {name!r} does not exist yet — payload_type is required")
@@ -216,6 +219,33 @@ class SqliteStore(Store):
         )
 
         return backend
+
+    def backing_files(self, *, include_blob_files: bool = True) -> Iterator[Path]:
+        """Local storage used by this recording, without opening any external component."""
+        databases = {Path(self.config.path)}
+        blob_streams: list[tuple[Path, str]] = []
+        for name in self._registry.list_streams():
+            stored = self._registry.get(name)
+            if stored is None:
+                continue
+            for key in ("blob_store", "vector_store"):
+                component = stored.get(key)
+                if not component:
+                    continue
+                config = component["config"]
+                if component["class"] in (qual(SqliteBlobStore), qual(SqliteVectorStore)):
+                    if path := config.get("path"):
+                        databases.add(Path(path))
+                elif include_blob_files and component["class"] == qual(FileBlobStore):
+                    blob_streams.append((Path(config["root"]), name))
+
+        for db in databases:
+            yield db
+            resolved = db.resolve()
+            for suffix in SQLITE_SIDECARS:
+                yield Path(f"{resolved}{suffix}")
+        for directory, name in blob_streams:
+            yield from blob_files(directory, name)
 
     def list_streams(self) -> list[str]:
         db_names = set(self._registry.list_streams())

@@ -78,7 +78,7 @@ class DepthCameraFeed(Module):
         super().start()
         given = Path(self.config.dataset)
         path = given if given.exists() else get_data(self.config.dataset)
-        store = self.register_disposable(SqliteStore(path=str(path), must_exist=True))
+        store = self.register_disposable(SqliteStore(path=str(path), read_only=True))
         store.start()
         replay = store.replay(
             speed=self.config.speed, seek=self.config.seek, duration=self.config.duration

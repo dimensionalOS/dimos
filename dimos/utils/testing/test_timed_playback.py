@@ -24,6 +24,8 @@ from reactivex.abc import DisposableBase, ScheduledAction
 from reactivex.disposable import Disposable
 from reactivex.testing import TestScheduler
 
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.utils.testing import replay as replay_module
 from dimos.utils.testing.replay import timed_playback
 
 
@@ -48,6 +50,28 @@ class EagerScheduler(TestScheduler):
 def frames() -> Iterator[tuple[float, str]]:
     # "b" is due at once, so it is emitted before its own timer handle is stored.
     return iter([(0.0, "a"), (0.0, "b"), (100.0, "c")])
+
+
+def test_timed_sensor_replay_preserves_recording(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(replay_module, "_stores", {})
+    path = tmp_path / "capture.db"
+    with SqliteStore(path=path) as writer:
+        writer.stream("value", int).append(17, ts=1.0)
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("PRAGMA journal_mode=DELETE")
+    original = path.read_bytes()
+
+    try:
+        clock = TestScheduler()
+        received = []
+        source = replay_module.TimedSensorReplay("capture.db/value")
+        with source.stream().subscribe(received.append, scheduler=clock):
+            clock.advance_by(1)
+        assert received == [17]
+    finally:
+        replay_module._close_all()
+    assert path.read_bytes() == original
 
 
 def test_emission_before_its_timer_is_stored_does_not_stop_the_replay() -> None:
