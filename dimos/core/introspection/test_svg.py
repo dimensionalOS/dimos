@@ -13,17 +13,19 @@
 # limitations under the License.
 
 from pathlib import Path
+import re
 import subprocess
 
 import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
+from dimos.core.coordination.module_coordinator import resolve_module_refs
 from dimos.core.introspection.blueprint.dot import LayoutAlgo, render
 from dimos.core.introspection.module.info import ModuleInfo
 from dimos.core.introspection.svg import to_svg
 from dimos.core.module import Module
-from dimos.core.stream import IO
+from dimos.core.stream import IO, In, Out
 
 
 class Duplex(Module):
@@ -78,3 +80,68 @@ def test_svg_reports_graphviz_rendering_errors(tmp_path: Path, mocker: MockerFix
 
     with pytest.raises(RuntimeError, match="^graphviz failed: invalid graph$"):
         to_svg(ModuleInfo(name="Example"), str(tmp_path / "graph.svg"))
+
+
+@pytest.fixture
+def camera_display() -> tuple[Blueprint, type[Module]]:
+    class Camera(Module):
+        image: Out[bytes]
+
+    class Display(Module):
+        image: In[bytes]
+        camera: Camera
+
+    return autoconnect(Camera.blueprint(), Display.blueprint()).solidify(), Display
+
+
+def test_blueprint_graph_keeps_each_instances_stream_and_rpc(
+    camera_display: tuple[Blueprint, type[Module]],
+) -> None:
+    pair, _ = camera_display
+    blueprint = autoconnect(pair.namespace("left"), pair.namespace("right"))
+    graph = render(blueprint.solidify())
+
+    for side in ("left", "right"):
+        camera = f'"module:{side}/camera"'
+        display = f'"module:{side}/display"'
+        stream = re.search(rf"{camera} -> (\w+) ", graph)
+        contract = re.search(rf"{display} -> (\w+) ", graph)
+        assert stream and contract
+        assert f"{stream[1]} -> {display} " in graph
+        assert f"{contract[1]} -> {camera} " in graph
+        other = "right" if side == "left" else "left"
+        assert f'{stream[1]} -> "module:{other}/display"' not in graph
+        assert f'{contract[1]} -> "module:{other}/camera"' not in graph
+
+
+def test_rpc_graph_follows_an_explicit_instance_remapping(
+    camera_display: tuple[Blueprint, type[Module]],
+) -> None:
+    pair, _ = camera_display
+    blueprint = pair.namespace("left").remappings([("left/display", "camera", "left/camera")])
+    assert resolve_module_refs(blueprint) == {("left/display", "camera"): "left/camera"}
+    graph = render(blueprint)
+    assert '"module:left/display" -> rpc_0 ' in graph
+    assert 'rpc_0 -> "module:left/camera" ' in graph
+
+
+def test_disabled_modules_do_not_add_stream_nodes_or_edges(
+    camera_display: tuple[Blueprint, type[Module]],
+) -> None:
+    pair, display = camera_display
+    graph = render(pair.disabled_modules(display))
+    assert '"module:camera"' in graph
+    assert '"module:display"' not in graph
+    assert "image:bytes" not in graph
+
+
+def test_named_duplex_instances_share_both_directions_of_one_channel() -> None:
+    blueprint = autoconnect(
+        Duplex.blueprint(instance_name="left"), Duplex.blueprint(instance_name="right")
+    )
+    graph = render(blueprint.solidify())
+    channel = re.search(r'(\w+) \[label="frame:bytes"', graph)
+    assert channel
+    for peer in ("left", "right"):
+        assert f'"module:{peer}" -> {channel[1]} ' in graph
+        assert f'{channel[1]} -> "module:{peer}" ' in graph

@@ -14,6 +14,7 @@
 
 """Custom viewer launch, stock Rerun fallback, and bridge integration."""
 
+from collections.abc import Iterator
 import os
 import shutil
 import subprocess
@@ -21,9 +22,13 @@ import threading
 from unittest.mock import ANY
 
 import pytest
+from pytest_mock import MockerFixture
 import rerun as rr
 
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import GlobalConfig
+from dimos.core.introspection.blueprint.dot import render
+from dimos.core.module import Module
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.visualization.rerun import bridge
 from dimos.visualization.rerun.bridge import Config, _resolve_pubsubs, _start_save_client
@@ -184,3 +189,89 @@ class TestBridgePubsubResolution:
         pubsubs = _resolve_pubsubs(config)
 
         assert pubsubs == [custom]
+
+
+@pytest.fixture
+def viewer() -> Iterator[bridge.RerunBridgeModule]:
+    module = bridge.RerunBridgeModule()
+    yield module
+    module.stop()
+
+
+def test_bridge_logs_named_graph_nodes_and_edges(
+    mocker: MockerFixture, viewer: bridge.RerunBridgeModule
+) -> None:
+    layout = (
+        'node "module:front camera" 1 2 1 1 "front camera" filled box "#112233" "#445566"\n'
+        'node channel_0 1 3 1 1 image filled note "#112233" "#445566"\n'
+        'edge "module:front camera" channel_0 0 solid "#112233"\n'
+    )
+    mocker.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, layout))
+    log = mocker.patch.object(rr, "log")
+    viewer.log_blueprint_graph("digraph {}", ["module:front camera"])
+
+    _, nodes, edges = log.call_args.args
+    assert nodes.node_ids.as_arrow_array().to_pylist() == ["module:front camera", "channel_0"]
+    assert nodes.labels.as_arrow_array().to_pylist() == ["front camera", "image"]
+    assert nodes.radii.as_arrow_array().to_pylist() == [viewer.MODULE_RADIUS, viewer.CHANNEL_RADIUS]
+    assert edges.edges.as_arrow_array().to_pylist() == [
+        {"first": "module:front camera", "second": "channel_0"}
+    ]
+
+
+def test_bridge_breaks_label_lines_and_keeps_a_literal_backslash(
+    mocker: MockerFixture, viewer: bridge.RerunBridgeModule
+) -> None:
+    # Graphviz 14.1.2 on instances named "front\nleft", r"front\nleft" and "front%0Aleft" (positions shortened)
+    layout = "\n".join(
+        [
+            r'node "module:front%0Aleft" 0.77 0.58 0.75 0.73 "front\nleft\nModule" filled box #5c9ff0 #0b0f0f',
+            r'node "module:front%5Cnleft" 0.77 2.27 0.87 0.55 "front\\nleft\nModule" filled box #5c9ff0 #0b0f0f',
+            r'node "module:front%250Aleft" 0.77 1.47 1.09 0.55 "front%0Aleft\nModule" filled box #5c9ff0 #0b0f0f',
+        ]
+    )
+    mocker.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, layout))
+    log = mocker.patch.object(rr, "log")
+
+    viewer.log_blueprint_graph("digraph {}", [])
+
+    _, nodes, _ = log.call_args.args
+    assert nodes.labels.as_arrow_array().to_pylist() == [
+        "front\nleft\nModule",
+        "front\\nleft\nModule",
+        "front%0Aleft\nModule",
+    ]
+
+
+@pytest.mark.skipif(shutil.which("dot") is None, reason="Graphviz computes the Rerun layout")
+def test_rerun_keeps_distinct_escaped_module_names(
+    mocker: MockerFixture, viewer: bridge.RerunBridgeModule
+) -> None:
+    names = [
+        "front\nleft",
+        r"front\nleft",
+        "front%0Aleft",
+        "front\tleft",
+        r"front\tleft",
+        "front\u2028left",
+    ]
+    blueprint = autoconnect(*(Module.blueprint(instance_name=name) for name in names)).solidify()
+    module_ids = [
+        "module:front%0Aleft",
+        "module:front%5Cnleft",
+        "module:front%250Aleft",
+        "module:front%09left",
+        "module:front%5Ctleft",
+        "module:front%E2%80%A8left",
+    ]
+    log = mocker.patch.object(rr, "log")
+
+    viewer.log_blueprint_graph(render(blueprint), module_ids)
+
+    _, nodes, _ = log.call_args.args
+    ids = nodes.node_ids.as_arrow_array().to_pylist()
+    assert len(set(ids)) == len(names)
+    assert set(ids) == set(module_ids)
+    assert nodes.radii.as_arrow_array().to_pylist() == [viewer.MODULE_RADIUS] * len(names)
+    labels = nodes.labels.as_arrow_array().to_pylist()
+    assert sorted(labels) == sorted(f"{name}\nModule" for name in names)
