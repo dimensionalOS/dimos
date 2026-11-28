@@ -24,6 +24,8 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
+pytest.importorskip("pxr")
+
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
@@ -41,8 +43,6 @@ from dimos.sim2.mujoco.backend import MujocoBackend
 from dimos.sim2.mujoco.drives import usd_drives
 from dimos.sim2.scene import LOGISTICS, scene_usd
 from dimos.sim2.sim import JointCommand, SimulatedRobot, compose_usds
-
-pytest.importorskip("pxr")
 
 _SPOT = "logistics/spawns/go2"
 
