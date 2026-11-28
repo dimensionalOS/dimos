@@ -60,6 +60,7 @@ class _View:
     def __init__(self, world: _World) -> None:
         self.world, self.time = world, 0.0
         self.mounted_at: list[str | None] = []
+        self.rendered_from: list[str] = []
         self.imu_frames: list[str] = []
 
     def update(self, world: _World) -> None:
@@ -82,6 +83,13 @@ class _View:
 
     def twin(self) -> "_View":
         return self
+
+    def render(self, camera: str, width: int, height: int) -> Any:
+        self.rendered_from.append(camera)
+        return np.zeros((height, width, 3), np.uint8)
+
+    def close(self) -> None:
+        pass
 
     def imu(self, sensor: str) -> tuple[Any, Any, Any]:
         self.imu_frames.append(sensor)
@@ -141,6 +149,52 @@ def test_a_livox_cloud_cast_slower_than_its_stamp_tolerance_is_dropped_and_warne
         livox.stop()
     assert len(run["published"]) == sent
     assert len(warned) == (1 if sent == 0 else 0)
+
+
+class _Paced(_World):
+    """A world a second further on each tick, whose ticks leave a frame drawn in a thread the time to finish."""
+
+    async def ticks(self, rate_hz: float) -> AsyncIterator[float]:
+        for _ in range(TICKS):
+            self.time += 1.0
+            self.ticked.append(self.time)
+            yield self.time
+            await asyncio.sleep(FRAME_TIME)
+
+
+FRAME_TIME = 0.05
+
+
+def test_a_camera_sends_each_frame_with_its_camera_info_in_its_optical_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dimos.sim2.camera import SimCamera
+
+    camera = SimCamera(instance_name="left/camera", stamp_tolerance=math.inf, width=8, height=6)
+    world, mounts, sent = _Paced(), [], {"color_image": [], "camera_info": []}
+    view = _View(world)
+    camera._world = world
+
+    def open_view(mount: Any, *_quality: Any) -> _View:
+        mounts.append(mount)
+        return view
+
+    monkeypatch.setattr(camera, "open_view", open_view)
+    for stream, messages in sent.items():
+        monkeypatch.setattr(getattr(camera, stream), "publish", messages.append)
+    try:
+        asyncio.run(camera._capture())
+    finally:
+        camera.stop()
+    optical = camera.optical_frame_id
+    assert [mount.frame_id for mount in mounts] == [optical]
+    assert set(view.rendered_from) == {optical}
+    # Its first tick waits for the world, and each after it is a frame.
+    frames = sent["color_image"]
+    assert [frame.ts for frame in frames] == [info.ts for info in sent["camera_info"]]
+    assert len(frames) == TICKS
+    assert frames[0].shape[:2] == (6, 8)
+    assert {m.frame_id for m in frames + sent["camera_info"]} == {optical}
 
 
 @pytest.fixture

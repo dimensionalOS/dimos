@@ -29,9 +29,11 @@ from dimos.core.core import rpc
 from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
 from dimos.core.module import Module
 from dimos.core.stream import In
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.assets.model import UsdModel
+from dimos.sim2.camera import SimCamera
 from dimos.sim2.imu import SimImu
 from dimos.sim2.l1 import SimL1
 from dimos.sim2.livox import LivoxSim
@@ -41,6 +43,7 @@ from dimos.sim2.sim import SimulatedRobot, on_mount, sim
 
 L1_PERIOD = 0.13
 RATES = {
+    "color_image": 10.0,
     "imu": 50.0,
     "lidar": 10.0,
     "livox_imu": 50.0,
@@ -48,7 +51,7 @@ RATES = {
 }
 _BASE = "toy/Geometry/base"
 # Each sensor's mount on the toy dog, and the frame it hangs off.
-MOUNTS = {"imu": _BASE, "livox": f"{_BASE}/head", "l1": _BASE}
+MOUNTS = {"eye": f"{_BASE}/head", "imu": _BASE, "livox": f"{_BASE}/head", "l1": _BASE}
 
 
 class _DogConfig(HardwareModuleConfig):
@@ -72,6 +75,7 @@ class _Dog(HardwareModule):
 
 
 class _Readings(Module):
+    color_image: In[Image]
     imu: In[Imu]
     lidar: In[PointCloud2]
     livox_imu: In[Imu]
@@ -101,13 +105,16 @@ class _Readings(Module):
         }
 
 
-SENSOR_STREAMS = {"imu", "lidar", "livox_imu", "l1_lidar"}
+SENSOR_STREAMS = {"color_image", "imu", "lidar", "livox_imu", "l1_lidar"}
 
 
 def _run(seconds: float, speed: float) -> dict[str, Any]:
     dog = autoconnect(
         _Dog.blueprint(attached_to=Logistics.mounts.go2.name),
         # A mount namespaces its sensor's streams; these take them back out to _Readings.
+        SimCamera.attach(
+            _Dog.mounts.eye, width=64, height=48, rate_hz=RATES["color_image"]
+        ).remappings([(SimCamera, "color_image", "color_image")]),
         SimImu.attach(_Dog.mounts.imu, rate_hz=RATES["imu"]).remappings([(SimImu, "imu", "imu")]),
         LivoxSim.attach(
             _Dog.mounts.livox, rate_hz=RATES["lidar"], imu_rate_hz=RATES["livox_imu"]
@@ -156,7 +163,7 @@ def _per_second(stamps: list[float], start: float) -> float:
 
 
 @pytest.mark.self_hosted  # reads the Mid-360 pattern from Git LFS
-def test_sensors_keep_their_rates_in_real_time() -> None:
+def test_sensors_keep_their_rates_in_real_time(renders: None) -> None:
     readings = _run(seconds=8.0, speed=1.0)
     stamps = readings["stamps"]
     counts = {name: len(stamps[name]) for name in RATES}
