@@ -98,9 +98,10 @@ def backend() -> Iterator[_Stepped]:
     engine.close()
 
 
-def test_the_world_says_what_is_in_it_and_holds_the_robot_on_its_mount(backend: _Stepped) -> None:
+def test_the_world_holds_the_robot_on_its_mount_and_refuses_what_its_servos_cannot_do(
+    backend: _Stepped,
+) -> None:
     world = backend.step(5)
-    assert world.entity("world") is not None
     assert world.entity("world").cbor["backend"] == "dimsim"  # type: ignore[union-attr]
     assert world.entity(BOT).cbor[ODOM_FRAME] == f"{BOT}/odom"  # type: ignore[union-attr]
     # Its root is the anchor its servos move off, which stays on the mount.
@@ -108,18 +109,36 @@ def test_the_world_says_what_is_in_it_and_holds_the_robot_on_its_mount(backend: 
     assert backend.pose("crate")[:3] == pytest.approx([1.5, 0.0, 0.2], abs=0.02)
     assert sorted(backend.servos()) == sorted(SERVOS)
 
+    backend.backend.apply([JointCommand(BOT, ("neck",), velocity=(1.0,))])
+    backend.backend.apply([JointCommand(BOT, ("x",), position=(1.0,), kp=(10.0,))])
+    backend.step()
+    assert sum(key == REFUSED for _, key, _ in backend.received) >= 1
 
-def test_its_servos_move_at_the_velocity_commanded_and_push_the_crate(backend: _Stepped) -> None:
+
+def test_driven_forward_it_pushes_the_crate_which_comes_to_rest_once_it_stops(
+    backend: _Stepped,
+) -> None:
     backend.drive(1.0, 0.0, 0.0)
-    backend.step(100)
+    backend.step(70)
+    crate = backend.world.entity("crate")
+    assert crate is not None and crate.velocity is not None
+    assert crate.velocity[0] > 0.1, "the pushed crate sent no velocity"
+    backend.step(30)
     servos = backend.servos()
     assert servos["x"][0] > 0.6
     # Slowed by the crate it pushes, never faster than commanded.
     assert 0.0 < servos["x"][1] <= 1.0 + 1e-6
     assert backend.pose("crate")[0] > 1.6, "the crate was not pushed"
 
+    backend.drive(0.0, 0.0, 0.0)
+    backend.step(800)
+    crate = backend.world.entity("crate")
+    assert crate is not None and crate.velocity is not None
+    assert crate.velocity.tolist() == pytest.approx([0.0] * 6, abs=1e-3)
+    assert backend.servos()["x"][1] == pytest.approx(0.0, abs=1e-3)
 
-def test_a_turn_reads_on_its_yaw_servo_and_its_slides_stay_on_the_mount_axes(
+
+def test_a_turn_reads_on_its_yaw_servo_in_whole_turns_and_its_slides_stay_on_the_mount_axes(
     backend: _Stepped,
 ) -> None:
     backend.drive(0.0, 0.0, 0.5)
@@ -127,6 +146,11 @@ def test_a_turn_reads_on_its_yaw_servo_and_its_slides_stay_on_the_mount_axes(
     yaw, rate = backend.servos()["yaw"]
     assert yaw == pytest.approx(0.5 * 50 * TIMESTEP, abs=1e-3)
     assert rate == pytest.approx(0.5, abs=1e-3)
+    backend.drive(0.0, 0.0, 2.0)
+    backend.step(round(2 * math.pi / 2.0 / TIMESTEP) + 10)
+    assert backend.servos()["yaw"][0] > 2 * math.pi
+    assert np.isfinite(backend.pose(BOT)).all()
+
     # Turned, its y servo still slides along the mount's y.
     backend.drive(0.0, -0.5, 0.0)
     backend.step(50)
@@ -143,53 +167,21 @@ def test_a_wall_stops_it(backend: _Stepped) -> None:
     assert backend.servos()["y"][0] == pytest.approx(3.0 - 0.2 - 0.05, abs=0.06)
 
 
-def test_the_last_state_sent_of_a_body_that_stopped_is_still(backend: _Stepped) -> None:
-    backend.drive(1.0, 0.0, 0.0)
-    backend.step(70)
-    crate = backend.world.entity("crate")
-    assert crate is not None and crate.velocity is not None
-    assert crate.velocity[0] > 0.1, "the pushed crate sent no velocity"
-    backend.drive(0.0, 0.0, 0.0)
-    backend.step(800)
-    crate = backend.world.entity("crate")
-    assert crate is not None and crate.velocity is not None
-    assert crate.velocity.tolist() == pytest.approx([0.0] * 6, abs=1e-3)
-    assert backend.servos()["x"][1] == pytest.approx(0.0, abs=1e-3)
-
-
-def test_what_its_servos_cannot_do_is_refused(backend: _Stepped) -> None:
-    backend.backend.apply([JointCommand(BOT, ("neck",), velocity=(1.0,))])
-    backend.backend.apply([JointCommand(BOT, ("x",), position=(1.0,), kp=(10.0,))])
-    backend.step()
-    assert sum(key == REFUSED for _, key, _ in backend.received) >= 1
-
-
-def test_a_robot_without_planar_servos_is_refused() -> None:
-    _needs_dimsim()
-    toy = UsdModel.from_layer(
-        '#usda 1.0\n(\n    defaultPrim = "bot"\n)\ndef Xform "bot"\n{\n'
-        '    def Cube "base" (\n        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]\n'
-        "    )\n    {\n        float physics:mass = 5\n        double size = 0.4\n    }\n}\n"
-    )
-    composed = compose_usds(
-        [
-            (resolve_usd_assets(scene_usd(ROOM).usd, str(ROOM.parent)), None),
-            (usd_under_namespace(toy.usd, BOT), BOT),
-        ]
-    )
-    with pytest.raises(ValueError, match="three servos"):
-        DimSimBackend(composed, [SimulatedRobot(BOT, toy)], timestep=TIMESTEP)
-
-
-def test_stopping_before_the_modules_report_ends_the_wait() -> None:
-    """_run waits on this in a thread, and cancelling the task cannot reach a blocked wait."""
+def test_a_robot_without_planar_servos_is_refused_and_a_stop_before_it_is_built_ends_the_wait() -> (
+    None
+):
+    # _run waits on this in a thread, and cancelling the task cannot reach a blocked wait.
     sim = DimSimSim()
     sim.stop()
     assert sim._built.is_set(), "a thread in _built.wait would never return"
 
-
-def test_its_yaw_servo_counts_whole_turns(backend: _Stepped) -> None:
-    backend.drive(0.0, 0.0, 2.0)
-    backend.step(round(2 * math.pi / 2.0 / TIMESTEP) + 10)
-    assert backend.servos()["yaw"][0] > 2 * math.pi
-    assert np.isfinite(backend.pose(BOT)).all()
+    _needs_dimsim()
+    toy = UsdModel.from_layer(
+        '#usda 1.0\n(\n    defaultPrim = "bot"\n)\ndef Xform "bot" {\n'
+        '    def Cube "base" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]) {\n'
+        "        float physics:mass = 5\n        double size = 0.4\n    }\n}\n"
+    )
+    room = resolve_usd_assets(scene_usd(ROOM).usd, str(ROOM.parent))
+    composed = compose_usds([(room, None), (usd_under_namespace(toy.usd, BOT), BOT)])
+    with pytest.raises(ValueError, match="three servos"):
+        DimSimBackend(composed, [SimulatedRobot(BOT, toy)], timestep=TIMESTEP)
