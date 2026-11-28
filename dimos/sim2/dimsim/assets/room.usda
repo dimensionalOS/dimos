@@ -1,0 +1,150 @@
+#usda 1.0
+(
+    defaultPrim = "dimsim_room"
+    doc = "DimSim's own room: a 6 m square with a table, a crate a robot can push, and one spawn point, go2, its root body's height above the floor."
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "dimsim_room" (
+    kind = "component"
+)
+{
+    def Scope "Geometry"
+    {
+        def Cube "floor" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            color3f[] primvars:displayColor = [(0.55, 0.5, 0.45)] (
+                interpolation = "constant"
+            )
+            double size = 1
+            double3 xformOp:translate = (0, 0, -0.05)
+            float3 xformOp:scale = (6, 6, 0.1)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "north_wall" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            color3f[] primvars:displayColor = [(0.85, 0.83, 0.78)] (
+                interpolation = "constant"
+            )
+            double size = 1
+            double3 xformOp:translate = (0, 3.05, 0.6)
+            float3 xformOp:scale = (6.2, 0.1, 1.2)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "south_wall" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            color3f[] primvars:displayColor = [(0.85, 0.83, 0.78)] (
+                interpolation = "constant"
+            )
+            double size = 1
+            double3 xformOp:translate = (0, -3.05, 0.6)
+            float3 xformOp:scale = (6.2, 0.1, 1.2)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "east_wall" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            color3f[] primvars:displayColor = [(0.85, 0.83, 0.78)] (
+                interpolation = "constant"
+            )
+            double size = 1
+            double3 xformOp:translate = (3.05, 0, 0.6)
+            float3 xformOp:scale = (0.1, 6, 1.2)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "west_wall" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            color3f[] primvars:displayColor = [(0.85, 0.83, 0.78)] (
+                interpolation = "constant"
+            )
+            double size = 1
+            double3 xformOp:translate = (-3.05, 0, 0.6)
+            float3 xformOp:scale = (0.1, 6, 1.2)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "table" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            color3f[] primvars:displayColor = [(0.4, 0.28, 0.18)] (
+                interpolation = "constant"
+            )
+            double size = 1
+            double3 xformOp:translate = (-1.8, 1.8, 0.375)
+            float3 xformOp:scale = (1.2, 0.8, 0.75)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+    }
+
+    def Scope "Props"
+    {
+        def Cube "crate" (
+            prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+        )
+        {
+            float physics:mass = 2
+            color3f[] primvars:displayColor = [(0.75, 0.55, 0.25)] (
+                interpolation = "constant"
+            )
+            double size = 1
+            double3 xformOp:translate = (1.5, 0, 0.2)
+            float3 xformOp:scale = (0.4, 0.4, 0.4)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+    }
+
+    def DistantLight "sun"
+    {
+        float inputs:angle = 1
+        float inputs:intensity = 3
+        float3 xformOp:rotateXYZ = (40, 20, 0)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+    }
+
+    def DomeLight "sky"
+    {
+        float inputs:intensity = 1
+    }
+
+    def Scope "spawns"
+    {
+        def Xform "go2" (
+            prepend apiSchemas = ["DimosSpawnAPI"]
+        )
+        {
+            double3 xformOp:translate = (0, 0, 0.35)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Cube "volume"
+            {
+                uniform token purpose = "guide"
+                double size = 1
+                double3 xformOp:translate = (0, 0, 0.15)
+                float3 xformOp:scale = (1.2, 1.2, 1)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+        }
+    }
+}
+
+def PhysicsScene "PhysicsScene"
+{
+    vector3f physics:gravityDirection = (0, 0, -1)
+    float physics:gravityMagnitude = 9.81
+}

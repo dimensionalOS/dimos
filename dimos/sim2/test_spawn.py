@@ -62,6 +62,8 @@ def test_a_robot_too_big_for_its_spawn_point_is_refused(tmp_path) -> None:
         compose_usds([(room, None), (_toy_on_spot(), _SPOT)])
 
 
+# Office 555's scene is LFS, over the hosted runner's pull cap.
+@pytest.mark.self_hosted
 def test_office_555_has_spawn_points_on_both_floors_and_for_objects() -> None:
     names = {frame.rpartition("/")[2] for frame in spawn_frames_in_file(SCENE)}
     assert {"main", "left", "right", "overview"} <= names
@@ -70,6 +72,8 @@ def test_office_555_has_spawn_points_on_both_floors_and_for_objects() -> None:
     assert len([n for n in names if "_on_" in n]) >= 10
 
 
+# Office 555's scene is LFS, over the hosted runner's pull cap.
+@pytest.mark.self_hosted
 def test_office_555_floor_spots_stand_on_its_two_floors() -> None:
     from pxr import Usd, UsdGeom
 

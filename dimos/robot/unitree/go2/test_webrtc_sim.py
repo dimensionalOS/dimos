@@ -12,13 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
+from collections.abc import AsyncIterator
 import math
+import threading
+from types import SimpleNamespace
+from typing import Any
 
 import mujoco
+import numpy as np
+from numpy.typing import NDArray
 import pytest
 
+from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
 from dimos.robot.assets.usd_utils.layers import usd_under_namespace
+from dimos.robot.unitree.go2 import webrtc_sim
 from dimos.robot.unitree.go2.webrtc_sim import (
     BODY,
     SERVOS,
@@ -138,13 +149,94 @@ def test_its_frames_are_the_names_a_real_go2_gives_them_under_its_namespace() ->
         go2.stop()
 
 
-def test_its_odometry_turns_its_servos_into_a_pose_in_its_odom_frame() -> None:
+def test_its_odometry_turns_its_servos_into_a_pose_in_its_odom_frame_and_a_twist_in_its_body() -> (
+    None
+):
     go2 = Go2WebRtcSim(instance_name="main/go2webrtcsim", attached_to="main")
     try:
-        odom = go2._odometry(1.0, -2.0, math.pi / 2, 5.0)
+        # Facing +y, sliding +y along its mount at 0.5 m/s and turning at 0.2 rad/s.
+        odom = go2._odometry((1.0, -2.0, math.pi / 2), (0.0, 0.5, 0.2), 5.0)
     finally:
         go2.stop()
-    assert odom.frame_id == "main/odom"
+    assert isinstance(odom, Odometry)
+    assert (odom.frame_id, odom.child_frame_id) == ("main/odom", "main/base_link")
+    assert odom.ts == 5.0
     assert (odom.position.x, odom.position.y) == (1.0, -2.0)
     assert odom.position.z == pytest.approx(0.35, abs=0.01)
     assert odom.orientation.z == pytest.approx(math.sin(math.pi / 4))
+    assert (odom.vx, odom.vy, odom.wz) == pytest.approx((0.5, 0.0, 0.2))
+
+
+class _DrivenWorld:
+    """A world whose servos move a little further each tick, as a world being driven does."""
+
+    def __init__(self, ticks: int) -> None:
+        self.lock = threading.Lock()
+        self.time = 0.0
+        self._ticks = ticks
+
+    async def ticks(self, rate_hz: float) -> AsyncIterator[float]:
+        for _ in range(self._ticks):
+            self.time += 1 / rate_hz
+            yield self.time
+
+    def joints(self, robot: str) -> tuple[list[str], NDArray[np.float64]]:
+        return list(SERVOS), np.array(
+            [[self.time, 0.4, 0.0], [self.time, 0.0, 0.0], [self.time, 0.5, 0.0]]
+        )
+
+
+def test_it_publishes_no_moving_tf_only_its_static_edges_and_odometry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Driven, it sends odometry and puts nothing on tf; the edges it does send are static and never place its body or what its servos move."""
+    go2 = Go2WebRtcSim(instance_name="main/go2webrtcsim", attached_to="main")
+    try:
+        on_tf: list[Any] = []
+        odometry: list[Odometry] = []
+        # Whatever it would put on tf, through its tfbuffer or its tf port.
+        monkeypatch.setattr(
+            go2,
+            "_tf",
+            SimpleNamespace(publish=lambda *edges: on_tf.extend(edges), dispose=lambda: None),
+        )
+        monkeypatch.setattr(go2.tf, "publish", on_tf.append)
+        monkeypatch.setattr(go2.odom, "publish", odometry.append)
+        monkeypatch.setattr(go2.world_actions, "publish", lambda action: None)
+        monkeypatch.setattr(webrtc_sim, "world_action", lambda world, command: None)
+        go2._world = _DrivenWorld(ticks=5)
+        asyncio.run(go2._drive())
+        static = go2.static_transforms(ts=0.0)
+        moving_children = {edge.child_frame_id for edge in go2.moving_transforms()}
+    finally:
+        go2.stop()
+    assert on_tf == []
+    assert len(odometry) == 5
+    assert moving_children, "its USD's servos move frames, which tf would have to carry"
+    children = {edge.child_frame_id for edge in static}
+    assert not children & moving_children
+    assert "main/base_link" not in children
+    assert {(edge.frame_id, edge.child_frame_id) for edge in static} == go2.tf_edge_ids
+
+
+@pytest.mark.skipif_no_turbojpeg
+def test_its_camera_sends_jpegs_with_its_lens_stamped_as_the_frame_was_drawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    go2 = Go2WebRtcSim(instance_name="main/go2webrtcsim", attached_to="main")
+    try:
+        images: list[CompressedImage] = []
+        infos: list[CameraInfo] = []
+        monkeypatch.setattr(go2.color_image, "publish", images.append)
+        monkeypatch.setattr(go2.camera_info, "publish", infos.append)
+        info = go2._camera_info()
+        rgb = np.full((info.height, info.width, 3), (200, 40, 10), dtype=np.uint8)
+        go2._publish_frame(info, rgb, 3.0)
+    finally:
+        go2.stop()
+    [jpeg] = images
+    assert jpeg.format == "jpeg" and jpeg.data[:2] == b"\xff\xd8"
+    assert (jpeg.ts, jpeg.frame_id) == (3.0, "main/camera_optical")
+    decoded = jpeg.decode()
+    assert (decoded.width, decoded.height) == (info.width, info.height)
+    assert [i.ts for i in infos] == [3.0]

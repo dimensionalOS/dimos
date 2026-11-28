@@ -1,0 +1,82 @@
+#usda 1.0
+(
+    defaultPrim = "bot"
+    doc = "A box on three velocity servos (x, y, yaw) off an anchor on its mount: the smallest robot a dimsim world moves."
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "bot"
+{
+    def Scope "Geometry"
+    {
+        def Xform "anchor" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+        )
+        {
+            float physics:mass = 1
+        }
+
+        def Xform "x_link" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+        )
+        {
+            float physics:mass = 1
+
+            def PhysicsPrismaticJoint "x" (
+                prepend apiSchemas = ["PhysicsDriveAPI:linear"]
+            )
+            {
+                float drive:linear:physics:damping = 400
+                float drive:linear:physics:stiffness = 0
+                uniform token physics:axis = "X"
+                rel physics:body0 = </bot/Geometry/anchor>
+                rel physics:body1 = </bot/Geometry/x_link>
+            }
+        }
+
+        def Xform "y_link" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+        )
+        {
+            float physics:mass = 1
+
+            def PhysicsPrismaticJoint "y" (
+                prepend apiSchemas = ["PhysicsDriveAPI:linear"]
+            )
+            {
+                float drive:linear:physics:damping = 400
+                float drive:linear:physics:stiffness = 0
+                uniform token physics:axis = "Y"
+                rel physics:body0 = </bot/Geometry/x_link>
+                rel physics:body1 = </bot/Geometry/y_link>
+            }
+        }
+
+        def Xform "base" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+        )
+        {
+            float physics:mass = 5
+
+            def Cube "box" (
+                prepend apiSchemas = ["PhysicsCollisionAPI"]
+            )
+            {
+                double size = 0.4
+            }
+
+            def PhysicsRevoluteJoint "yaw" (
+                prepend apiSchemas = ["PhysicsDriveAPI:angular"]
+            )
+            {
+                float drive:angular:physics:damping = 1
+                float drive:angular:physics:stiffness = 0
+                uniform token physics:axis = "Z"
+                rel physics:body0 = </bot/Geometry/y_link>
+                rel physics:body1 = </bot/Geometry/base>
+            }
+        }
+    }
+}
