@@ -21,8 +21,8 @@ under which terms.
 Office" by Mersus Technologies, licensed under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 Source: <https://sketchfab.com/3d-models/mersus-office-8714be387bcd406898b2615f7dae3a47>.
-Changes: the model was split into parts, converted to OBJ meshes and given a MuJoCo
-scene description.
+Changes: the model was split into parts and converted to OBJ meshes. Convex collision
+shapes and a MuJoCo scene description were added.
 
 ### MuJoCo Menagerie
 
