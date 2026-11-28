@@ -116,6 +116,16 @@ def test_stop_after_start_releases_resources_once(localizer, mocker):
     assert not localizer._thread.is_alive()
 
 
+def test_pair_geometry_retains_the_nearest_depth_frame(localizer):
+    localizer.start()
+    for ts in (10.0, 10.03):
+        depth = Image.from_numpy(np.ones((2, 2), np.uint16), format=ImageFormat.DEPTH16, ts=ts)
+        localizer.depth_image.subscribe.call_args.args[0](depth)
+    query = localizer._geometry_feed.last()
+    list(localizer._pair_geometry(iter([query])))
+    assert localizer._geometry_memory.first().ts == 10.03
+
+
 class _SameEmbedder:
     def embed(self, *images: Image) -> Embedding | list[Embedding]:
         vecs = [Embedding(np.array([1.0, 0.0], dtype=np.float32)) for _ in images]

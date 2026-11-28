@@ -227,9 +227,9 @@ class ReplayStream(Generic[T]):
             return None
 
     def find_closest(self, timestamp: float, tolerance: float = 1.0) -> T | None:
-        s: Stream[Any] = self._replay.store.stream(self._name)
+        """Return the nearest frame in the replay window, or None outside tolerance."""
         try:
-            obs: Any = s.at(timestamp, tolerance).first()
+            obs = self._base_stream().closest(timestamp, tolerance)
         except LookupError:
             return None
         return self._decode(obs)

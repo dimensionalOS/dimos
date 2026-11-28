@@ -124,6 +124,9 @@ class StreamQuery:
     # Full-text search (substring / FTS5)
     search_text: str | None = None
 
+    # A finite closest() terminal can accept just the nearest matching row.
+    nearest_to: float | None = None
+
     def __str__(self) -> str:
         parts: list[str] = [str(f) for f in self.filters]
         if self.search_text is not None:

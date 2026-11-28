@@ -182,27 +182,15 @@ class LegacyPickleStore(TimeSeriesStore[T]):
     def _find_closest_timestamp(
         self, timestamp: float, tolerance: float | None = None
     ) -> float | None:
-        """Linear scan with early exit (assumes timestamps are monotonically increasing)."""
-        closest_ts: float | None = None
-        closest_diff = float("inf")
-
-        for ts, _ in self._iter_items():
-            diff = abs(ts - timestamp)
-
-            if diff < closest_diff:
-                closest_diff = diff
-                closest_ts = ts
-            elif diff > closest_diff:
-                # Moving away from target, can stop
-                break
-
-        if closest_ts is None:
+        """Numbered files preserve arrival order, which can differ from timestamp order."""
+        closest = min(
+            (ts for ts, _ in self._iter_items()),
+            key=lambda ts: (abs(ts - timestamp), ts),
+            default=None,
+        )
+        if closest is None or (tolerance is not None and abs(closest - timestamp) > tolerance):
             return None
-
-        if tolerance is not None and closest_diff > tolerance:
-            return None
-
-        return closest_ts
+        return closest
 
     def _count(self) -> int:
         return sum(1 for _ in self._iter_files())
