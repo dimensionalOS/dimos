@@ -3,7 +3,7 @@
 Stream methods fall into three categories: **lazy**, **materializing**, and **terminal**. The distinction matters for live (infinite) streams.
 
 `is_live()` walks the source chain to detect live mode — any stream whose ancestor called `.live()` returns `True`.
-All materializing operations and unsafe terminals check this and raise `TypeError` immediately rather than silently hanging.
+Building a query is lazy. On a live transform stream, materializing operations such as `.order_by()` raise `TypeError` when iterated. Unsafe terminal calls such as `.count()` check live mode when called.
 
 ## Lazy (streaming)
 
@@ -14,7 +14,7 @@ These return generators — each observation flows through one at a time. Safe w
 | `.after()` `.before()` `.time_range()` `.at()` `.near()` `.filter_tags()` | Filter predicates — skip non-matching obs       |
 | `.filter(pred)`                                                           | Same, user-defined predicate                    |
 | `.transform(xf_or_fn)` / `.map(fn)`                                       | Generator — yields transformed obs one by one   |
-| `.search_text(text)`                                                      | Generator — substring match filter              |
+| `.search_text(text)`                                                      | Generator — substring match (`MemoryStore`, `McapStore`, and transform streams; raises `NotImplementedError` on `SqliteStore` streams) |
 | `.limit(k)`                                                               | `islice` — stops after k                        |
 | `.offset(n)`                                                              | `islice` — skips first n                        |
 | `.live()`                                                                 | Enables live tail (backfill then block for new) |
@@ -23,23 +23,23 @@ These compose freely. A chain like `.after(t).filter(pred).transform(xf).limit(1
 
 ## Materializing (collect-then-process)
 
-These **must consume the entire upstream** before producing output. On a live stream, they raise `TypeError` immediately.
+These **must consume the entire upstream** before producing output. On a live stream, they raise `TypeError` when iterated.
 
 | Method             | Why                                          | Live behaviour |
 |--------------------|----------------------------------------------|----------------|
 | `.search(vec, k)`  | Cosine-ranks all observations, returns top-k | TypeError      |
 | `.order_by(field)` | `sorted(list(it))` — needs all items to sort | TypeError      |
 
-On a backend-backed stream (not a transform), both are pushed down to the backend which handles them on its own data structure (snapshot). The guard only fires when these appear on a **transform stream** whose upstream is live — detected via `is_live()`.
+On a backend-backed stream (not a transform), both are pushed down to the backend which handles them on its own data structure (snapshot). The guard only fires when these appear on a **transform stream** whose upstream is live — detected via `is_live()`. `MemoryStore` and `SqliteStore` persist embeddings and support `.search(vec, k)` on stored streams (`McapStore` is read-only with no vector store, so embed in a transform first; `NullStore` retains no history).
 
 ### Rejected patterns (raise TypeError)
 
 ```python
-# TypeError: search requires finite data
-stream.live().transform(Embed(model)).search(vec, k=5)
+# TypeError on iteration: search requires finite data
+stream.live().transform(EmbedImages(clip)).search(vec, k=5).drain()
 
-# TypeError: order_by requires finite data
-stream.live().transform(xf).order_by("ts", desc=True)
+# TypeError on iteration: order_by requires finite data
+stream.live().transform(xf).order_by("ts", desc=True).drain()
 
 # TypeError (via order_by): last() calls order_by internally
 stream.live().transform(xf).last()

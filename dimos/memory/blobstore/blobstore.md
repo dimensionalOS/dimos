@@ -5,16 +5,20 @@ Separates payload blob storage from metadata indexing. Observation payloads vary
 ## ABC (`blobstore/base.py`)
 
 ```python
-class BlobStore(Resource):
+from dimos.core.resource import CompositeResource
+from dimos.protocol.service.spec import Configurable
+
+
+class BlobStore(Configurable, CompositeResource):
     def put(self, stream_name: str, key: int, data: bytes) -> None: ...
     def get(self, stream_name: str, key: int) -> bytes: ...    # raises KeyError if missing
-    def delete(self, stream_name: str, key: int) -> None: ...  # silent if missing
+    def delete(self, stream_name: str, key: int) -> None: ...  # raises KeyError if missing
 ```
 
 - `stream_name` — stream name (used to organize storage: directories, tables)
 - `key` — observation id
 - `data` — encoded payload bytes (codec handles serialization, blob store handles persistence)
-- Extends `Resource` (start/stop) but does NOT own its dependencies' lifecycle
+- Extends `Configurable` and `CompositeResource` (start/stop) and does NOT own its dependencies' lifecycle
 
 ## Implementations
 
@@ -26,7 +30,7 @@ Stores blobs as files on disk, one directory per stream.
 {root}/{stream}/{key}.bin
 ```
 
-`__init__(root: str | os.PathLike[str])` — `start()` creates the root directory.
+`__init__(root=...)` takes a directory path (`str`). `start()` creates the root directory.
 
 ### `sqlite.py` — SqliteBlobStore
 
