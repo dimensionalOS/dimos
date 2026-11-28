@@ -22,9 +22,12 @@ from dimos.perception.detection.type.detection2d.imageDetections2D import ImageD
 pytestmark = pytest.mark.self_hosted
 
 
-@pytest.fixture(params=["bbox_detector", "person_detector", "yoloe_detector"], scope="session")
+@pytest.fixture(
+    params=["dfine_detector", "bbox_detector", "person_detector", "yoloe_detector"],
+    scope="session",
+)
 def detector(request):
-    """Parametrized fixture that provides both bbox and person detectors."""
+    """Parametrized fixture that provides the bbox and person detectors."""
     return request.getfixturevalue(request.param)
 
 
@@ -107,10 +110,10 @@ def test_detection_ros_conversion(detections) -> None:
     assert abs(ros_det.bbox.size_x - width) < 0.01
     assert abs(ros_det.bbox.size_y - height) < 0.01
 
-    # Check confidence and class_id
-    assert len(ros_det.results) > 0
+    # Check confidence and name. The class is a string on the wire.
+    assert ros_det.results_length == 1
     assert ros_det.results[0].hypothesis.score == detection.confidence
-    assert ros_det.results[0].hypothesis.class_id == detection.class_id
+    assert ros_det.results[0].hypothesis.class_id == detection.name
 
 
 def test_detection_is_valid(detections) -> None:

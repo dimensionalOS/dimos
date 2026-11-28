@@ -919,6 +919,24 @@ wheels = [
 ]
 
 [[package]]
+name = "clip-anytorch"
+version = "2.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "ftfy" },
+    { name = "regex" },
+    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/98/26/85f9a52aedf8129b42a7416a3ec082c05822d9acd4f98bd7caaa811f657c/clip-anytorch-2.6.0.tar.gz", hash = "sha256:a827e4a64edbf72db01641b85ba88d37c4aff64ba3ffd4e3f7091a68e7e2badf", size = 1377219, upload-time = "2024-01-13T15:21:35.712Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/88/14/19d5ff584cb58f654d22d8d6552d7c2fff7b85e4a9d525357f62a4d1e7e0/clip_anytorch-2.6.0-py3-none-any.whl", hash = "sha256:ebc0afed243851b9dc7e16ab8afb665237e8a5838986e97cd99f123ae4ce94ce", size = 1372891, upload-time = "2024-01-13T15:21:33.903Z" },
+]
+
+[[package]]
 name = "cloudpickle"
 version = "3.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1849,7 +1867,6 @@ all = [
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
     { name = "langgraph" },
-    { name = "lap" },
     { name = "manifold3d" },
     { name = "mjcf-to-urdf" },
     { name = "moondream" },
@@ -1885,7 +1902,6 @@ all = [
     { name = "tokenizers" },
     { name = "transformers", extra = ["torch"] },
     { name = "trimesh" },
-    { name = "ultralytics" },
     { name = "unitree-webrtc-connect" },
     { name = "usd-core" },
     { name = "uvicorn" },
@@ -1921,7 +1937,6 @@ base = [
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
     { name = "langgraph" },
-    { name = "lap" },
     { name = "moondream" },
     { name = "ollama" },
     { name = "omegaconf" },
@@ -1940,7 +1955,6 @@ base = [
     { name = "timm" },
     { name = "tokenizers" },
     { name = "transformers", extra = ["torch"] },
-    { name = "ultralytics" },
     { name = "uvicorn" },
     { name = "uvloop" },
     { name = "watchfiles" },
@@ -2001,7 +2015,6 @@ manipulation = [
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
     { name = "langgraph" },
-    { name = "lap" },
     { name = "mjcf-to-urdf" },
     { name = "moondream" },
     { name = "mujoco" },
@@ -2031,7 +2044,6 @@ manipulation = [
     { name = "tokenizers" },
     { name = "transformers", extra = ["torch"] },
     { name = "trimesh" },
-    { name = "ultralytics" },
     { name = "uvicorn" },
     { name = "uvloop" },
     { name = "viser", extra = ["urdf"] },
@@ -2054,7 +2066,6 @@ perception = [
     { name = "einops" },
     { name = "huggingface-hub" },
     { name = "hydra-core" },
-    { name = "lap" },
     { name = "moondream" },
     { name = "omegaconf" },
     { name = "pillow" },
@@ -2063,7 +2074,6 @@ perception = [
     { name = "timm" },
     { name = "tokenizers" },
     { name = "transformers", extra = ["torch"] },
-    { name = "ultralytics" },
 ]
 planning = [
     { name = "can-motor-control" },
@@ -2116,7 +2126,6 @@ unitree = [
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
     { name = "langgraph" },
-    { name = "lap" },
     { name = "moondream" },
     { name = "ollama" },
     { name = "omegaconf" },
@@ -2135,7 +2144,6 @@ unitree = [
     { name = "timm" },
     { name = "tokenizers" },
     { name = "transformers", extra = ["torch"] },
-    { name = "ultralytics" },
     { name = "unitree-webrtc-connect" },
     { name = "uvicorn" },
     { name = "uvloop" },
@@ -2163,7 +2171,6 @@ unitree-dds = [
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
     { name = "langgraph" },
-    { name = "lap" },
     { name = "mcap" },
     { name = "moondream" },
     { name = "ollama" },
@@ -2183,7 +2190,6 @@ unitree-dds = [
     { name = "timm" },
     { name = "tokenizers" },
     { name = "transformers", extra = ["torch"] },
-    { name = "ultralytics" },
     { name = "unitree-sdk2py-dimos" },
     { name = "unitree-webrtc-connect" },
     { name = "uvicorn" },
@@ -2214,6 +2220,12 @@ webrtc = [
     { name = "aiohttp" },
     { name = "aiortc" },
     { name = "av" },
+]
+yolo = [
+    { name = "clip-anytorch" },
+    { name = "lap" },
+    { name = "setuptools" },
+    { name = "ultralytics" },
 ]
 
 [package.dev-dependencies]
@@ -2249,7 +2261,6 @@ lint = [
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langchain-openai" },
-    { name = "lap" },
     { name = "moondream" },
     { name = "mypy" },
     { name = "ollama" },
@@ -2274,7 +2285,6 @@ lint = [
     { name = "types-pyyaml" },
     { name = "types-reportlab" },
     { name = "types-requests" },
-    { name = "ultralytics" },
     { name = "watchdog" },
     { name = "xacro" },
 ]
@@ -2288,7 +2298,6 @@ project-deps = [
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langchain-openai" },
-    { name = "lap" },
     { name = "moondream" },
     { name = "ollama" },
     { name = "openai" },
@@ -2299,7 +2308,6 @@ project-deps = [
     { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
     { name = "transformers", extra = ["torch"] },
-    { name = "ultralytics" },
     { name = "xacro" },
 ]
 tests = [
@@ -2317,7 +2325,6 @@ tests = [
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langchain-openai" },
-    { name = "lap" },
     { name = "maturin" },
     { name = "md-babel-py" },
     { name = "mjcf-to-urdf" },
@@ -2352,7 +2359,6 @@ tests = [
     { name = "traitlets" },
     { name = "transformers", extra = ["torch"] },
     { name = "trimesh" },
-    { name = "ultralytics" },
     { name = "unitree-webrtc-connect" },
     { name = "viser", extra = ["urdf"], marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
     { name = "watchdog" },
@@ -2366,7 +2372,7 @@ tests-self-hosted = [
     { name = "coacd" },
     { name = "coverage" },
     { name = "dim-odom" },
-    { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "manipulation", "mapping", "misc", "unitree", "visualization", "web", "webrtc"] },
+    { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "manipulation", "mapping", "misc", "unitree", "visualization", "web", "webrtc", "yolo"] },
     { name = "dimos-cdrgen" },
     { name = "einops" },
     { name = "googlemaps" },
@@ -2374,7 +2380,6 @@ tests-self-hosted = [
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langchain-openai" },
-    { name = "lap" },
     { name = "maturin" },
     { name = "mcap" },
     { name = "md-babel-py" },
@@ -2411,7 +2416,6 @@ tests-self-hosted = [
     { name = "traitlets" },
     { name = "transformers", extra = ["torch"] },
     { name = "trimesh" },
-    { name = "ultralytics" },
     { name = "unitree-webrtc-connect" },
     { name = "viser", extra = ["urdf"], marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
     { name = "watchdog" },
@@ -2435,6 +2439,7 @@ requires-dist = [
     { name = "cbor2", specifier = ">=6.1.5,<7" },
     { name = "cel-expr-python", specifier = "==0.1.4" },
     { name = "chromadb", marker = "extra == 'perception'", specifier = ">=1.0.0" },
+    { name = "clip-anytorch", marker = "extra == 'yolo'", specifier = ">=2.6" },
     { name = "cmeel-tinyxml2", specifier = ">=11,<12" },
     { name = "coacd", marker = "extra == 'scene'", specifier = ">=1.0.0" },
     { name = "cryptography", specifier = ">=46.0.5" },
@@ -2477,7 +2482,7 @@ requires-dist = [
     { name = "langchain-ollama", marker = "extra == 'agents'", specifier = ">=1,<2" },
     { name = "langchain-openai", marker = "extra == 'agents'", specifier = ">=1,<2" },
     { name = "langgraph", marker = "extra == 'agents'", specifier = ">=1.0" },
-    { name = "lap", marker = "extra == 'perception'", specifier = ">=0.5.12" },
+    { name = "lap", marker = "extra == 'yolo'", specifier = ">=0.5.12" },
     { name = "lazy-loader" },
     { name = "lcm", specifier = ">=1.5.3" },
     { name = "llvmlite", specifier = ">=0.42.0" },
@@ -2538,6 +2543,7 @@ requires-dist = [
     { name = "safetensors", marker = "extra == 'perception'", specifier = ">=0.8" },
     { name = "scipy", specifier = ">=1.15.1" },
     { name = "sentencepiece", marker = "extra == 'perception'", specifier = ">=0.2.0" },
+    { name = "setuptools", marker = "extra == 'yolo'", specifier = "<82" },
     { name = "sortedcontainers", specifier = "==2.4.0" },
     { name = "sounddevice", marker = "extra == 'agents'" },
     { name = "soundfile", marker = "extra == 'web'" },
@@ -2558,7 +2564,7 @@ requires-dist = [
     { name = "trimesh", marker = "extra == 'scene'", specifier = ">=4.0.0" },
     { name = "typer", specifier = ">=0.19.2,<1" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'", specifier = ">=4.7" },
-    { name = "ultralytics", marker = "extra == 'perception'", specifier = ">=8.3.70" },
+    { name = "ultralytics", marker = "extra == 'yolo'", specifier = ">=8.3.70" },
     { name = "unitree-sdk2py-dimos", marker = "extra == 'unitree-dds'", specifier = ">=1.0.2" },
     { name = "unitree-webrtc-connect", marker = "extra == 'unitree'", specifier = ">=2.1.2" },
     { name = "usd-core", marker = "extra == 'scene'", specifier = ">=23.11" },
@@ -2574,7 +2580,7 @@ requires-dist = [
     { name = "yourdfpy", marker = "(platform_machine != 'aarch64' and extra == 'visualization') or (sys_platform != 'linux' and extra == 'visualization')", specifier = ">=0.0.60" },
     { name = "yourdfpy", marker = "extra == 'planning'", specifier = ">=0.0.60" },
 ]
-provides-extras = ["misc", "spot", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "control", "planning", "manipulation", "leader-teleop", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
+provides-extras = ["misc", "spot", "visualization", "learning", "agents", "web", "perception", "yolo", "unitree", "unitree-dds", "control", "planning", "manipulation", "leader-teleop", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]
@@ -2602,7 +2608,6 @@ lint = [
     { name = "langchain", specifier = "==1.2.3" },
     { name = "langchain-core", specifier = "==1.3.3" },
     { name = "langchain-openai", specifier = ">=1,<2" },
-    { name = "lap", specifier = ">=0.5.12" },
     { name = "moondream" },
     { name = "mypy", specifier = "==1.19.0" },
     { name = "ollama", specifier = ">=0.6.0" },
@@ -2627,7 +2632,6 @@ lint = [
     { name = "types-pyyaml", specifier = ">=6.0.12.20250915,<7" },
     { name = "types-reportlab", specifier = ">=4.5.0" },
     { name = "types-requests", specifier = ">=2.32.4.20260107,<3" },
-    { name = "ultralytics", specifier = ">=8.3.70" },
     { name = "watchdog", specifier = ">=3.0.0" },
     { name = "xacro" },
 ]
@@ -2641,7 +2645,6 @@ project-deps = [
     { name = "langchain", specifier = "==1.2.3" },
     { name = "langchain-core", specifier = "==1.3.3" },
     { name = "langchain-openai", specifier = ">=1,<2" },
-    { name = "lap", specifier = ">=0.5.12" },
     { name = "moondream" },
     { name = "ollama", specifier = ">=0.6.0" },
     { name = "openai" },
@@ -2652,7 +2655,6 @@ project-deps = [
     { name = "torchvision", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=0.16,<0.23" },
     { name = "torchvision", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'", specifier = ">=0.16,<0.23", index = "https://download.pytorch.org/whl/cu128" },
     { name = "transformers", extras = ["torch"], specifier = "==4.53.3" },
-    { name = "ultralytics", specifier = ">=8.3.70" },
     { name = "xacro" },
 ]
 tests = [
@@ -2671,7 +2673,6 @@ tests = [
     { name = "langchain", specifier = "==1.2.3" },
     { name = "langchain-core", specifier = "==1.3.3" },
     { name = "langchain-openai", specifier = ">=1,<2" },
-    { name = "lap", specifier = ">=0.5.12" },
     { name = "maturin", specifier = ">=1.7" },
     { name = "md-babel-py", specifier = ">=1.4.0" },
     { name = "mjcf-to-urdf", specifier = ">=0.1.1" },
@@ -2706,7 +2707,6 @@ tests = [
     { name = "traitlets", specifier = ">=5.14" },
     { name = "transformers", extras = ["torch"], specifier = "==4.53.3" },
     { name = "trimesh", specifier = ">=4.0.0" },
-    { name = "ultralytics", specifier = ">=8.3.70" },
     { name = "unitree-webrtc-connect", specifier = ">=2.1.2" },
     { name = "viser", extras = ["urdf"], marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=1.0.29" },
     { name = "watchdog", specifier = ">=3.0.0" },
@@ -2721,7 +2721,7 @@ tests-self-hosted = [
     { name = "coverage", specifier = ">=7.0" },
     { name = "dim-odom", specifier = ">=0.4.1" },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
-    { name = "dimos", extras = ["manipulation", "misc", "unitree"] },
+    { name = "dimos", extras = ["manipulation", "misc", "unitree", "yolo"] },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
     { name = "dimos-cdrgen", specifier = "==0.1.0" },
     { name = "einops", specifier = ">=0.8.1" },
@@ -2730,7 +2730,6 @@ tests-self-hosted = [
     { name = "langchain", specifier = "==1.2.3" },
     { name = "langchain-core", specifier = "==1.3.3" },
     { name = "langchain-openai", specifier = ">=1,<2" },
-    { name = "lap", specifier = ">=0.5.12" },
     { name = "maturin", specifier = ">=1.7" },
     { name = "mcap", specifier = ">=1.2.0" },
     { name = "md-babel-py", specifier = ">=1.4.0" },
@@ -2767,7 +2766,6 @@ tests-self-hosted = [
     { name = "traitlets", specifier = ">=5.14" },
     { name = "transformers", extras = ["torch"], specifier = "==4.53.3" },
     { name = "trimesh", specifier = ">=4.0.0" },
-    { name = "ultralytics", specifier = ">=8.3.70" },
     { name = "unitree-webrtc-connect", specifier = ">=2.1.2" },
     { name = "viser", extras = ["urdf"], marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=1.0.29" },
     { name = "watchdog", specifier = ">=3.0.0" },
@@ -3351,6 +3349,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/51/7c/f60c259dcbf4f0c47cc4ddb8f7720d2dcdc8888c8e5ad84c73ea4531cc5b/fsspec-2026.2.0.tar.gz", hash = "sha256:6544e34b16869f5aacd5b90bdf1a71acb37792ea3ddf6125ee69a22a53fb8bff", size = 313441, upload-time = "2026-02-05T21:50:53.743Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e6/ab/fb21f4c939bb440104cc2b396d3be1d9b7a9fd3c6c2a53d98c45b3d7c954/fsspec-2026.2.0-py3-none-any.whl", hash = "sha256:98de475b5cb3bd66bedd5c4679e87b4fdfe1a3bf4d707b151b3c07e58c9a2437", size = 202505, upload-time = "2026-02-05T21:50:51.819Z" },
+]
+
+[[package]]
+name = "ftfy"
+version = "6.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "wcwidth" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a5/d3/8650919bc3c7c6e90ee3fa7fd618bf373cbbe55dff043bd67353dbb20cd8/ftfy-6.3.1.tar.gz", hash = "sha256:9b3c3d90f84fb267fe64d375a07b7f8912d817cf86009ae134aa03e1819506ec", size = 308927, upload-time = "2024-10-26T00:50:35.149Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/6e/81d47999aebc1b155f81eca4477a616a70f238a2549848c38983f3c22a82/ftfy-6.3.1-py3-none-any.whl", hash = "sha256:7c70eb532015cd2f9adb53f101fb6c7945988d023a085d127d1573dc49dd0083", size = 44821, upload-time = "2024-10-26T00:50:33.425Z" },
 ]
 
 [[package]]

@@ -74,13 +74,13 @@ Image shape: (771, 1024, 3)
 ```python skip
 from dimos.utils.data import get_data
 
-model_dir = get_data("models_yolo")
-checkpoint = model_dir / "yolo11n.pt"
+model_dir = get_data("models_edgetam")
+checkpoint = model_dir / "edgetam.pt"
 print(f"Checkpoint: {checkpoint.name} ({checkpoint.stat().st_size // 1024}KB)")
 ```
 
 ```results
-Checkpoint: yolo11n.pt (5482KB)
+Checkpoint: edgetam.pt (54801KB)
 ```
 
 ### Loading Recorded Data for Replay

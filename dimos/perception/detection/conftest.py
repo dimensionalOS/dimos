@@ -140,10 +140,11 @@ def detection3dpc(detections3dpc) -> Detection3DPC:
 
 @pytest.fixture(scope="session")
 def get_moment_2d(get_moment) -> Generator[Callable[[], Moment2D], None, None]:
-    from dimos.perception.detection.detectors.yolo import Yolo2DDetector
+    # Not at the top of the file: it imports torch, which slows down test collection.
+    from dimos.perception.detection.detectors.dfine import DFineDetector
 
     c = mock.create_autospec(CameraInfo, spec_set=True, instance=True)
-    module = Detection2DModule(detector=lambda: Yolo2DDetector(device="cpu"), camera_info=c)
+    module = Detection2DModule(detector=lambda: DFineDetector(device="cpu"), camera_info=c)
 
     @functools.lru_cache(maxsize=1)
     def moment_provider(**kwargs) -> Moment2D:
@@ -199,10 +200,11 @@ def get_moment_3dpc(get_moment_2d) -> Generator[Callable[[], Moment3D], None, No
 @pytest.fixture(scope="session")
 def object_db_module(get_moment):
     """Create and populate an ObjectDBModule with detections from multiple frames."""
-    from dimos.perception.detection.detectors.yolo import Yolo2DDetector
+    # Not at the top of the file: it imports torch, which slows down test collection.
+    from dimos.perception.detection.detectors.dfine import DFineDetector
 
     c = mock.create_autospec(CameraInfo, spec_set=True, instance=True)
-    module2d = Detection2DModule(detector=lambda: Yolo2DDetector(device="cpu"), camera_info=c)
+    module2d = Detection2DModule(detector=lambda: DFineDetector(device="cpu"), camera_info=c)
     module3d = Detection3DModule(camera_info=connection._camera_info_static())
     moduleDB = ObjectDBModule(camera_info=connection._camera_info_static())
 

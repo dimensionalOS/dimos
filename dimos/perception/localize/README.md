@@ -39,6 +39,9 @@ answer holds only what was seen inside the window.
 `boxes` are pixel `(x1, y1, x2, y2)` of every box whose best query clears `threshold`;
 `scores` is `(n_boxes, n_queries)`. Every model also has `stop()`.
 
+The `yoloe` segmenter needs the `yolo` extra (`uv sync --extra yolo --inexact`). Ultralytics is
+AGPL-3.0, so no other extra installs it.
+
 Each stage takes a registry name, a `module:attr` path to a class or factory, or a built
 model. One line:
 

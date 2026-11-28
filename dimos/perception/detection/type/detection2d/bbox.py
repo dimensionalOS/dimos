@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from typing_extensions import Self
-    from ultralytics.engine.results import Results
 
     from dimos.msgs.sensor_msgs.Image import Image
 
@@ -209,56 +208,6 @@ class Detection2DBBox(Detection2D):
 
         return True
 
-    @classmethod
-    def from_ultralytics_result(cls, result: Results, idx: int, image: Image) -> Detection2DBBox:
-        """Create Detection2DBBox from ultralytics Results object.
-
-        Args:
-            result: Ultralytics Results object containing detection data
-            idx: Index of the detection in the results
-            image: Source image
-
-        Returns:
-            Detection2DBBox instance
-        """
-        if result.boxes is None:
-            raise ValueError("Result has no boxes")
-
-        # Extract bounding box coordinates
-        bbox_array = result.boxes.xyxy[idx].cpu().numpy()
-        bbox: Bbox = (
-            float(bbox_array[0]),
-            float(bbox_array[1]),
-            float(bbox_array[2]),
-            float(bbox_array[3]),
-        )
-
-        # Extract confidence
-        confidence = float(result.boxes.conf[idx].cpu())
-
-        # Extract class ID and name
-        class_id = int(result.boxes.cls[idx].cpu())
-        name = (
-            result.names.get(class_id, f"class_{class_id}")
-            if hasattr(result, "names")
-            else f"class_{class_id}"
-        )
-
-        # Extract track ID if available
-        track_id = -1
-        if hasattr(result.boxes, "id") and result.boxes.id is not None:
-            track_id = int(result.boxes.id[idx].cpu())
-
-        return cls(
-            bbox=bbox,
-            track_id=track_id,
-            class_id=class_id,
-            confidence=confidence,
-            name=name,
-            ts=image.ts,
-            image=image,
-        )
-
     def get_bbox_center(self) -> CenteredBbox:
         x1, y1, x2, y2 = self.bbox
         center_x = (x1 + x2) / 2.0
@@ -294,26 +243,30 @@ class Detection2DBBox(Detection2D):
         y2 = center_y + height / 2.0
         bbox = (x1, y1, x2, y2)
 
-        # Extract hypothesis info
-        class_id = 0
+        # Extract hypothesis info. The class is one string on the wire. It carries
+        # the name, so the numeric class id is not known here.
+        name = ""
         confidence = 0.0
         if ros_det.results:
             hypothesis = ros_det.results[0].hypothesis
-            class_id = hypothesis.class_id
+            name = hypothesis.class_id
             confidence = hypothesis.score
 
-        # Extract track_id
-        track_id = int(ros_det.id) if ros_det.id.isdigit() else 0
+        # Extract track_id. -1 is a detection without a track.
+        try:
+            track_id = int(ros_det.id)
+        except ValueError:
+            track_id = 0
 
         # Extract timestamp
         ts = to_timestamp(ros_det.header.stamp)
 
-        name = kwargs.pop("name", f"class_{class_id}")
+        name = kwargs.pop("name", name)
 
         return cls(
             bbox=bbox,
             track_id=track_id,
-            class_id=class_id,
+            class_id=-1,
             confidence=confidence,
             name=name,
             ts=ts,
@@ -322,12 +275,15 @@ class Detection2DBBox(Detection2D):
 
     def to_ros_detection2d(self) -> ROSDetection2D:
         return ROSDetection2D(
+            # Without the length the encoder writes no results.
+            results_length=1,
             header=Header(self.ts, "camera_link"),
             bbox=self.to_ros_bbox(),
             results=[
                 ObjectHypothesisWithPose(
                     ObjectHypothesis(
-                        class_id=self.class_id,
+                        # A string on the wire. Readers show it as the label.
+                        class_id=self.name,
                         score=self.confidence,
                     )
                 )

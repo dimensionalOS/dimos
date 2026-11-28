@@ -13,7 +13,7 @@
 # limitations under the License.
 """Go2 driven by TypeSafe: `go to the <object>` on /human_input.
 
-A YOLO detector on the camera supplies `detections_2d`; world-frame boxes on
+A D-FINE detector on the camera supplies `detections_2d`; world-frame boxes on
 `detections_3d`, from a 3D detector or a fixed scene, take precedence when present.
 """
 

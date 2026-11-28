@@ -11,14 +11,54 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from dimos_lcm.vision_msgs import Detection2D
+import numpy as np
 import pytest
+
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
+from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+
+
+@pytest.mark.parametrize(("wire_id", "expected"), [("--17", 0), ("camera-A", 0), ("42", 42)])
+def test_decodes_external_track_ids(wire_id: str, expected: int) -> None:
+    image = Image(data=np.zeros((2, 2, 3), dtype=np.uint8), format=ImageFormat.RGB)
+
+    detection = Detection2DBBox.from_ros_detection2d(Detection2D(id=wire_id), image=image)
+
+    assert detection.track_id == expected
+
+
+def test_name_score_and_track_survive_the_wire() -> None:
+    image = Image(data=np.zeros((48, 64, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=12.5)
+    detection = Detection2DBBox(
+        bbox=(1.0, 2.0, 30.0, 40.0),
+        track_id=-1,
+        class_id=56,
+        confidence=0.9,
+        name="chair",
+        ts=12.5,
+        image=image,
+    )
+    message = ImageDetections2D(image=image, detections=[detection]).to_ros_detection2d_array()
+
+    decoded = Detection2DArray.lcm_decode(message.lcm_encode())
+
+    assert decoded.to_json() == [
+        {"label": "chair", "score": 0.9, "bbox": {"cx": 15.5, "cy": 21.0, "w": 29.0, "h": 38.0}}
+    ]
+    (recovered,) = ImageDetections2D.from_ros_detection2d_array(image, decoded).detections
+    assert (recovered.name, recovered.confidence, recovered.bbox) == ("chair", 0.9, detection.bbox)
+    # -1 is a detection without a track. The wire has no numeric class id.
+    assert (recovered.track_id, recovered.class_id) == (-1, -1)
 
 
 @pytest.mark.self_hosted
 def test_detection2d(detection2d) -> None:
     # def test_detection_basic_properties(detection2d):
     """Test basic detection properties."""
-    assert detection2d.track_id >= 0
+    assert detection2d.track_id == -1  # the default detector has no tracker
     assert detection2d.class_id >= 0
     assert 0.0 <= detection2d.confidence <= 1.0
     assert detection2d.name is not None
@@ -66,10 +106,10 @@ def test_detection2d(detection2d) -> None:
 
     assert cropped is not None, "Cropped image should not be None"
 
-    # The actual cropped image is (260, 192, 3)
-    assert cropped.width == 192
-    assert cropped.height == 260
-    assert cropped.shape == (260, 192, 3)
+    # The actual cropped image is (266, 191, 3)
+    assert cropped.width == 191
+    assert cropped.height == 266
+    assert cropped.shape == (266, 191, 3)
 
     # def test_to_ros_bbox(detection2d):
     """Test ROS bounding box conversion."""

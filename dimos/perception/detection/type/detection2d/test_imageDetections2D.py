@@ -44,7 +44,7 @@ def test_from_ros_detection2d_array(get_moment_2d) -> None:
 
     # Check other properties
     assert recovered_det.track_id == original_det.track_id
-    assert recovered_det.class_id == original_det.class_id
+    assert recovered_det.name == original_det.name
     assert recovered_det.confidence == pytest.approx(original_det.confidence, abs=0.01)
 
     print("\nSuccessfully round-tripped detection through ROS format:")

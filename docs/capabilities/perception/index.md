@@ -10,9 +10,10 @@ Its implementation lives in
 `dimos/experimental/world_belief/` while the shared detector,
 embedding, and 3D object primitives remain in their standard packages.
 
-Run the hardware blueprint:
+Install the `yolo` extra for WorldBelief's text prompts, then run the hardware blueprint.
 
 ```bash
+uv sync --extra yolo --inexact
 dimos run xarm6-worldbelief --xarmconnection.ip <ROBOT_IP>
 ```
 

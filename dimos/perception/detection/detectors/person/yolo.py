@@ -12,8 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+import yaml
+
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.base import Detector
+from dimos.perception.detection.detectors.ultralytics_utils import (
+    cache_path,
+    checkpoint_path,
+    detections_from_results,
+    import_ultralytics,
+)
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.data import get_data
 from dimos.utils.gpu_utils import is_cuda_available
@@ -22,19 +33,38 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+# Frames a lost track is kept for. The Ultralytics default is 30.
+TRACK_BUFFER = 300
+
+
+def _tracker_config() -> Path:
+    """Ultralytics' BoT-SORT settings with a longer track buffer, written to the cache."""
+    packaged = Path(import_ultralytics().__file__).parent / "cfg" / "trackers" / "botsort.yaml"
+    settings = yaml.safe_load(packaged.read_text()) | {"track_buffer": TRACK_BUFFER}
+    path = cache_path("botsort_person.yaml")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(dir=path.parent) as staging:
+        staged = Path(staging) / path.name
+        staged.write_text(yaml.safe_dump(settings))
+        staged.replace(path)
+    return path
+
+
 class YoloPersonDetector(Detector):
     def __init__(
         self,
-        model_path: str = "models_yolo",
+        model_path: str | Path | None = None,
         model_name: str = "yolo11n-pose.pt",
         device: str | None = None,
     ) -> None:
-        # ~0.5s: deferred to keep module import (test collection) light.
-        from ultralytics import YOLO  # type: ignore[attr-defined]
+        self.model = import_ultralytics().YOLO(
+            checkpoint_path(model_name, model_path), task="track"
+        )
 
-        self.model = YOLO(get_data(model_path) / model_name, task="track")
-
-        self.tracker = get_data(model_path) / "botsort.yaml"
+        custom_tracker = get_data(model_path) / "botsort.yaml" if model_path is not None else None
+        self.tracker = (
+            custom_tracker if custom_tracker and custom_tracker.is_file() else _tracker_config()
+        )
 
         if device:
             self.device = device
@@ -64,7 +94,7 @@ class YoloPersonDetector(Detector):
             persist=True,
             device=self.device,
         )
-        return ImageDetections2D.from_ultralytics_result(image, results)
+        return detections_from_results(image, results)
 
     def stop(self) -> None:
         """

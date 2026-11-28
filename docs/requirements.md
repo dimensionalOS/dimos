@@ -43,7 +43,7 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 |-------|-------------|--------------|------|
 | *(core)* | Transport, streams, CLI, blueprints, occupancy maps | dimos-lcm, numpy, scipy, opencv, open3d, numba, Pinocchio, typer, textual | No |
 | `agents` | LLM agent, speech, tool use | langchain, openai, ollama, faster-whisper | No |
-| `perception` | Object detection, VLMs, tracking | ultralytics, transformers, moondream | **Yes** |
+| `perception` | Object detection, VLMs, tracking | transformers, edgetam, moondream | **Yes** |
 | `visualization` | Rerun viewer + bridge | rerun-sdk, dimos-viewer | No |
 | `web` | FastAPI web interface, audio | fastapi, uvicorn, av | No |
 | `sim` | MuJoCo simulation | mujoco, mjcf-to-urdf, pygame | No |
@@ -57,6 +57,19 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 | `misc` | Extra models, embeddings, hardware SDKs | edgetam, timm, xarm-sdk | Varies |
 | `base` | Standard stack (agents + web + viz) | langchain, fastapi, rerun-sdk | No |
 | `dds` | DDS transport (CycloneDDS) | cyclonedds | No |
+| `yolo` | YOLO detectors. Opt-in, see below | ultralytics, lap, clip-anytorch | Optional |
+
+### YOLO is opt-in
+
+The detection modules use [D-FINE](https://huggingface.co/ustc-community/dfine-small-coco) by default. Its code and its weights have an Apache-2.0 licence.
+
+The YOLO detectors (`Yolo2DDetector`, `YoloPersonDetector`, `Yoloe2DDetector`) need [Ultralytics](https://github.com/ultralytics/ultralytics). Ultralytics and its model weights are licensed under AGPL-3.0, so dimOS does not ship them. No other extra includes `yolo`, not even `all`. Install it yourself:
+
+```sh skip
+uv sync --extra yolo --inexact
+```
+
+On first use, dimOS downloads YOLO detector checkpoints into `~/.cache/dimos/ultralytics`. YOLO-E text prompts use the CLIP tokenizer included in the `yolo` extra. For the YOLO-E 11 models, Ultralytics also looks for `mobileclip_blt.ts` in the working directory or its configured `weights_dir`. If missing, it downloads this text encoder into the working directory. For offline runs, place the encoder in either location before starting the detector.
 
 ## Headless / Server Environments
 
