@@ -127,45 +127,27 @@ def test_corrupt_payload_reports_one_error(
     gc.collect()
 
 
-@pytest.mark.parametrize("phase", ["first", "next"])
-def test_read_failure_reports_one_error(phase: str, mocker: MockerFixture) -> None:
-    error = OSError("recording read failed")
-    closed = threading.Event()
-
-    def rows() -> Iterator[Observation[int]]:
-        try:
-            if phase == "next":
-                yield Observation(id=0, ts=1.0, _data=42)
-            raise error
-        finally:
-            closed.set()
-
-    with MemoryStore() as store:
-        replay = store.replay(loop=True)
-        stream = replay.stream("pose")
-        mocker.patch.object(stream, "_base_stream", side_effect=rows)
-        received, errors, completed = _play_until_terminal(replay, stream)
-
-    assert received == ([42] if phase == "next" else [])
-    assert errors == [error]
-    completed.assert_not_called()
-    assert closed.is_set()
-
-
-@pytest.mark.parametrize("fail_at", [0, 1])
-def test_autocast_failure_reports_one_error(fail_at: int, mocker: MockerFixture) -> None:
-    error = ValueError("cannot convert frame")
+@pytest.mark.parametrize(
+    ("failure", "fail_at"),
+    [("read", 0), ("read", 1), ("autocast", 0), ("autocast", 1)],
+)
+def test_read_or_autocast_failure_reports_one_error(
+    failure: str, fail_at: int, mocker: MockerFixture
+) -> None:
+    error = OSError("frame failed")
     closed = threading.Event()
 
     def rows() -> Iterator[Observation[int]]:
         try:
             for value in range(3):
+                if failure == "read" and value == fail_at:
+                    raise error
                 yield Observation(id=value, ts=1.0 + value * 0.01, _data=value)
         finally:
             closed.set()
 
     def autocast(value: int) -> int:
-        if value == fail_at:
+        if failure == "autocast" and value == fail_at:
             raise error
         return value
 

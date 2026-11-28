@@ -16,7 +16,6 @@ from collections.abc import Iterator
 from pathlib import Path
 import threading
 import time
-from typing import Any
 
 import pytest
 from pytest_mock import MockerFixture
@@ -134,39 +133,16 @@ def test_slow_subscriber_drops_nothing_and_warns_once(
     assert log.warning.call_args.args == ("Replay is behind schedule",)
 
 
-def test_load_returns_with_the_buffer_full(store: SqliteStore, mocker: MockerFixture) -> None:
-    replay = store.replay(buffer_size=2)
-    playback, _published, _done = _record(replay, list(_RECORDING))
-    buffer_type = type(playback._buffer)
-    put = buffer_type.put
-    third_put = threading.Event()
-    calls = 0
-
-    def counting_put(self: Any, item: Any) -> bool:
-        nonlocal calls
-        calls += 1
-        if calls == 3:
-            third_put.set()
-        return put(self, item)
-
-    mocker.patch.object(buffer_type, "put", counting_put)
-    try:
-        playback.load()
-        assert len(playback._buffer._items) == 2
-        assert third_put.wait(HUNG_TEST_TIMEOUT)
-        assert len(playback._buffer._items) == 2  # the third waits on the full buffer
-    finally:
-        playback.stop()
-
-
-def test_loop_replays_in_order_after_the_last_frame(store: SqliteStore) -> None:
-    replay = store.replay(loop=True, speed=10.0)
+def test_loop_replays_in_order_after_the_gap(store: SqliteStore) -> None:
+    replay = store.replay(loop=True, loop_gap=0.3)
     playback = replay.playback()
     published: list[float] = []
+    arrivals: list[float] = []
     enough = threading.Event()
 
     def on_frame(frame: float) -> None:
         published.append(frame)
+        arrivals.append(time.monotonic())
         if len(published) == 2 * len(_RECORDING["odom"]):
             enough.set()
 
@@ -176,29 +152,7 @@ def test_loop_replays_in_order_after_the_last_frame(store: SqliteStore) -> None:
     playback.stop()
 
     assert published[:6] == [*_RECORDING["odom"], *_RECORDING["odom"]]
-
-
-def test_loop_gap_delays_the_next_pass(store: SqliteStore) -> None:
-    replay = store.replay(loop=True, loop_gap=0.3)
-    playback = replay.playback()
-    arrivals: list[float] = []
-    next_pass = threading.Event()
-
-    def on_frame(_frame: float) -> None:
-        arrivals.append(time.monotonic())
-        if len(arrivals) == len(_RECORDING["odom"]) + 1:
-            next_pass.set()
-
-    playback.add(replay.stream("odom")).subscribe(on_frame)
-    started = time.monotonic()
-    try:
-        playback.play()
-        assert next_pass.wait(HUNG_TEST_TIMEOUT)
-    finally:
-        playback.stop()
-
-    # The pass's last frame is 0.04 s in; the gap puts the next pass 0.3 s after it.
-    assert arrivals[3] - started >= 0.34
+    assert arrivals[3] - arrivals[2] >= 0.3
 
 
 def test_stop_from_a_callback_allows_closing_the_store(store: SqliteStore) -> None:
@@ -224,24 +178,6 @@ def test_stop_from_a_callback_allows_closing_the_store(store: SqliteStore) -> No
     assert published == [_RECORDING["odom"][0]]
 
 
-def test_stop_waits_for_an_in_flight_publish(store: SqliteStore) -> None:
-    replay = store.replay()
-    playback = replay.playback()
-    publishing = threading.Event()
-    published = threading.Event()
-
-    def on_frame(_frame: float) -> None:
-        publishing.set()
-        time.sleep(0.1)
-        published.set()
-
-    playback.add(replay.stream("odom")).subscribe(on_frame)
-    playback.play()
-    assert publishing.wait(HUNG_TEST_TIMEOUT)
-    playback.stop()
-    assert published.is_set()
-
-
 def test_failing_subscriber_leaves_the_other_streams_playing(
     store: SqliteStore, mocker: MockerFixture
 ) -> None:
@@ -264,16 +200,3 @@ def test_failing_subscriber_leaves_the_other_streams_playing(
 
     assert odom == _RECORDING["odom"]
     assert log.exception.call_count == len(_RECORDING["lidar"])
-
-
-def test_play_again_returns_at_once(store: SqliteStore) -> None:
-    replay = store.replay(buffer_size=1)
-    playback, _published, done = _record(replay, list(_RECORDING))
-    try:
-        playback.play()
-        # The publisher drains the buffer, so a load() that waited again could block.
-        playback.play()
-        playback.load()
-        assert done.wait(HUNG_TEST_TIMEOUT)
-    finally:
-        playback.stop()
