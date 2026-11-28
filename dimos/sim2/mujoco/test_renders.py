@@ -25,7 +25,7 @@ from dimos.sim2.mujoco.lights import apply_lights
 from dimos.sim2.mujoco.renders import RenderProcess, RenderQuality, Renders
 from dimos.sim2.mujoco.view import MujocoView, _textured_materials_win
 from dimos.sim2.mujoco.world import compile_world
-from dimos.sim2.usd_layer import layer_file
+from dimos.sim2.scene import layer_file
 
 SHADOWED = """
 <mujoco>
