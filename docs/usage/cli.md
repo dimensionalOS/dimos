@@ -281,8 +281,10 @@ dimos log [OPTIONS]
 | `--follow`, `-f` | Follow log output (like `tail -f`) |
 | `--lines`, `-n` | Number of lines to show (default: 50) |
 | `--all`, `-a` | Show full log |
-| `--json` | Raw JSONL output (for piping to `jq`) |
+| `--json` | Raw JSONL output |
 | `--run`, `-r` | Specific run ID (defaults to most recent) |
+
+Run `dimos log --json` for unfiltered JSONL. The filtering examples below use `jq` (on Ubuntu, install it with `sudo apt install jq`).
 
 ```bash
 dimos log                    # last 50 lines, human-readable

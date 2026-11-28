@@ -4,10 +4,10 @@ These checks need the `manipulation` extra. Most run on mock arms or in MuJoCo w
 
 ## 3.1 Motion planning in Viser
 
-Use the Lite6 mock without an arm address configured. This checks the shared planning stack. The xArm7 and xArm6 hardware planners have a separate check in section 3.9.
+Select the Lite6 mock arm with `--choice arm=mock`. This checks the shared planning stack. The xArm7 and xArm6 hardware planners have a separate check in section 3.9.
 
 ```bash
-uv run dimos run lite6-planner-coordinator
+uv run dimos run lite6-planner-coordinator --choice arm=mock
 # In another terminal:
 uv run dimos shell
 ```
@@ -27,17 +27,19 @@ arm.move_joints(q, speed_scale=0.5)
 
 Expected result: the mock arm reaches the target in both planning modes, and `move_joints` turns the first joint in Viser.
 
+For an offline xArm6 check, run `uv run dimos run xarm6-planner-coordinator --choice arm=mock`.
+
 ## 3.2 Arms on mock hardware
 
-Without an arm address the keyboard blueprints below drive a mock arm. The Lite6 planner is already covered by section 3.1.
+With `--choice arm=mock`, the xArm and Lite6 keyboard blueprints below drive a mock arm. The Lite6 planner is already covered by section 3.1.
 
 ```bash
-uv run dimos run keyboard-teleop-xarm7
+uv run dimos run keyboard-teleop-xarm7 --choice arm=mock
 ```
 
 * Keyboard teleop: in the "Keyboard Teleop" window hold W and the arm moves in +X in Viser. Press [ and ] to open and close the gripper.
 * Planner: drag the target gizmo in Viser, click Plan, then Execute.
-* Repeat the keyboard check with `keyboard-teleop-xarm6` and `keyboard-teleop-lite6`.
+* Repeat the jog and gripper checks with `keyboard-teleop-xarm6 --choice arm=mock`. With `keyboard-teleop-lite6 --choice arm=mock`, repeat the jog check only. The Lite6 keyboard has no gripper task.
 * `keyboard-teleop-piper` has no mock; run it in MuJoCo as `uv run dimos --simulation run keyboard-teleop-piper` and repeat the keyboard check.
 * The OpenYAM and OpenArm blueprints are mocks only under `--simulation`. Run them as `uv run dimos --simulation run <blueprint>`. Do the keyboard check with `keyboard-teleop-openyam` and `keyboard-teleop-openyam-planner`, and the planner check with `openyam-planner-coordinator`, `dual-openyam-planner-coordinator` and `openarm-planner-coordinator`. Add `--visualization.backend viser` to `keyboard-teleop-openyam-planner` and the three planner blueprints. The OpenArm arms start stretched straight down, so drag the target up.
 * `keyboard-teleop-a750` has no mock. It needs the real A-750 and its `a750_control` binding, see the [A-750 guide](../../docs/capabilities/manipulation/a750.md). Run it as `uv run dimos run keyboard-teleop-a750 --a750connection.device-path /dev/ttyACM0` and repeat the keyboard check.
@@ -164,7 +166,7 @@ Expected result: the arm moves home, follows each command, and moves home again 
 
 ## 3.9 xArm7 and xArm6 planning on hardware
 
-Needs the matching real xArm7 or xArm6 with an xArm Gripper and the `manipulation` extra, which includes the xArm Python SDK. These two planner blueprints use `XArmConnection` and require `--xarmconnection.ip` or `XARMCONNECTION__IP`. They do not switch to a mock or MuJoCo under `--simulation`.
+Needs the matching real xArm7 or xArm6 with an xArm Gripper and the `manipulation` extra, which includes the xArm Python SDK. The hardware commands below use the default `XArmConnection` and require `--xarmconnection.ip` or `XARMCONNECTION__IP`. With `--simulation mujoco`, the xArm7 planner selects MuJoCo.
 
 Run each command separately with the matching arm connected, replacing the example IP with that arm's address. Clear its workspace and keep the emergency stop within reach.
 

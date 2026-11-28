@@ -38,7 +38,7 @@ dimos --replay run unitree-go2
 
 !!! note
 
-    On the first run, roughly **75 MB** of recorded session data is downloaded before anything appears, so the Rerun window may stay black for a minute or two. That is normal. If it stays black well beyond the download, check the terminal output for errors.
+    On the first run, dimOS downloads the Go2 recording (about **84 MB**). The Rerun window may stay black for a minute or two during the download. That is normal. If it stays black well beyond the download, check the terminal output for errors.
 
 
 Congratulations, you have a full dimOS navigation stack running on recorded data. Everything below is optional and independent, so pick whichever branch matches your goal.
@@ -113,7 +113,7 @@ The page opens at `http://127.0.0.1:7780/`. The [web guide](/docs/web/index.md) 
 | `dimos --simulation run unitree-g1` | Humanoid in MuJoCo simulation |
 | `dimos --replay run drone-basic` | Drone video and telemetry replay |
 | `dimos --replay run drone-agentic` | Drone with an LLM agent and flight skills, replayed |
-| `dimos run demo-camera` | Webcam demo, no robot needed |
+| `dimos run demo-camera` | Live video from a connected webcam |
 | `dimos run keyboard-teleop-xarm7 --choice arm=mock` | Keyboard teleop with a mock xArm7 (needs the `manipulation` extra) |
 | `dimos --simulation run unitree-go2-agentic-ollama` | Quadruped agent using a local LLM (needs Ollama running via `ollama serve`) |
 

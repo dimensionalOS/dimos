@@ -8,7 +8,7 @@ See [Setup](/docs/platforms/quadruped/go2/setup.md) for installing dimOS first.
 
 ```bash
 # Replay a recorded Go2 navigation session
-# First run downloads ~2.4 GB of LiDAR/video data from LFS
+# The first run downloads the default Go2 recording (about 84 MB) from Git LFS.
 dimos --replay run unitree-go2
 ```
 

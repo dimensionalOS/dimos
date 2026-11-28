@@ -194,7 +194,7 @@ Use an empty temporary cache to check that the arm assets can be fetched and loa
 
 ```bash
 RELEASE_TEST_CACHE="$(mktemp -d)"
-XDG_CACHE_HOME="$RELEASE_TEST_CACHE" uv run dimos run keyboard-teleop-xarm7
+XDG_CACHE_HOME="$RELEASE_TEST_CACHE" uv run dimos run keyboard-teleop-xarm7 --choice arm=mock
 # After inspecting the arm and stopping the blueprint with Ctrl+C:
 rm -rf "$RELEASE_TEST_CACHE"
 ```
