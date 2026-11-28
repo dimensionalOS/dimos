@@ -23,7 +23,7 @@ import pytest
 from dimos.sim2.mujoco.lights import apply_lights
 from dimos.sim2.mujoco.renders import Renders
 from dimos.sim2.mujoco.world import compile_world
-from dimos.sim2.usd_layer import layer_file
+from dimos.sim2.scene import layer_file
 
 # linux-aarch64 has no usd-core wheel, and every scene here is a USD layer.
 pytest.importorskip("pxr")

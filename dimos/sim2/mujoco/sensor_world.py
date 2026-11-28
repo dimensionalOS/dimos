@@ -23,8 +23,7 @@ from scipy.spatial.transform import Rotation
 
 from dimos.sim2.mujoco.renders import RenderQuality
 from dimos.sim2.mujoco.sensor_mount import SensorMount
-from dimos.sim2.spec import ROBOT
-from dimos.sim2.world_observations import WorldMirror
+from dimos.sim2.sim import ROBOT, WorldMirror
 from dimos.simulation.sensors.lidar import Raycaster
 
 Vector = NDArray[np.float64]

@@ -28,9 +28,8 @@ from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.frames import usd_frame_pose, usd_world_frame_prims
 from dimos.sim2.mujoco.sensor_mount import SensorMount
 from dimos.sim2.mujoco.sensor_world import WorldView, rotation_matrix
-from dimos.sim2.sensor import SimSensorConfig
 from dimos.sim2.sensor_usd import frame_usd
-from dimos.sim2.spec import ODOM_FRAME
+from dimos.sim2.sim import ODOM_FRAME, SimSensorConfig
 from dimos.sim2.view_sensor import ViewSensor
 from dimos.simulation.sensors.lidar import Raycaster
 
