@@ -297,8 +297,14 @@ class WorldMirror:
         await self.ready()
         due = time.time()
         while True:
-            await asyncio.sleep(due - time.time())
+            await _sleep_until(due)
             ticked = time.time()
             yield ticked
             # A tick that came late (busy, or a sleep that overran) skips what it missed, and none comes within a period of it.
             due = max(due + period, ticked + period, time.time())
+
+
+async def _sleep_until(due: float) -> None:
+    """Until wall time ``due``, in short sleeps: macOS lets a background process's sleep overrun by several times its length."""
+    while (remaining := due - time.time()) > 0:
+        await asyncio.sleep(min(max(remaining / 8, 0.0005), 0.5))
