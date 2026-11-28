@@ -58,6 +58,7 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "teleop-webxr-xarm7",
         "teleop-webxr-xarm7-video",
         "unitree-g1-sim-office",
+        "unitree-g1-sim-office-three",
         "unitree-go2-sim-office",
         "xarm-grasp",
         "xarm-grasp-agent",

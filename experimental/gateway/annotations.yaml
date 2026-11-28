@@ -478,6 +478,10 @@ robots:
           title: G1 in sim, office 555
           description: A simulated G1 in office 555 on MuJoCo, walked by GR00T, with a Mid-360 and a camera; drive it with cmd_vel.
           recommended_config: []
+        unitree-g1-sim-office-three:
+          title: Three G1s in sim, office 555
+          description: Three simulated G1s in office 555 on MuJoCo, each walked by GR00T, and a room camera on them; cmd_vel drives the main one.
+          recommended_config: []
         unitree-g1-teleop:
           title: G1 VR teleop + recording
           description: GR00T whole-body control, WebXR arm teleop, manipulation and episode recording.
