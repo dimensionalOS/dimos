@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import RobotModel, UsdModel
 from dimos.robot.assets.usd_utils.assets import (
     asset_hash,
 )
@@ -302,8 +302,6 @@ def test_an_added_frames_pose_survives_into_the_kinematics(toy: Any) -> None:
     import numpy as np
     from scipy.spatial.transform import Rotation
 
-    from dimos.robot.assets.model import UsdModel
-
     xyz, rpy = (0.1, 0.0, 0.42), (math.pi, -0.04, 0.0)
     scene = usd_with_frames(urdf_to_usd(toy), {"spot": ("toy/base_link", xyz, rpy)})
 
@@ -316,37 +314,14 @@ def test_an_added_frames_pose_survives_into_the_kinematics(toy: Any) -> None:
     assert np.allclose(placed, expected, atol=1e-6), "the frame hangs where it was added"
 
 
-def _link(joint: Any, end: str) -> str:
-    """The link named at one end ("parent" or "child") of a URDF joint element."""
-    element = joint.find(end)
-    assert element is not None, f"a joint with no {end}"
-    return str(element.attrib["link"])
-
-
-def test_a_frame_welded_to_the_world_converts_to_a_joint_on_the_scene_root(toy: Any) -> None:
-    import xml.etree.ElementTree as ElementTree
-
-    from dimos.robot.assets.usd_utils.to_urdf_mask import usd_to_urdf
-
+def test_a_frame_welded_to_the_world_is_a_joint_on_the_scene_root(toy: Any) -> None:
     scene = usd_with_frames(urdf_to_usd(toy), {"spot": ("toy", (0.3, 0.0, 0.7), (0.0, 0.0, 0.0))})
 
-    urdf = ElementTree.fromstring(usd_to_urdf(scene))
-    links = {link.get("name") for link in urdf.findall("link")}
-    parent_of = {_link(joint, "child"): _link(joint, "parent") for joint in urdf.findall("joint")}
+    joint = next(j for j in UsdModel.from_layer(scene).joints if j.child_link == "toy/spot")
 
-    assert "toy" in links, "the scene root is a link even though it is not a rigid body"
-    assert parent_of["toy/spot"] == "toy", "a body0-less weld hangs off the scene root"
-    origin = next(
-        joint.find("origin")
-        for joint in urdf.findall("joint")
-        if _link(joint, "child") == "toy/spot"
-    )
-    assert origin is not None
-    assert [float(value) for value in origin.attrib["xyz"].split()] == [0.3, 0.0, 0.7], (
+    assert joint.parent_link == "toy", "a body0-less weld hangs off the scene root"
+    assert joint.origin_xyz == pytest.approx((0.3, 0.0, 0.7)), (
         "the weld carries where the frame actually sits, not the joint's zero offset"
-    )
-    assert "toy/spot" not in {name for name in links if name not in parent_of}, (
-        "the frame is no longer a root of its own disconnected tree"
     )
 
 
@@ -566,26 +541,21 @@ def test_a_planar_joint_locks_the_axes_out_of_its_plane(tmp_path: Path) -> None:
 
 def test_a_planar_joint_moves_in_the_plane_its_normal_names(tmp_path: Path) -> None:
     """URDF's planar axis is the plane's normal, and the locks USD writes are about joint Z."""
-    from dimos.robot.assets.usd_utils.to_urdf_mask import usd_to_urdf
-
     source = tmp_path / "cart.urdf"
     source.write_text(
         '<robot name="cart"><link name="world"/><link name="body"/>'
         '<joint name="planar_base" type="planar"><parent link="world"/>'
         '<child link="body"/><axis xyz="1 0 0"/></joint></robot>'
     )
-    recovered = tmp_path / "back.urdf"
-    recovered.write_text(usd_to_urdf(urdf_to_usd(RobotModel.from_file(source).load())))
+    usd = UsdModel.from_robot_model(RobotModel.from_file(source))
 
-    joint = RobotModel.from_file(recovered).load().get_joint("planar_base")
+    joint = next(j for j in usd.joints if j.name == "planar_base")
     assert joint is not None
     np.testing.assert_allclose(joint.axis, [1.0, 0.0, 0.0], atol=1e-6)
 
 
 def test_a_mimic_joint_keeps_following_its_leader(tmp_path: Path) -> None:
     """USD cannot say "this joint follows that one", so mimic has to travel as passthrough."""
-    from dimos.robot.assets.usd_utils.to_urdf_mask import usd_to_urdf
-
     source = tmp_path / "gripper.urdf"
     source.write_text(
         '<robot name="gripper"><link name="palm"/><link name="left"/><link name="right"/>'
@@ -595,10 +565,9 @@ def test_a_mimic_joint_keeps_following_its_leader(tmp_path: Path) -> None:
         '<axis xyz="0 0 1"/><limit lower="0" upper="1" effort="1" velocity="1"/>'
         '<mimic joint="lead" multiplier="-1" offset="0.5"/></joint></robot>'
     )
-    recovered = tmp_path / "back.urdf"
-    recovered.write_text(usd_to_urdf(urdf_to_usd(RobotModel.from_file(source).load())))
+    usd = UsdModel.from_robot_model(RobotModel.from_file(source))
 
-    joint = RobotModel.from_file(recovered).load().get_joint("follow")
+    joint = next(j for j in usd.joints if j.name == "follow")
     assert joint is not None
     assert joint.mimic == ("lead", -1.0, 0.5), "the follower came back independent"
 

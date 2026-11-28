@@ -429,7 +429,7 @@ def _urdf_links_of(xml: str) -> dict[str, list[_Geometry]]:
 
 _UNDERSTOOD_LINK_TAGS = frozenset({"visual", "collision"})
 # mimic is not in here on purpose: USD has no way to say "this joint follows that one", so
-# it travels as an unconverted fragment and comes back out of to_urdf_mask intact.
+# it travels as an unconverted fragment and usd_joints reads it back off the joint.
 _UNDERSTOOD_JOINT_TAGS = frozenset({"origin", "parent", "child", "axis", "limit"})
 
 
