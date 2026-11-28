@@ -40,6 +40,9 @@ from dimos.robot.manipulators.openyam.joints import (
 )
 
 OPENYAM_HOME_JOINTS = [0.0, 1.047, 1.047, 0.0, 0.0, 0.0]
+#: Holding gains for joint1 to joint6; every OpenYAM arm takes them.
+OPENYAM_KP = [40.0, 65.0, 65.0, 25.0, 12.0, 12.0]
+OPENYAM_KD = [3.0, 4.5, 4.5, 0.7, 0.2, 0.2]
 OPENYAM_DESCRIPTION_SOURCE = RobotDescriptionSource(
     url="https://github.com/dimensionalOS/dim_description",
     ref="f9853344bbc9fa00aade6ff3ffb7db6532d185e1",
@@ -135,8 +138,8 @@ OPENYAM = DamiaoRobot(
     buses=[
         DamiaoBus(
             arm=_arm_motors(),
-            kp=[80.0, 80.0, 80.0, 10.0, 10.0, 10.0],
-            kd=[5.0, 5.0, 5.0, 1.5, 1.5, 1.5],
+            kp=list(OPENYAM_KP),
+            kd=list(OPENYAM_KD),
             gripper=DamiaoGripper(
                 name=OPENYAM_GRIPPER_NAME,
                 joint=OPENYAM_FINGER_JOINTS[0],

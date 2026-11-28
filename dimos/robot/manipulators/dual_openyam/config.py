@@ -37,17 +37,20 @@ from dimos.robot.manipulators.feetech.robot import (
     FeetechRobot,
     FeetechTrigger,
 )
-from dimos.robot.manipulators.openyam.config import OPENYAM_GRAVITY_MODEL, OPENYAM_HOME_JOINTS
+from dimos.robot.manipulators.openyam.config import (
+    OPENYAM_GRAVITY_MODEL,
+    OPENYAM_HOME_JOINTS,
+    OPENYAM_KD,
+    OPENYAM_KP,
+)
 
 DUAL_OPENYAM_SIDES = ("left", "right")
 # Where each arm base sits on the shared base, m along y, as in dual_openyam.urdf.
 _ARM_MOUNT_Y = {"left": 0.31, "right": -0.31}
 DUAL_OPENYAM_HOME_PER_ARM = list(OPENYAM_HOME_JOINTS)
 DUAL_OPENYAM_HOME_JOINTS = [*DUAL_OPENYAM_HOME_PER_ARM, *DUAL_OPENYAM_HOME_PER_ARM]
-DUAL_OPENYAM_KP = [80.0, 80.0, 80.0, 10.0, 10.0, 10.0]
-# Arm damping 1.0 (was 5.0): under leader teleop the DM4340s trailed the target by 90-120 ms
-# at 5.0 and by 40-50 ms at 1.0, with no hum; OpenArm runs the same motors at 1.0.
-DUAL_OPENYAM_KD = [1.0, 1.0, 1.0, 1.5, 1.5, 1.5]
+DUAL_OPENYAM_KP = list(OPENYAM_KP)
+DUAL_OPENYAM_KD = list(OPENYAM_KD)
 # The OpenYAM v2 position limits for joint1 to joint6, rad; both arms share them.
 DUAL_OPENYAM_JOINT_LIMITS = (
     (-2.61799, 3.14159),
