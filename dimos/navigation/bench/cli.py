@@ -284,12 +284,23 @@ def report_command(
         typer.echo(f"{path}.json")
 
 
+def _replay_speed(value: float) -> float:
+    from dimos.utils.timeseries.base import validate_replay_speed
+
+    try:
+        return validate_replay_speed(value)
+    except ValueError as error:
+        raise typer.BadParameter(str(error)) from error
+
+
 @app.command("replay")
 def replay_command(
     episode: str = typer.Argument(
         ..., help="An episode directory, or a case id to find in the newest run."
     ),
-    speed: float = typer.Option(1.0, min=0.01, help="Playback pace relative to the recording."),
+    speed: float = typer.Option(
+        1.0, min=0.01, callback=_replay_speed, help="Playback pace relative to the recording."
+    ),
     loop: bool = typer.Option(True, help="Start over at the end."),
     rerun: bool = typer.Option(True, help="Also open the episode's replay file in Rerun."),
 ) -> None:

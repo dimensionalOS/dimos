@@ -484,6 +484,8 @@ def _run(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str]) -> int:
+    from dimos.utils.timeseries.base import validate_replay_speed
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pcap", help="Livox Mid-360 pcap capture")
     parser.add_argument(
@@ -523,6 +525,10 @@ def main(argv: list[str]) -> int:
     _add_tuning_args(parser)
 
     args = parser.parse_args(argv)
+    try:
+        validate_replay_speed(args.rate)
+    except ValueError as error:
+        parser.error(f"--rate: {error}")
     if not args.pcap:
         parser.error("--pcap is required")
     return _run(args)

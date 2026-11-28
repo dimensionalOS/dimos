@@ -81,8 +81,8 @@ pub struct Config {
 
 fn positive_replay_rate(rate: &Nullable<f64>) -> Result<(), validator::ValidationError> {
     match rate.0 {
-        Some(r) if r <= 0.0 => Err(validator::ValidationError::new(
-            "replay_rate must be > 0 (or null for flat-out replay)",
+        Some(r) if !r.is_finite() || r <= 0.0 => Err(validator::ValidationError::new(
+            "replay_rate must be finite and > 0 (or null for flat-out replay)",
         )),
         _ => Ok(()),
     }
@@ -513,14 +513,15 @@ mod tests {
     }
 
     #[test]
-    fn replay_rate_zero_is_rejected_but_null_is_flat_out() {
+    fn replay_rate_must_be_finite_positive_or_null() {
         use validator::Validate;
-        let null_rate: Config = serde_json::from_value(config_json()).unwrap();
-        null_rate.validate().expect("null replay_rate is flat-out");
-
-        let mut zero_rate = config_json();
-        zero_rate["replay_rate"] = 0.0.into();
-        let config: Config = serde_json::from_value(zero_rate).unwrap();
-        assert!(config.validate().is_err());
+        let mut config: Config = serde_json::from_value(config_json()).unwrap();
+        config.validate().expect("null replay_rate is flat-out");
+        config.replay_rate = Nullable(Some(0.5));
+        config.validate().expect("fractional replay_rate is valid");
+        for rate in [0.0, -1.0, f64::INFINITY, f64::NAN] {
+            config.replay_rate = Nullable(Some(rate));
+            assert!(config.validate().is_err(), "accepted {rate}");
+        }
     }
 }

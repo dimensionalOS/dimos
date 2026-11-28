@@ -50,6 +50,7 @@ from dimos.hardware.sensors.lidar.livox.ports import (
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.spec import perception
+from dimos.utils.timeseries.base import ReplaySpeed
 
 
 class Mid360Config(NativeModuleConfig):
@@ -68,7 +69,7 @@ class Mid360Config(NativeModuleConfig):
     # Replay this capture instead of a live sensor. host_ip/lidar_ip are unused.
     pcap: str | None = None
     # Replay speed relative to capture time. None runs flat-out.
-    replay_rate: float | None = Field(default=1.0, gt=0)
+    replay_rate: ReplaySpeed | None = 1.0
     # Seconds a replay holds its first packet, so consumers can subscribe first.
     replay_delay: float = Field(default=0.0, ge=0)
     # Multicast group the device streams to. None receives unicast only, which

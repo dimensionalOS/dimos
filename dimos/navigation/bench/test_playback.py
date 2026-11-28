@@ -16,10 +16,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.navigation.bench.cli import app
 from dimos.navigation.bench.playback import frames, play
 
 
@@ -44,3 +46,9 @@ def test_frames_read_coordinator_joint_state_when_joint_state_is_empty(tmp_path:
 def test_play_rejects_infinite_speed_before_loading_an_episode(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="speed.*finite"):
         play(tmp_path, speed=float("inf"))
+
+
+def test_cli_rejects_infinite_speed_before_resolving_an_episode(tmp_path: Path) -> None:
+    result = CliRunner().invoke(app, ["replay", str(tmp_path / "absent"), "--speed", "inf"])
+    assert result.exit_code == 2
+    assert "finite" in result.output
