@@ -35,9 +35,4 @@ dimos/sim2/mujoco/assets/*.npz filter=lfs diff=lfs merge=lfs -text binary
 misc/DimSim/public/sims/*.json filter=lfs diff=lfs merge=lfs -text
 misc/DimSim/public/embodiment/*.glb filter=lfs diff=lfs merge=lfs -text
 misc/DimSim/scenes/**/*.glb filter=lfs diff=lfs merge=lfs -text
-# A scene's meshes, and its layer: generated text megabytes long (office_555's is 150k lines).
-dimos/simulation/scenes/*/meshes/** filter=lfs diff=lfs merge=lfs -text binary
-dimos/simulation/scenes/*/scene.usda filter=lfs diff=lfs merge=lfs -text
-# A vendored robot's meshes (the layer beside them stays text: a scene travels as a string).
-dimos/robot/*/*/assets/meshes/** filter=lfs diff=lfs merge=lfs -text binary
 misc/DimSim/scenes/**/*.gltf filter=lfs diff=lfs merge=lfs -text

@@ -33,7 +33,7 @@ from dimos.sim2.mujoco.look import (
     srgb_bytes,
     stage_tone_map,
 )
-from dimos.sim2.usd_layer import layer_file
+from dimos.sim2.scene import layer_file
 
 # linux-aarch64 has no usd-core wheel, and every scene here is a USD layer.
 pytest.importorskip("pxr")
