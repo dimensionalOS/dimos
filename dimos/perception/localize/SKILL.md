@@ -27,8 +27,10 @@ a view count and when it was first and last seen; an empty answer is an answer.
 
     uv run dimos mcp call localize -j '{"objects": "chair,door", "start": -30, "duration": 30}' --timeout 300
 
-- `localize(objects, start=-10, duration=10, params="")` returns once the answer
-  is built. Send the next call after it returns.
+- `localize(objects, start=-10, duration=10, params="", recording="")` returns
+  once the answer is built. Send the next call after it returns.
+- `recording` is the path of a saved recording `.db`: the window is then read
+  from that file, `start` counting from its first or last frame.
 - `objects` is one label, or a few separated by commas. The labels of one call
   share one detector pass per frame.
 - The client waits 30 s. A window with many unread frames takes longer, so pass

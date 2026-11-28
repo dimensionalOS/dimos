@@ -1,5 +1,6 @@
 ## Why do we need this?
 
+<!-- Keep the whole description within 5,000 characters, excluding HTML comments. Avoid em dashes. -->
 <!-- What problem does this solve? -->
 <!-- Alternatively, link to the issue if it's explained there. -->
 

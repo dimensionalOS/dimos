@@ -465,6 +465,13 @@ class CallResult(Body):
     error: str | None
 
 
+class ModuleConfig(Body):
+    """A running instance's config fields; a `readonly` one is a secret (sent as •••) or not JSON-able (its text)."""
+
+    config: dict[str, Any]
+    readonly: list[str]
+
+
 class ModuleAction(Body):
     ok: bool
     error: str | None
