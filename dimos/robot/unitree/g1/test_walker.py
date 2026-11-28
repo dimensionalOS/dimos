@@ -101,3 +101,27 @@ def test_wall_ticks_keep_their_rate_and_skip_what_a_late_one_missed() -> None:
     # Every tick on time but the late one: no drift from each sleep's overrun.
     on_time = np.delete(gaps, count // 2 - 1)
     assert np.median(on_time) == pytest.approx(1 / rate, rel=0.05)
+
+
+def test_wall_ticks_always_behind_still_let_the_loop_s_other_tasks_run() -> None:
+    async def behind() -> int:
+        handled = 0
+
+        async def handler() -> None:
+            nonlocal handled
+            while True:
+                await asyncio.sleep(0)
+                handled += 1
+
+        handling = asyncio.ensure_future(handler())
+        ticks = 0
+        async for _ in wall_ticks(10_000):
+            # Work that never yields, longer than a period.
+            time.sleep(0.01)
+            ticks += 1
+            if ticks == 10:
+                break
+        handling.cancel()
+        return handled
+
+    assert asyncio.run(behind()) >= 5

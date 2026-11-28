@@ -20,6 +20,8 @@ import numpy as np
 import pytest
 
 pytest.importorskip("pxr")
+# Its USD names its Git LFS meshes, over the hosted runner's pull cap.
+pytestmark = pytest.mark.self_hosted
 
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
