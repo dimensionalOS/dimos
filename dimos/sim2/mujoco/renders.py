@@ -46,6 +46,8 @@ class RenderQuality:
     tone_map: str | None = None
     # MuJoCo's headlight is on; None: on only when the stage brings no lights of its own.
     headlight: bool | None = None
+    # Nothing nearer the lens than this many meters is drawn; MuJoCo's default (vis.map.znear) scales with the scene's size, ~16 cm in a room.
+    near: float = 0.01
 
     def apply_to_model(self, model: mujoco.MjModel) -> None:
         """Set the knobs a GL context reads from the model when it is made."""
@@ -55,6 +57,7 @@ class RenderQuality:
             model.vis.quality.offsamples = self.samples
         if self.headlight is not None:
             model.vis.headlight.active = int(self.headlight)
+        model.vis.map.znear = self.near / model.stat.extent
 
 
 class Renders:
