@@ -82,7 +82,7 @@ def test_standing_still_it_commands_every_joint_near_its_default_pose_on_wall_ti
     assert sent[-1].position == pytest.approx(list(policy.default_pose), abs=0.3)
 
 
-def test_wall_ticks_keep_their_rate_and_skip_what_a_late_one_missed() -> None:
+def test_wall_ticks_keep_their_rate_skip_what_a_late_one_missed_and_let_other_tasks_run() -> None:
     rate, count = 100.0, 30
     ticked: list[float] = []
 
@@ -102,8 +102,6 @@ def test_wall_ticks_keep_their_rate_and_skip_what_a_late_one_missed() -> None:
     on_time = np.delete(gaps, count // 2 - 1)
     assert np.median(on_time) == pytest.approx(1 / rate, rel=0.05)
 
-
-def test_wall_ticks_always_behind_still_let_the_loop_s_other_tasks_run() -> None:
     async def behind() -> int:
         handled = 0
 
@@ -124,4 +122,4 @@ def test_wall_ticks_always_behind_still_let_the_loop_s_other_tasks_run() -> None
         handling.cancel()
         return handled
 
-    assert asyncio.run(behind()) >= 5
+    assert asyncio.run(behind()) >= 5, "always behind, its ticks starve the loop's other tasks"
