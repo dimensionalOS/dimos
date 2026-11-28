@@ -19,11 +19,12 @@ from typing import Any
 from pydantic import Field
 import pytest
 
+# Before importing the sim, whose spawn points register a USD schema on import.
+pytest.importorskip("pxr")
+
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.robot.assets.model import UsdModel
 from dimos.sim2.scene import SimScene, SimSceneConfig, SpawnMounts, scene_usd
-
-pytest.importorskip("pxr")
 
 
 def _spot(name: str, translate: str, size: str = "1, 1, 2") -> str:

@@ -21,6 +21,9 @@ from typing import Any
 import numpy as np
 import pytest
 
+# Its hardware is described in USD, built as the module is imported.
+pytest.importorskip("pxr")
+
 from dimos.core import hardware_module
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import (
