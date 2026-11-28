@@ -89,6 +89,7 @@ class PlanningGroupInfo:
     base_frame: str
     tip_frame: str | None
     has_gripper: bool
+    continuous_joints: tuple[str, ...] = ()
 
     def __repr__(self) -> str:
         return (

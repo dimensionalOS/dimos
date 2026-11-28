@@ -154,6 +154,12 @@ except MotionError as error:
     raise
 ```
 
+A move whose execution completes but whose measured joints do not settle within
+`reach_tolerance` (default 0.05 rad, about 1.5 cm at the gripper) of the plan's end within
+1 s, for example because contact blocked the arm, also raises `MotionError`; its message
+names the joint furthest off and the end effector's position. Pass
+`Arm.from_app(app, reach_tolerance=...)` to change it, or `None` to turn the check off.
+
 `MotionError.result` preserves the original typed failure result. Invalid numeric
 inputs raise `ValueError`; unavailable telemetry raises `RuntimeError`. Transport
 exceptions propagate unchanged. Failed planning never proceeds to execution.
