@@ -19,11 +19,14 @@ mounted onto one of the robot's mount frames::
 
     autoconnect(Robot.blueprint(), Lidar.attach(Robot.mounts.lidar))
 
-A frame is named by its prim path, with the namespace in front: the Go2's ``/go2/head`` is
-``go2/head``, and a lidar whose USD holds ``/lidar/imu``, attached at ``go2/head``, is
-``go2/head/lidar/imu``. ``get_usd()`` provides the prims nested under the namespace, so every provided
-prim path is already its tf frame and the layers of an assembly overlay each other as they are. The USD fills the module's
-``tf_frames_local`` (role = frame path) and ``tf_edges``, so TfModule's checks see every edge.
+A frame is named by its tf_frames_local role (role -> prim path), else by its prim path, with the
+namespace in front: the Go2's ``/go2/head`` is ``go2/head``, or ``go2/camera_mount`` given the role
+``camera_mount``, and a lidar whose USD holds ``/lidar/imu``, attached at ``go2/head``, is
+``go2/head/lidar/imu``. ``get_usd()`` provides the prims nested under the namespace, so the layers of
+an assembly overlay each other as they are, with DimosFramesAPI on its top prim relating each role's
+tf frame id to its prim, so whoever holds the composed USD turns that frame back into its prim
+(``world_frame_prims``). The USD fills the module's frames and ``tf_edges``, so TfModule's checks see
+every edge.
 
 Each HardwareModule publishes the tf of its own USD; a mounted one also publishes the edge from
 the mount frame it sits on to its top prim. The edges that never move (its USD's static ones and
@@ -67,23 +70,26 @@ logger = setup_logger()
 
 @dataclass(frozen=True)
 class Mount:
-    """A frame of a HardwareModule's USD that other hardware mounts onto; ``Robot.mounts.<name>`` gives one."""
+    """A frame of a HardwareModule's USD that other hardware mounts onto, and its name; ``Robot.mounts.<name>`` gives one."""
 
     frame: str
+    # Its role: tf calls the mount <namespace>/<name>, which is the namespace of what mounts on it.
+    name: str
 
 
 class Mounts:
-    """The frames of a HardwareModule's USD that other hardware mounts onto, by last segment: ``Robot.mounts.lidar`` is ``go2/base/lidar``."""
+    """The frames of a HardwareModule's USD that other hardware mounts onto, by name: ``Mounts("go2/base/lidar")`` is ``Robot.mounts.lidar`` (its last segment), ``Mounts(head_lidar="go2/base/lidar")`` is ``Robot.mounts.head_lidar``."""
 
-    def __init__(self, *frames: str) -> None:
+    def __init__(self, *frames: str, **named: str) -> None:
         self._frames: dict[str, str] = {}
-        for frame in frames:
+        unnamed = [(frame.rpartition("/")[2], frame) for frame in frames]
+        for name, frame in [*unnamed, *named.items()]:
             check_frame_path(frame, "the mount")
-            name = frame.rpartition("/")[2]
+            check_frame_path(name, "the mount's name")
             if name in self._frames:
                 raise ValueError(
-                    f"the mounts {self._frames[name]!r} and {frame!r} both end in {name!r}, "
-                    f"which is how a mount is named"
+                    f"the mounts {self._frames[name]!r} and {frame!r} are both named {name!r}; "
+                    f"name one apart, e.g. Mounts(other_{name}={frame!r})"
                 )
             self._frames[name] = frame
 
@@ -92,7 +98,11 @@ class Mounts:
             raise AttributeError(name)
         if name not in self._frames:
             raise AttributeError(f"no mount {name!r}; the mounts are {sorted(self._frames)}")
-        return Mount(self._frames[name])
+        return Mount(self._frames[name], name)
+
+    def roles(self) -> dict[str, str]:
+        """Each mount's name -> its frame path, as tf_frames_local roles."""
+        return dict(self._frames)
 
     def __iter__(self) -> Iterator[str]:
         return iter(sorted(self._frames.values()))
@@ -102,7 +112,7 @@ class HardwareModuleConfig(TfModuleConfig):
     # This hardware alone: a robot's USD has no sensors in it, they mount on with their own.
     # Required: hardware without a USD is not a HardwareModule.
     usd: UsdModel
-    # The mount frame of the hardware this sits on (set by HardwareModule.attach); None for the hardware everything mounts to.
+    # The name of the mount this sits on (set by HardwareModule.attach); None for the hardware everything mounts to.
     attached_to: str | None = None
     # The edges that never move go out once on tf_static at start, then on tf this often (0: never on tf), for whatever joins later.
     static_tf_rate_hz: float = 10.0
@@ -150,7 +160,7 @@ def check_declared_tf_against_usd(
         if frame not in frames:
             raise ValueError(
                 f"tf_frames_local[{role!r}] is {frame!r}, which is not a prim path of this "
-                f"hardware's USD (its frames: {sorted(frames)})"
+                f"hardware's USD: set it to one of its frames ({sorted(frames)})"
             )
     if values["tf_frames_global"]:
         raise ValueError(
@@ -158,6 +168,41 @@ def check_declared_tf_against_usd(
             f"only its USD's frames and its mount; an estimate (odom, map, ...) belongs in a "
             f"separate module that is not a HardwareModule"
         )
+    for role, frame in local.items():
+        # A role and a prim path share the namespace on tf, as do the prim paths of what mounts here.
+        if "/" in role:
+            raise ValueError(
+                f"tf_frames_local[{role!r}] would be called like a prim path on tf: rename the "
+                f"role {role!r} to one segment without '/', e.g. {role.replace('/', '_')!r}"
+            )
+        if role in frames and role != frame:
+            raise ValueError(
+                f"tf_frames_local[{role!r}] would be called like a prim path on tf: the prim "
+                f"/{role} is also a frame of this USD, so rename the role {role!r} (e.g. "
+                f"{role + '_frame'!r})"
+            )
+    mount_roles = mounts.roles() if mounts is not None else {}
+    for name, mount in mount_roles.items():
+        # What mounts there is namespaced by the mount's name, so tf has to call the mount that too.
+        if name in local and local[name] != mount:
+            raise ValueError(
+                f"tf_frames_local[{name!r}] is {local[name]!r}, but {name!r} is the mount on "
+                f"{mount!r}: rename the role {name!r}, or the mount (Mounts({name}_mount={mount!r}))"
+            )
+        other = next(
+            (role for role, frame in local.items() if frame == mount and role != name), None
+        )
+        if other is not None:
+            raise ValueError(
+                f"tf_frames_local names the mount {mount!r} {other!r}, but it is the mount {name!r}, "
+                f"which is its name on tf: remove the role {other!r}, or name the mount "
+                f"Mounts({other}={mount!r})"
+            )
+        if name in frames and name != mount:
+            raise ValueError(
+                f"the mount {name!r} would be called like the prim path {name!r} on tf: name it "
+                f"apart, e.g. Mounts({name}_mount={mount!r})"
+            )
     usd_edges = set(usd.tf_edges)
     for parent, child in values["tf_edges"]:
         if (local.get(parent), local.get(child)) not in usd_edges:
@@ -168,13 +213,34 @@ def check_declared_tf_against_usd(
             )
 
 
+def hardware_frame_names(
+    usd: UsdModel, local: Mapping[str, str], mounts: "Mounts | None" = None
+) -> dict[str, str]:
+    """Each of the USD's tf frames -> its name on tf: its mount's name, else the first tf_frames_local role naming it, else its prim path."""
+    names = {frame: frame for frame in usd.tf_frames}
+    named: set[str] = set()
+    for role, frame in [*(mounts.roles() if mounts is not None else {}).items(), *local.items()]:
+        if frame not in named:
+            names[frame] = role
+            named.add(frame)
+    return names
+
+
+def hardware_frame_ids(
+    usd: UsdModel, local: Mapping[str, str], namespace: str, mounts: "Mounts | None" = None
+) -> dict[str, str]:
+    """Each USD frame path, each mount's name and each role -> its tf frame id: the frame's name under ``namespace`` (a later role on a named frame is another name for it)."""
+    names = hardware_frame_names(usd, local, mounts)
+    roles = {
+        role: names[frame]
+        for role, frame in [*(mounts.roles() if mounts is not None else {}).items(), *local.items()]
+    }
+    return {**_frame_ids(names, {}, namespace), **_frame_ids(roles, {}, namespace)}
+
+
 def check_attached_namespace(attached_to: str | None, namespace: str) -> None:
     """Refuse a mounted HardwareModule that is not under its mount's namespace."""
-    if (
-        attached_to is not None
-        and namespace != attached_to
-        and not namespace.endswith(f"/{attached_to}")
-    ):
+    if attached_to is not None and namespace.rpartition("/")[2] != attached_to:
         raise ValueError(
             f"attached_to is {attached_to!r} but the namespace is {namespace!r}; a mounted "
             f"HardwareModule sits under its mount's namespace (use .attach(mount))"
@@ -206,25 +272,27 @@ class HardwareModule(TfModule):
 
     @classmethod
     def attach(cls, mount: Mount, **kwargs: Any) -> "Blueprint":
-        """This hardware on ``mount`` (``Robot.mounts.<name>``), under the namespace of its frame's path (``a/b/c/<module>``)."""
+        """This hardware on ``mount`` (``Robot.mounts.<name>``), under the mount's name (``<name>/<module>``), which is the mount's tf frame."""
         if not isinstance(mount, Mount):
             raise TypeError(
                 f"attach takes a mount (Robot.mounts.<name>), not {type(mount).__name__} {mount!r}"
             )
-        blueprint = cls.blueprint(**kwargs, attached_to=mount.frame)
-        # namespace() puts its prefix in front, so the last segment goes on first.
-        for segment in reversed(mount.frame.split("/")):
-            blueprint = blueprint.namespace(segment)
-        return blueprint
+        # Its namespace is the mount's tf frame: the mount's name, under the namespace of what offers it.
+        return cls.blueprint(**kwargs, attached_to=mount.name).namespace(mount.name)
 
     @cached_property
     def tf_frames(self) -> dict[str, str]:
-        """Every role -> frame id: each USD frame under its own prim path, then the declared roles."""
-        usd_frames = {frame: frame for frame in self.config.usd.tf_frames}
-        return {
-            **_frame_ids(usd_frames, {}, self.namespace),
-            **_frame_ids(self.config.tf_frames_local, self.config.tf_frames_global, self.namespace),
-        }
+        """Every role -> frame id: each USD frame (by its prim path) and each role, as its name under the namespace."""
+        return hardware_frame_ids(
+            self.config.usd, self.config.tf_frames_local, self.namespace, self.mounts
+        )
+
+    @classmethod
+    def frame_ids_of(cls, atom: "BlueprintAtom") -> dict[str, str]:
+        config = get_type_hints(cls)["config"].model_validate(atom.kwargs)
+        return hardware_frame_ids(
+            config.usd, config.tf_frames_local, atom.name.rpartition("/")[0], cls.mounts
+        )
 
     @cached_property
     def tf_edge_ids(self) -> frozenset[tuple[str, str]]:
@@ -288,7 +356,7 @@ class HardwareModule(TfModule):
 
     @rpc
     def get_usd(self) -> str:
-        """This hardware's USD exactly as provided as hardware.usda: prims under the namespace, so each frame's prim path is its tf frame; files relative to it."""
+        """This hardware's USD exactly as provided as hardware.usda: prims under the namespace, so an unnamed frame's prim path is its tf frame, and DimosFramesAPI on its top prim names each role's prim; files relative to it."""
         return self._hardware_files.usd
 
     @rpc
@@ -299,14 +367,20 @@ class HardwareModule(TfModule):
     @cached_property
     def _hardware_files(self) -> HardwareFiles:
         from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
+        from dimos.robot.assets.usd_utils.frames import usd_with_frame_names
         from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 
         # Its prims under /<namespace> and files as paths on this machine; HardwareFiles makes them relative to provide them.
         source = self.config.usd.source_path
         root = str(source.parent) if source is not None else ""
-        usd = usd_under_namespace(
-            resolve_usd_assets(self.config.usd.usd, root), self.namespace, root or None
+        names = hardware_frame_names(self.config.usd, self.config.tf_frames_local, self.mounts)
+        named = usd_with_frame_names(
+            resolve_usd_assets(self.config.usd.usd, root),
+            self.namespace,
+            {frame: self.tf_frames[frame] for frame, name in names.items() if name != frame},
+            root or None,
         )
+        usd = usd_under_namespace(named, self.namespace, root or None)
         return HardwareFiles(usd, source.stat().st_mtime if source and source.is_file() else None)
 
     def _on_hardware_file_request(self, request: FileInfo) -> None:
@@ -386,8 +460,8 @@ def _check_mount_tree(hardware: "list[BlueprintAtom]") -> None:
     for atom in hardware:
         namespace = atom.name.rpartition("/")[0]
         by_namespace[namespace].append(atom.name)
-        for mount in cast("type[HardwareModule]", atom.module).mounts:
-            offered_by[f"{namespace}/{mount}" if namespace else mount].append(atom.name)
+        for name in cast("type[HardwareModule]", atom.module).mounts.roles():
+            offered_by[f"{namespace}/{name}" if namespace else name].append(atom.name)
     errors = [
         f"    - {namespace or 'the top level'} holds {', '.join(sorted(names))}, whose "
         f"hardware_file streams would answer each other's requests"

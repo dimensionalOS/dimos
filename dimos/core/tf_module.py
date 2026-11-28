@@ -17,7 +17,7 @@
 from collections import defaultdict, deque
 from functools import cached_property
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from pydantic import Field, model_validator
 
@@ -95,6 +95,15 @@ class TfModule(Module):
         """Every role -> frame id, local (under the namespace) and global together."""
         return _frame_ids(self.config.tf_frames_local, self.config.tf_frames_global, self.namespace)
 
+    @classmethod
+    def frame_ids_of(cls, atom: "BlueprintAtom") -> dict[str, str]:
+        """A blueprint atom's role -> frame id, as the module it builds will have them (``tf_frames``)."""
+        return _frame_ids(
+            atom.kwargs["tf_frames_local"],
+            atom.kwargs["tf_frames_global"],
+            atom.name.rpartition("/")[0],
+        )
+
     @cached_property
     def frame(self) -> SimpleNamespace:
         """Frame ids by role, local and global together: ``self.frame.body``."""
@@ -110,11 +119,7 @@ class TfModule(Module):
         for atom in atoms:
             if not _is_checked(atom):
                 continue
-            frames = _frame_ids(
-                atom.kwargs["tf_frames_local"],
-                atom.kwargs["tf_frames_global"],
-                atom.name.rpartition("/")[0],
-            )
+            frames = cast("type[TfModule]", atom.module).frame_ids_of(atom)
             for parent_role, child_role in atom.kwargs["tf_edges"]:
                 owners[frames[parent_role], frames[child_role]].append(atom.name)
 
