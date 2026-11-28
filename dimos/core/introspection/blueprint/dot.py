@@ -155,15 +155,15 @@ def render(
     # Module name -> module class (for getting package info)
     module_classes: dict[str, type[ModuleBase]] = {}
 
-    for bp in blueprint_set.blueprints:
+    for bp in blueprint_set.active_blueprints:
         module_classes[bp.module.__name__] = bp.module
         for conn in bp.streams:
             # Apply remapping
             remapped_name = blueprint_set.remapping_map.get((bp.name, conn.name), conn.name)
             key = (remapped_name, conn.type)
-            if conn.direction == "out":
+            if conn.can_publish:
                 producers[key].append(bp.module)  # type: ignore[index]
-            else:
+            if conn.can_subscribe:
                 consumers[key].append(bp.module)  # type: ignore[index]
 
     # Find all active channels (have both producers AND consumers)

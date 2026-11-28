@@ -19,9 +19,26 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
-from dimos.core.introspection.blueprint.dot import LayoutAlgo
+from dimos.core.introspection.blueprint.dot import LayoutAlgo, render
 from dimos.core.introspection.module.info import ModuleInfo
 from dimos.core.introspection.svg import to_svg
+from dimos.core.module import Module
+from dimos.core.stream import IO
+
+
+class Duplex(Module):
+    frame: IO[bytes]
+
+
+def test_duplex_port_has_edges_in_both_directions() -> None:
+    graph = render(Duplex.blueprint())
+    edges = [line.split()[:3] for line in graph.splitlines() if " -> " in line]
+    assert "frame:bytes" in graph
+    assert len(edges) == 2
+    assert edges[0] == edges[1][::-1]
+    disabled = render(Duplex.blueprint().disabled_modules(Duplex))
+    assert "frame:bytes" not in disabled
+    assert "Duplex" not in disabled
 
 
 @pytest.mark.parametrize(

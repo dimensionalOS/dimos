@@ -1101,8 +1101,11 @@ def with_relay_bridge(blueprint: Blueprint) -> Blueprint:
             effective_name = blueprint.remapping_map.get((atom.name, stream.name), stream.name)
             if not isinstance(effective_name, str):
                 continue
-            keys = producer_keys if stream.direction == "out" else consumer_keys
-            keys.add((effective_name, stream.type))
+            key = (effective_name, stream.type)
+            if stream.can_publish:
+                producer_keys.add(key)
+            if stream.can_subscribe:
+                consumer_keys.add(key)
 
     bridge_atom = RelayBridgeModule.blueprint().blueprints[0]
     bridge_input_types = {

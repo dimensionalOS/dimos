@@ -118,12 +118,21 @@ def _collection_components(
         ),
     ]
     camera = next(
-        atom
-        for atom in producers.active_blueprints
-        if any(
-            stream.name == "color_image" and stream.direction == "out" for stream in atom.streams
-        )
+        (
+            atom
+            for atom in producers.active_blueprints
+            if any(
+                stream.can_publish
+                and stream.type is Image
+                and producers.remapping_map.get((atom.name, stream.name), stream.name)
+                == "color_image"
+                for stream in atom.streams
+            )
+        ),
+        None,
     )
+    if camera is None:
+        raise ValueError("Collection requires an Image producer on color_image")
     camera_config = cast("CameraConfig", module_config_cls(camera)(**camera.kwargs))
     state = FeatureSpec(
         stream="coordinator_joint_state",

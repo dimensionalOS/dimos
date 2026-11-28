@@ -84,6 +84,14 @@ class StreamRef:
     type: type
     direction: Literal["in", "out", "inout"]
 
+    @property
+    def can_publish(self) -> bool:
+        return self.direction != "in"
+
+    @property
+    def can_subscribe(self) -> bool:
+        return self.direction != "out"
+
 
 @dataclass(frozen=True)
 class ModuleRef:
