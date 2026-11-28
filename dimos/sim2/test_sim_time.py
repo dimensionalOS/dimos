@@ -34,6 +34,7 @@ from dimos.sim2.assets.logistics import Logistics
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.imu import SimImu
 from dimos.sim2.l1 import SimL1
+from dimos.sim2.livox import LivoxSim
 from dimos.sim2.mujoco.sim import MujocoSim
 from dimos.sim2.sim import on_mount, sim
 from dimos.sim2.spec import SimulatedRobot
@@ -43,11 +44,13 @@ pytest.importorskip("pxr")
 L1_PERIOD = 0.13
 RATES = {
     "imu": 50.0,
+    "lidar": 10.0,
+    "livox_imu": 50.0,
     "l1_lidar": 1 / L1_PERIOD,
 }
 _BASE = "toy/Geometry/base"
 # Each sensor's mount on the toy dog, and the frame it hangs off.
-MOUNTS = {"imu": _BASE, "l1": _BASE}
+MOUNTS = {"imu": _BASE, "livox": f"{_BASE}/head", "l1": _BASE}
 
 
 class _DogConfig(HardwareModuleConfig):
@@ -72,6 +75,8 @@ class _Dog(HardwareModule):
 
 class _Readings(Module):
     imu: In[Imu]
+    lidar: In[PointCloud2]
+    livox_imu: In[Imu]
     l1_lidar: In[PointCloud2]
 
     async def main(self) -> AsyncIterator[None]:
@@ -98,7 +103,7 @@ class _Readings(Module):
         }
 
 
-SENSOR_STREAMS = {"imu", "l1_lidar"}
+SENSOR_STREAMS = {"imu", "lidar", "livox_imu", "l1_lidar"}
 
 
 def _run(seconds: float, speed: float) -> dict[str, Any]:
@@ -106,6 +111,9 @@ def _run(seconds: float, speed: float) -> dict[str, Any]:
         _Dog.blueprint(attached_to=Logistics.mounts.go2.name),
         # A mount namespaces its sensor's streams; these take them back out to _Readings.
         SimImu.attach(_Dog.mounts.imu, rate_hz=RATES["imu"]).remappings([(SimImu, "imu", "imu")]),
+        LivoxSim.attach(
+            _Dog.mounts.livox, rate_hz=RATES["lidar"], imu_rate_hz=RATES["livox_imu"]
+        ).remappings([(LivoxSim, "imu", "livox_imu"), (LivoxSim, "lidar", "lidar")]),
         SimL1.attach(_Dog.mounts.l1, period=L1_PERIOD).remappings([(SimL1, "lidar", "l1_lidar")]),
     )
     blueprint = autoconnect(
@@ -149,6 +157,7 @@ def _per_second(stamps: list[float], start: float) -> float:
     return (len(steady) - 1) / (steady[-1] - steady[0])
 
 
+@pytest.mark.self_hosted  # reads the Mid-360 pattern from Git LFS
 def test_sensors_keep_their_rates_in_real_time() -> None:
     readings = _run(seconds=8.0, speed=1.0)
     stamps = readings["stamps"]

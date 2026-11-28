@@ -18,6 +18,7 @@ import asyncio
 from collections.abc import AsyncIterator, Iterator, Sequence
 import math
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -26,6 +27,10 @@ import pytest
 pytest.importorskip("pxr")
 
 TICKS = 3
+
+
+# Off by any amount from wall time and still sent: these worlds keep a clock of their own.
+ANY_STAMP = {"stamp_tolerance": math.inf, "imu_stamp_tolerance": math.inf}
 
 
 class _World:
@@ -55,6 +60,7 @@ class _View:
     def __init__(self, world: _World) -> None:
         self.world, self.time = world, 0.0
         self.mounted_at: list[str | None] = []
+        self.imu_frames: list[str] = []
 
     def update(self, world: _World) -> None:
         self.time = world.time
@@ -77,12 +83,21 @@ class _View:
     def twin(self) -> "_View":
         return self
 
+    def imu(self, sensor: str) -> tuple[Any, Any, Any]:
+        self.imu_frames.append(sensor)
+        return np.zeros(3), np.array([0.0, 0.0, 9.81]), np.array([1.0, 0.0, 0.0, 0.0])
+
 
 def _run(
-    sensor: Any, loop: str, stream: str, monkeypatch: pytest.MonkeyPatch, opening: float = 0.0
+    sensor: Any,
+    loop: str,
+    stream: str,
+    monkeypatch: pytest.MonkeyPatch,
+    opening: float = 0.0,
+    world: _World | None = None,
 ) -> dict[str, Any]:
-    """Run ``sensor``'s ``loop`` in a _World, its view taking ``opening`` sim seconds to open."""
-    world = _World()
+    """Run ``sensor``'s ``loop`` in ``world`` (a new _World unless given), its view taking ``opening`` sim seconds to open."""
+    world = world or _World()
     view = _View(world)
     published: list[Any] = []
     sensor._world = world
@@ -98,6 +113,37 @@ def _run(
 
 
 @pytest.fixture
+def livox() -> Iterator[Any]:
+    from dimos.sim2.livox import LivoxSim
+
+    sensor = LivoxSim(instance_name="left/livox", **ANY_STAMP)
+    yield sensor
+    sensor.stop()
+
+
+@pytest.mark.self_hosted  # the Mid-360 scan pattern is Git LFS data
+@pytest.mark.parametrize(("stamp_tolerance", "sent"), [(0.5, 0), (2.0, TICKS - 1)])
+def test_a_livox_cloud_cast_slower_than_its_stamp_tolerance_is_dropped_and_warned_once(
+    stamp_tolerance: float, sent: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dimos.sim2 import sensor
+    from dimos.sim2.livox import LivoxSim
+
+    livox = LivoxSim(instance_name="left/livox", stamp_tolerance=stamp_tolerance)
+    warned: list[str] = []
+    monkeypatch.setattr(sensor.logger, "warning", warned.append)
+    world_clock = _World()
+    # Wall time is the world's own time, which a cast takes a second of.
+    monkeypatch.setattr(sensor, "time", SimpleNamespace(time=lambda: world_clock.time))
+    try:
+        run = _run(livox, "_scan", "lidar", monkeypatch, world=world_clock)
+    finally:
+        livox.stop()
+    assert len(run["published"]) == sent
+    assert len(warned) == (1 if sent == 0 else 0)
+
+
+@pytest.fixture
 def l1(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     from dimos.sim2.l1 import SimL1
 
@@ -105,6 +151,24 @@ def l1(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     monkeypatch.setattr(sensor, "_rider_odometry", lambda rider: ("left/odom", np.eye(4)))
     yield sensor
     sensor.stop()
+
+
+@pytest.mark.self_hosted  # the Mid-360 scan pattern is Git LFS data
+def test_a_livox_cloud_is_stamped_with_the_world_it_was_cast_in(
+    livox: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = _run(livox, "_scan", "lidar", monkeypatch)
+    # The first tick opens the view, and each after it casts.
+    cast_at = [1.0 + tick for tick in range(TICKS - 1)]
+    assert [cloud.ts for cloud in run["published"]] == cast_at
+
+
+def test_a_livox_imu_is_read_at_the_frame_it_is_labelled_with(
+    livox: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = _run(livox, "_read_imu", "imu", monkeypatch)
+    assert set(run["view"].imu_frames) == {livox.imu_frame_id}
+    assert {reading.frame_id for reading in run["published"]} == {livox.imu_frame_id}
 
 
 def test_an_l1_does_not_map_the_body_it_is_mounted_on(
@@ -127,6 +191,9 @@ def test_an_l1_map_is_stamped_with_the_world_it_was_cast_in(
     ("sensor", "loop", "stream"),
     [
         ("l1", "_map", "lidar"),
+        # the Mid-360 scan pattern is Git LFS data
+        pytest.param("livox", "_scan", "lidar", marks=pytest.mark.self_hosted),
+        ("livox", "_read_imu", "imu"),
     ],
 )
 def test_a_sensor_slow_to_open_still_stamps_each_reading_with_its_own_tick(
@@ -142,10 +209,92 @@ def test_a_sensor_slow_to_open_still_stamps_each_reading_with_its_own_tick(
     assert stamps == run["ticked"][1:]
 
 
+class _Clock(_World):
+    """A world whose ticks come at their rate on its own clock, each loop's interleaved with the others'."""
+
+    async def ticks(self, rate_hz: float) -> AsyncIterator[float]:
+        for tick in range(int(SECONDS * rate_hz)):
+            # Another loop runs between any two of this one's ticks.
+            await asyncio.sleep(0)
+            self.time = 1.0 + tick / rate_hz
+            yield self.time
+
+
+SECONDS = 1.0
+
+
+@pytest.mark.self_hosted  # the Mid-360 scan pattern is Git LFS data
+def test_a_livox_opens_one_view_for_its_lidar_and_imu_and_reads_both_at_their_rates(
+    livox: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = _Clock()
+    opened: list[_View] = []
+    published: dict[str, list[float]] = {"lidar": [], "imu": []}
+    livox._world = world
+
+    def open_view(*_mount: Any) -> _View:
+        opened.append(_View(world))
+        return opened[-1]
+
+    monkeypatch.setattr(livox, "open_view", open_view)
+    for stream, stamps in published.items():
+        monkeypatch.setattr(getattr(livox, stream), "publish", lambda m, s=stamps: s.append(m.ts))
+
+    async def both() -> None:
+        await asyncio.gather(livox._scan(), livox._read_imu())
+
+    asyncio.run(both())
+    assert len(opened) == 1
+    # Both loops' first tick is spent opening it, and each reads every tick after.
+    for stamps, rate in (
+        (published["lidar"], livox.config.rate_hz),
+        (published["imu"], livox.config.imu_rate_hz),
+    ):
+        assert stamps == pytest.approx(
+            [1.0 + tick / rate for tick in range(1, int(SECONDS * rate))]
+        )
+
+
+@pytest.mark.self_hosted  # the Mid-360 scan pattern is Git LFS data
+def test_a_livox_lidar_and_imu_share_one_real_view(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dimos.sim2.livox import LivoxSim
+
+    livox = LivoxSim(instance_name=f"{LIDAR_MOUNT}/livox", attached_to="lidar", **ANY_STAMP)
+    opened: list[Any] = []
+    clouds: list[Any] = []
+    readings: list[Any] = []
+    try:
+        _toy_world(livox, LIDAR_MOUNT, monkeypatch)
+        open_view = livox.open_view
+
+        def counted_open(*mount: Any) -> Any:
+            opened.append(open_view(*mount))
+            return opened[-1]
+
+        monkeypatch.setattr(livox, "open_view", counted_open)
+        monkeypatch.setattr(livox.lidar, "publish", clouds.append)
+        monkeypatch.setattr(livox.imu, "publish", readings.append)
+
+        async def both() -> None:
+            await asyncio.gather(livox._scan(), livox._read_imu())
+
+        asyncio.run(both())
+    finally:
+        livox.stop()
+    assert len(opened) == 1
+    assert clouds and all(len(cloud.as_numpy()[0]) > 0 for cloud in clouds)
+    # The dog stands still, so its IMU reads gravity alone.
+    assert readings and all(
+        np.linalg.norm(r.linear_acceleration.to_numpy()) == pytest.approx(9.81, abs=0.01)
+        for r in readings
+    )
+
+
 SPOT_XY, SPOT_YAW = (2.0, 1.0), np.pi / 2
 # The scene's frame the dog mounts on, and so the dog's namespace.
 DOG = "scene/dog"
 # The dog's frames a sensor mounts on (its raw USD names them by prim path), each the namespace of what mounts there.
+LIDAR_MOUNT = f"{DOG}/toy/Geometry/base/head/lidar"
 L1_MOUNT = f"{DOG}/toy/Geometry/base/l1"
 L1_UP_MOUNT = f"{DOG}/toy/Geometry/base/l1_up"
 
@@ -182,6 +331,7 @@ def _toy_world(sensor: Any, mount: str, monkeypatch: pytest.MonkeyPatch) -> Any:
     )
     dog = toy_robot().with_frames(
         {
+            "lidar": ("toy/Geometry/base/head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
             "l1": ("toy/Geometry/base", (0.0, 0.0, 0.0), (np.pi, 0.0, 0.0)),
             "l1_up": ("toy/Geometry/base", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
         }
@@ -212,6 +362,21 @@ def _toy_world(sensor: Any, mount: str, monkeypatch: pytest.MonkeyPatch) -> Any:
     sensor._world = mirror
     sensor.world_layer = lambda: layer_file(world_usd, "toy-world")
     return mirror
+
+
+@pytest.mark.self_hosted  # the Mid-360 scan pattern is Git LFS data
+def test_a_livox_in_its_housing_sees_past_the_housing(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dimos.sim2.livox import LivoxSim
+
+    livox = LivoxSim(instance_name=f"{LIDAR_MOUNT}/livox", attached_to="lidar", **ANY_STAMP)
+    published: list[Any] = []
+    try:
+        _toy_world(livox, LIDAR_MOUNT, monkeypatch)
+        monkeypatch.setattr(livox.lidar, "publish", published.append)
+        asyncio.run(livox._scan())
+    finally:
+        livox.stop()
+    assert published and all(len(cloud.as_numpy()[0]) > 0 for cloud in published)
 
 
 def test_an_l1_maps_in_the_odometry_of_the_robot_it_rides(monkeypatch: pytest.MonkeyPatch) -> None:
