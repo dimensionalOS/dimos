@@ -233,34 +233,19 @@ class Go2WebRtcSim(ViewSensor):
         # Each sensor on its own clock, and the camera on views of its own, so a frame being drawn never holds up the L1.
         drawers = [view.twin() for _ in range(config.camera_views)]
         try:
-            await asyncio.gather(self._film(drawers, info), self._map(view, raycaster, from_world))
+            filming = self.film(
+                drawers,
+                "go2_front_camera",
+                info.width,
+                info.height,
+                config.camera_rate_hz,
+                config.stamp_tolerance,
+                lambda rgb, stamp: self._publish_frame(info, rgb, stamp),
+            )
+            await asyncio.gather(filming, self._map(view, raycaster, from_world))
         finally:
             for drawer in drawers:
                 drawer.close()
-
-    async def _film(self, idle: list[WorldView], info: CameraInfo) -> None:
-        """Its camera, a frame each tick on whichever view is free; with none free, the frame is skipped, as a real camera drops one."""
-        config = self.config
-        drawing: set[asyncio.Task[None]] = set()
-        published = [-math.inf]
-        try:
-            async for _ in self._world.ticks(config.camera_rate_hz):
-                if not idle:
-                    continue
-                drawer = idle.pop()
-                drawer.update(self._world)
-                # Checked when it is taken, not once drawn: the world being off wall time is what drops a frame.
-                if not self.on_time(
-                    "color_image", drawer.time, 1 / config.camera_rate_hz, config.stamp_tolerance
-                ):
-                    idle.append(drawer)
-                    continue
-                task = asyncio.create_task(self._photograph(drawer, info, idle, published))
-                drawing.add(task)
-                task.add_done_callback(drawing.discard)
-        finally:
-            for task in drawing:
-                task.cancel()
 
     async def _map(
         self, view: WorldView, raycaster: Raycaster, from_world: NDArray[np.float64]
@@ -274,18 +259,7 @@ class Go2WebRtcSim(ViewSensor):
             if self.on_time("lidar", stamp, config.l1.period, config.l1.stamp_tolerance):
                 self.lidar.publish(PointCloud2.from_numpy(points, self.odom_frame_id, stamp))
 
-    async def _photograph(
-        self, view: WorldView, info: CameraInfo, idle: list[WorldView], published: list[float]
-    ) -> None:
-        """Its camera's image of ``view``, published unless a newer frame went first; ``view`` is idle again after."""
-        try:
-            stamp = view.time
-            rgb = await asyncio.to_thread(view.render, "go2_front_camera", info.width, info.height)
-        finally:
-            idle.append(view)
-        if stamp <= published[0]:
-            return
-        published[0] = stamp
+    def _publish_frame(self, info: CameraInfo, rgb: NDArray[np.uint8], stamp: float) -> None:
         self.color_image.publish(
             Image(data=rgb, format=ImageFormat.RGB, frame_id=info.frame_id, ts=stamp)
         )
