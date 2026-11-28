@@ -59,6 +59,34 @@ def test_a_sensor_slower_than_its_rate_ticks_as_often_as_its_work_allows() -> No
     assert np.all((gaps >= work) & (gaps < work + PERIOD)), gaps
 
 
+def test_a_sensor_always_behind_its_rate_still_lets_the_loop_s_other_tasks_run() -> None:
+    """Work that never yields, at a rate it can never keep up with: an input's handler on the same loop still runs."""
+
+    async def behind() -> int:
+        mirror, writer = WorldMirror(), WorldWriter()
+        writer.add("world")
+        mirror.apply(writer.end_frame(0.0))
+        handled = 0
+
+        async def handler() -> None:
+            nonlocal handled
+            while True:
+                await asyncio.sleep(0)
+                handled += 1
+
+        handling = asyncio.ensure_future(handler())
+        ticks = 0
+        async for _ in mirror.ticks(10_000):
+            time.sleep(2 * PERIOD / 10)
+            ticks += 1
+            if ticks == 10:
+                break
+        handling.cancel()
+        return handled
+
+    assert asyncio.run(behind()) >= 5
+
+
 def test_ticks_wait_for_the_world_s_first_frame_and_are_wall_times() -> None:
     mirror, writer = WorldMirror(), WorldWriter()
     writer.add("world")

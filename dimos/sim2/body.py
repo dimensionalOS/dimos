@@ -19,7 +19,7 @@ import asyncio
 from collections.abc import AsyncIterator, Mapping, Sequence
 from functools import cached_property
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
 import numpy as np
@@ -136,6 +136,8 @@ class SimBody(HardwareModule):
     """
 
     config: SimBodyConfig
+    # Its joint states are what a policy balances on: they share no GIL with the physics or a sensor, which would make them late.
+    dedicated_worker: ClassVar[bool] = True
     world: SimulatedWorldSpec
     position_command: In[JointState]
     joint_state: Out[JointState]
