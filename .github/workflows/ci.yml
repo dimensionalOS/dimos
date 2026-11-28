@@ -792,7 +792,9 @@ jobs:
       contains(fromJSON('["success", "skipped"]'), needs.cachix-build-check.result) &&
       contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
     needs: [cachix-build-check, cachix-build]
-    timeout-minutes: 30
+    # macOS 3.12 is the slowest leg: coverage's tracer costs the most on 3.12,
+    # and the 3-CPU macOS runners vary a lot. Green runs have taken up to 30 min.
+    timeout-minutes: 40
     strategy:
       matrix:
         pyver: ['3.10', '3.11', '3.12']
