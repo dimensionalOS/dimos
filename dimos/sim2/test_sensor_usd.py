@@ -51,15 +51,6 @@ def test_a_sensor_serves_its_usd_under_its_namespace(kind: str, frames: set[str]
     assert frames <= usd_frame_names(usd), f"{kind}'s layer names {sorted(usd_frame_names(usd))}"
 
 
-def test_a_namespaced_lidar_puts_its_namespace_on_its_imu_frame_too() -> None:
-    lidar = _sensor("livox")
-    try:
-        assert lidar.frame_id == "left/mid360/lidar_link"
-        assert lidar.imu_frame_id == "left/mid360/lidar_link/imu_link"
-    finally:
-        lidar.stop()
-
-
 def _streams(module: type, *, direction: type) -> dict[str, type]:
     hints = get_type_hints(module)
     return {name: hint.__args__[0] for name, hint in hints.items() if get_origin(hint) is direction}
@@ -77,6 +68,13 @@ def test_a_livox_is_hardware_sending_what_a_real_mid360_sends() -> None:
     }
     # It reads the world where the real one reads its network.
     assert _streams(LivoxSim, direction=In) == _streams(SimSensor, direction=In)
+    # Namespaced, it puts its namespace on its IMU frame too.
+    lidar = _sensor("livox")
+    try:
+        assert lidar.frame_id == "left/mid360/lidar_link"
+        assert lidar.imu_frame_id == "left/mid360/lidar_link/imu_link"
+    finally:
+        lidar.stop()
 
 
 def test_a_camera_is_hardware_sending_what_a_real_camera_sends() -> None:
