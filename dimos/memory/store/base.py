@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
+from typing import Any, Generic, Protocol, TypeVar, cast
 
 from dimos.core.resource import CompositeResource
 from dimos.memory.backend import Backend
@@ -27,9 +27,6 @@ from dimos.memory.observationstore.memory import ListObservationStore
 from dimos.memory.stream import Stream
 from dimos.memory.vectorstore.base import VectorStore
 from dimos.protocol.service.spec import BaseConfig, Configurable
-
-if TYPE_CHECKING:
-    from dimos.memory.replay import Replay
 
 T = TypeVar("T")
 S = TypeVar("S")
@@ -44,8 +41,7 @@ class _StreamContainer(Protocol[S_co]):
 class StreamAccessor(Generic[S]):
     """Attribute-style access: ``container.streams.name`` -> ``container.stream(name)``.
 
-    Generic over the returned stream type — ``Store`` returns ``Stream[Any]``;
-    ``Replay`` returns ``ReplayStream[Any]``.
+    Generic over the returned stream type; ``Store`` returns ``Stream[Any]``.
     """
 
     __slots__ = ("_container",)
@@ -110,33 +106,6 @@ class Store(Configurable, CompositeResource):
     def streams(self) -> StreamAccessor[Stream[Any]]:
         """Attribute-style access to streams: ``store.streams.name``."""
         return StreamAccessor(self)
-
-    def replay(
-        self,
-        *,
-        speed: float = 1.0,
-        seek: float | None = None,
-        duration: float | None = None,
-        from_timestamp: float | None = None,
-        loop: bool = False,
-    ) -> Replay:
-        """Open a time-bounded replay view over this store with a shared anchor.
-
-        The returned :class:`Replay` pins a single wall-clock anchor on first
-        subscribe so that ``replay.streams.lidar.observable()`` and
-        ``replay.streams.odom.observable()`` advance together rather than
-        each re-anchoring on their own ``first_ts``.
-        """
-        from dimos.memory.replay import Replay
-
-        return Replay(
-            store=self,
-            speed=speed,
-            seek=seek,
-            duration=duration,
-            from_timestamp=from_timestamp,
-            loop=loop,
-        )
 
     @staticmethod
     def _resolve_codec(

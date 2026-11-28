@@ -65,7 +65,7 @@ def test_external_sqlite_blobs_replay_after_reopen(tmp_path: Path) -> None:
         stream.append("second", ts=2.0)
 
     with SqliteStore(path=metadata, must_exist=True) as store:
-        assert list(store.replay().streams.payload.iterate()) == ["first", "second"]
+        assert [o.data for o in store.streams.payload.order_by("ts")] == ["first", "second"]
 
 
 class TestBlobStoreIntegration:
