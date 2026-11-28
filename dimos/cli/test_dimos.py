@@ -83,16 +83,48 @@ class RunModuleB(Module):
         (["dimos", "--record", "run", "go2"], ["dimos", "--record", "sqlite", "run", "go2"]),
         (["dimos", "--record", "sqlite", "run"], ["dimos", "--record", "sqlite", "run"]),
         (["dimos", "--record", "mcap", "run"], ["dimos", "--record", "mcap", "run"]),
+        # A subcommand name in a blueprint's options is a value.
+        (
+            ["dimos", "run", "go2", "--record", "status"],
+            ["dimos", "run", "go2", "--record", "status"],
+        ),
         # Explicit simulator — left untouched.
         (["dimos", "--simulation", "mujoco", "run"], ["dimos", "--simulation", "mujoco", "run"]),
         (["dimos", "--simulation", "dimsim", "run"], ["dimos", "--simulation", "dimsim", "run"]),
         (["dimos", "--simulation=dimsim", "run"], ["dimos", "--simulation=dimsim", "run"]),
+        (["dimos", "bake", "train", "--simulation"], ["dimos", "bake", "train", "--simulation"]),
+        (["dimos", "top", "--record"], ["dimos", "top", "--record"]),
+        (
+            ["dimos", "run", "mod", "--simulation"],
+            ["dimos", "run", "mod", "--simulation", "mujoco"],
+        ),
+        (
+            ["dimos", "--robot-ip", "top", "--record", "run", "mod"],
+            ["dimos", "--robot-ip", "top", "--record", "sqlite", "run", "mod"],
+        ),
+        (
+            ["dimos", "--", "rerun-bridge", "--simulation"],
+            ["dimos", "--", "rerun-bridge", "--simulation", "mujoco"],
+        ),
+        (
+            ["dimos", "--", "agent-send", "--", "--record"],
+            ["dimos", "--", "agent-send", "--", "--record"],
+        ),
         # No `--simulation` at all — left untouched.
         (["dimos", "run", "go2"], ["dimos", "run", "go2"]),
     ],
 )
 def test_normalize_argv(argv: list[str], expected: list[str]) -> None:
     assert normalize_argv(argv) == expected
+
+
+@pytest.mark.parametrize("message", ["--simulation", "--record"])
+def test_agent_send_preserves_literal_option(message: str, mocker: MockerFixture) -> None:
+    adapter = mocker.patch.object(mcp, "_get_adapter").return_value
+    args = normalize_argv(["dimos", "agent-send", "--", message])
+    result = CliRunner().invoke(main, args[1:])
+    assert result.exit_code == 0, result.output
+    adapter.call_tool_text.assert_called_once_with("agent_send", {"message": message})
 
 
 @pytest.mark.parametrize(

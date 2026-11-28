@@ -27,6 +27,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from dimos.constants import DEFAULT_BUILD_NATIVE
 from dimos.visualization.rerun.constants import ViewerBackend
 
+DEFAULT_SIMULATOR = "mujoco"
+SIMULATORS = (DEFAULT_SIMULATOR, "dimsim")
+
 TransportBackend: TypeAlias = Literal["lcm", "zenoh"]
 # How one zenoh session joins the network.
 ZenohMode: TypeAlias = Literal["peer", "client", "router"]
@@ -115,6 +118,18 @@ class GlobalConfig(BaseSettings):
         extra="ignore",
         validate_assignment=True,
     )
+
+    @field_validator("simulation")
+    @classmethod
+    def _validate_simulation(cls, value: str) -> str:
+        name = value.lower()
+        if name == "true":
+            return DEFAULT_SIMULATOR
+        if name and name not in SIMULATORS:
+            raise ValueError(
+                f"Unknown simulator {value!r}. Expected one of: {', '.join(SIMULATORS)}"
+            )
+        return name
 
     @field_validator("record_engine")
     @classmethod

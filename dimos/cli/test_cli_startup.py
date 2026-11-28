@@ -30,6 +30,30 @@ import pytest
 HELP_TIMEOUT_SECONDS = 8
 
 
+@pytest.mark.parametrize(
+    ("args", "env", "code", "word"),
+    [
+        (["--simulation=mujco", "show-config"], {}, 2, "mujco"),
+        (["run", "coordinator-basic", "--simulation", "status", "--help"], {}, 2, "status"),
+        (["show-config"], {"SIMULATION": "mujco"}, 2, "mujco"),
+        (["--simulation", "TrUe", "show-config"], {}, 0, "simulation: mujoco"),
+        # A bare flag given first leaves the following subcommand to run.
+        (["--simulation", "run", "demo-mcp-stress-test", "--help"], {}, 0, "stresstestmodule"),
+        (["--record", "show-config"], {}, 0, "record: sqlite"),
+    ],
+)
+def test_simulator_selection(args: list[str], env: dict[str, str], code: int, word: str) -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", "from dimos.cli.entry import main; main()", *args],
+        env=os.environ | env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == code
+    assert word in result.stdout + result.stderr
+
+
 def test_help_does_not_import_heavy_deps() -> None:
     """GlobalConfig import must not drag in matplotlib, torch, or scipy."""
     result = subprocess.run(

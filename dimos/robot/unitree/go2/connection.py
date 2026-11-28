@@ -199,7 +199,11 @@ def make_connection(
             velocity_api=velocity_api,
         )
     else:
-        raise ValueError(f"Unknown simulator {cfg.g.simulation!r}. Choose from: mujoco, dimsim")
+        from dimos.core.global_config import SIMULATORS
+
+        raise ValueError(
+            f"Unknown simulator {cfg.g.simulation!r}. Choose from: {', '.join(SIMULATORS)}"
+        )
 
 
 _T = TypeVar("_T")
