@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 import math
 import threading
 from types import SimpleNamespace
@@ -27,18 +27,10 @@ import pytest
 pytest.importorskip("pxr")
 
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
 from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 from dimos.robot.unitree.go2 import webrtc_sim
-from dimos.robot.unitree.go2.webrtc_sim import (
-    BODY,
-    SERVOS,
-    Go2WebRtcSim,
-    Go2WebRtcSimConfig,
-    go2_usd,
-)
+from dimos.robot.unitree.go2.webrtc_sim import BODY, SERVOS, Go2WebRtcSim, go2_usd
 from dimos.sim2.mujoco.backend import MujocoBackend
 from dimos.sim2.mujoco.drives import usd_drives
 from dimos.sim2.scene import LOGISTICS, scene_usd
@@ -50,130 +42,62 @@ _SPOT = "logistics/spawns/go2"
 def _world() -> MujocoBackend:
     go2 = go2_usd()
     served = usd_under_namespace(resolve_usd_assets(go2.usd, str(go2.asset_root)), _SPOT)
-    world = compose_usds(
-        [
-            (resolve_usd_assets(scene_usd(LOGISTICS).usd, str(LOGISTICS.parent)), None),
-            (served, _SPOT),
-        ]
-    )
+    scene = resolve_usd_assets(scene_usd(LOGISTICS).usd, str(LOGISTICS.parent))
+    world = compose_usds([(scene, None), (served, _SPOT)])
     return MujocoBackend(world, [SimulatedRobot(_SPOT, go2, free=False)])
 
 
-def _position(backend: MujocoBackend, servo: str) -> float:
-    joint = backend.model.joint(f"{_SPOT}/{servo}")
-    return float(backend.data.qpos[backend.model.jnt_qposadr[joint.id]])
-
-
-def _velocity(backend: MujocoBackend, servo: str) -> float:
-    joint = backend.model.joint(f"{_SPOT}/{servo}")
-    return float(backend.data.qvel[backend.model.jnt_dofadr[joint.id]])
-
-
-def test_its_body_moves_at_the_velocity_its_servos_are_commanded_and_stays_up() -> None:
-    backend = _world()
+def _drive(backend: MujocoBackend, velocity: tuple[float, ...], seconds: float) -> Iterator[None]:
+    """Steps the world with its servos commanded at `velocity`, yielding after every step."""
     gains = tuple(usd_drives(go2_usd().usd, go2_usd().asset_root)[name][1] for name in SERVOS)
-    base = backend.model.body(f"{_SPOT}/base_link").id
-    mujoco.mj_forward(backend.model, backend.data)
-    height = backend.data.xpos[base][2]
-    seconds = 1.0
     for _ in range(round(seconds / backend.model.opt.timestep)):
-        backend.apply(
-            [JointCommand(_SPOT, SERVOS, velocity=(0.4, 0.0, 0.5), kp=(0.0,) * 3, kd=gains)]
-        )
+        backend.apply([JointCommand(_SPOT, SERVOS, velocity=velocity, kp=(0.0,) * 3, kd=gains)])
         backend._apply_pending()
         mujoco.mj_step(backend.model, backend.data)
-
-    assert _velocity(backend, "x") == pytest.approx(0.4, abs=0.01)
-    assert _velocity(backend, "yaw") == pytest.approx(0.5, abs=0.01)
-    assert backend.data.xpos[base][2] == pytest.approx(height, abs=0.01), "its body fell or rose"
+        yield
 
 
-def test_a_wall_stops_it() -> None:
-    """Driven at the logistics room's north wall, 5 m off, its body stops against the wall instead of passing through."""
+def test_driven_its_body_tracks_its_servos_stays_up_and_stops_nose_first_at_a_wall() -> None:
+    """Its body moves at its commanded velocities without falling or rising; then, driven nose first into the logistics room's north wall 5 m off, it stops there and its camera stays beyond its near plane."""
     backend = _world()
-    gains = tuple(usd_drives(go2_usd().usd, go2_usd().asset_root)[name][1] for name in SERVOS)
+    servo = {name: backend.data.joint(f"{_SPOT}/{name}") for name in SERVOS}
+    base, camera = (backend.data.body(f"{_SPOT}/{name}") for name in ("base_link", "camera_link"))
+    mujoco.mj_forward(backend.model, backend.data)
+    height = float(base.xpos[2])
+    spawn_qpos, spawn_qvel = backend.data.qpos.copy(), backend.data.qvel.copy()
+    for _ in _drive(backend, (0.4, 0.0, 0.5), seconds=1.0):
+        pass
+    assert (servo["x"].qvel[0], servo["yaw"].qvel[0]) == pytest.approx((0.4, 0.5), abs=0.01)
+    assert base.xpos[2] == pytest.approx(height, abs=0.01), "its body fell or rose"
+
+    # Back at its spawn, turned to face the wall.
+    backend.data.qpos[:], backend.data.qvel[:] = spawn_qpos, spawn_qvel
+    servo["yaw"].qpos[0] = math.pi / 2
     wall = backend.model.geom("/logistics/Geometry/north_wall")
-    face = backend.model.geom_pos[wall.id][1] - backend.model.geom_size[wall.id][1]
-    for _ in range(round(8.0 / backend.model.opt.timestep)):
-        backend.apply(
-            [JointCommand(_SPOT, SERVOS, velocity=(0.0, 1.0, 0.0), kp=(0.0,) * 3, kd=gains)]
-        )
-        backend._apply_pending()
-        mujoco.mj_step(backend.model, backend.data)
-
-    reached = _position(backend, "y")
-    assert face - 1.0 < reached < face, (
-        f"it stopped at y={reached:.2f}, the wall's face is at {face:.2f}"
-    )
+    face = wall.pos[1] - wall.size[1]
+    near = webrtc_sim.Go2WebRtcSimConfig().render.near
+    closest = min(face - float(camera.xpos[1]) for _ in _drive(backend, (0.0, 1.0, 0.0), 8.0))
+    reached = float(servo["y"].qpos[0])
+    assert face - 1.0 < reached < face, f"it stopped at y={reached:.2f}, the wall is at {face:.2f}"
+    assert closest > near, f"its camera got {closest:.3f} m from the wall, nearer than {near} m"
 
 
-def test_driven_nose_first_at_a_wall_its_camera_never_sees_through_it() -> None:
-    """Facing the logistics room's north wall and driven into it, its camera stays further from the wall than the nearest its camera draws."""
-    backend = _world()
-    gains = tuple(usd_drives(go2_usd().usd, go2_usd().asset_root)[name][1] for name in SERVOS)
-    wall = backend.model.geom("/logistics/Geometry/north_wall")
-    face = backend.model.geom_pos[wall.id][1] - backend.model.geom_size[wall.id][1]
-    yaw = backend.model.joint(f"{_SPOT}/yaw")
-    backend.data.qpos[backend.model.jnt_qposadr[yaw.id]] = math.pi / 2
-    camera = backend.model.body(f"{_SPOT}/camera_link").id
-    near = Go2WebRtcSimConfig().render.near
-    closest = math.inf
-    for _ in range(round(8.0 / backend.model.opt.timestep)):
-        backend.apply(
-            [JointCommand(_SPOT, SERVOS, velocity=(0.0, 1.0, 0.0), kp=(0.0,) * 3, kd=gains)]
-        )
-        backend._apply_pending()
-        mujoco.mj_step(backend.model, backend.data)
-        closest = min(closest, face - float(backend.data.xpos[camera][1]))
-
-    assert closest > near, (
-        f"its camera got {closest * 100:.1f} cm from the wall, its near plane is {near * 100:.1f} cm"
-    )
-
-
-def test_its_frames_are_the_names_a_real_go2_gives_them_under_its_namespace() -> None:
+@pytest.fixture
+def go2() -> Iterator[Go2WebRtcSim]:
     go2 = Go2WebRtcSim(instance_name="main/go2webrtcsim", attached_to="main")
-    try:
-        assert go2.tf_frames[BODY] == go2.frame.base_link == "main/base_link"
-        assert go2.frame.camera_optical == "main/camera_optical"
-        assert go2.attach_frame == "main/odom"
-        # Odometry holds its body: no edge places it, nor the frames its servos move.
-        children = {child for _, child in go2.tf_edge_ids}
-        assert "main/base_link" not in children
-        assert ("main", "main/odom") in go2.tf_edge_ids
-        assert ("main/base_link", "main/camera_link") in go2.tf_edge_ids
-    finally:
-        go2.stop()
-
-
-def test_its_odometry_turns_its_servos_into_a_pose_in_its_odom_frame_and_a_twist_in_its_body() -> (
-    None
-):
-    go2 = Go2WebRtcSim(instance_name="main/go2webrtcsim", attached_to="main")
-    try:
-        # Facing +y, sliding +y along its mount at 0.5 m/s and turning at 0.2 rad/s.
-        odom = go2._odometry((1.0, -2.0, math.pi / 2), (0.0, 0.5, 0.2), 5.0)
-    finally:
-        go2.stop()
-    assert isinstance(odom, Odometry)
-    assert (odom.frame_id, odom.child_frame_id) == ("main/odom", "main/base_link")
-    assert odom.ts == 5.0
-    assert (odom.position.x, odom.position.y) == (1.0, -2.0)
-    assert odom.position.z == pytest.approx(0.35, abs=0.01)
-    assert odom.orientation.z == pytest.approx(math.sin(math.pi / 4))
-    assert (odom.vx, odom.vy, odom.wz) == pytest.approx((0.5, 0.0, 0.2))
+    yield go2
+    go2.stop()
 
 
 class _DrivenWorld:
-    """A world whose servos move a little further each tick, as a world being driven does."""
+    """A world whose servos move a little further each of its 5 ticks, as a world being driven does."""
 
-    def __init__(self, ticks: int) -> None:
+    def __init__(self) -> None:
         self.lock = threading.Lock()
         self.time = 0.0
-        self._ticks = ticks
 
     async def ticks(self, rate_hz: float) -> AsyncIterator[float]:
-        for _ in range(self._ticks):
+        for _ in range(5):
             self.time += 1 / rate_hz
             yield self.time
 
@@ -183,57 +107,54 @@ class _DrivenWorld:
         )
 
 
-def test_it_publishes_no_moving_tf_only_its_static_edges_and_odometry(
-    monkeypatch: pytest.MonkeyPatch,
+def test_driven_it_sends_odometry_in_its_namespaced_frames_and_only_static_tf(
+    go2: Go2WebRtcSim, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Driven, it sends odometry and puts nothing on tf; the edges it does send are static and never place its body or what its servos move."""
-    go2 = Go2WebRtcSim(instance_name="main/go2webrtcsim", attached_to="main")
-    try:
-        on_tf: list[Any] = []
-        odometry: list[Odometry] = []
-        # Whatever it would put on tf, through its tfbuffer or its tf port.
-        monkeypatch.setattr(
-            go2,
-            "_tf",
-            SimpleNamespace(publish=lambda *edges: on_tf.extend(edges), dispose=lambda: None),
-        )
-        monkeypatch.setattr(go2.tf, "publish", on_tf.append)
-        monkeypatch.setattr(go2.odom, "publish", odometry.append)
-        monkeypatch.setattr(go2.world_actions, "publish", lambda action: None)
-        monkeypatch.setattr(webrtc_sim, "world_action", lambda world, command: None)
-        go2._world = _DrivenWorld(ticks=5)
-        asyncio.run(go2._drive())
-        static = go2.static_transforms(ts=0.0)
-        moving_children = {edge.child_frame_id for edge in go2.moving_transforms()}
-    finally:
-        go2.stop()
+    """Driven, it sends odometry and puts nothing on tf; its static edges never place its body or what its servos move."""
+    assert go2.tf_frames[BODY] == go2.frame.base_link == "main/base_link"
+    assert (go2.frame.camera_optical, go2.attach_frame) == ("main/camera_optical", "main/odom")
+    # Facing +y, sliding +y along its mount at 0.5 m/s and turning at 0.2 rad/s.
+    odom = go2._odometry((1.0, -2.0, math.pi / 2), (0.0, 0.5, 0.2), 5.0)
+    assert (odom.frame_id, odom.child_frame_id, odom.ts) == ("main/odom", "main/base_link", 5.0)
+    assert (odom.position.x, odom.position.y) == (1.0, -2.0)
+    assert odom.position.z == pytest.approx(0.35, abs=0.01)
+    assert odom.orientation.z == pytest.approx(math.sin(math.pi / 4))
+    assert (odom.vx, odom.vy, odom.wz) == pytest.approx((0.5, 0.0, 0.2))
+
+    on_tf: list[Any] = []
+    odometry: list[Odometry] = []
+    # Whatever it would put on tf, through its tfbuffer or its tf port.
+    tfbuffer = SimpleNamespace(publish=lambda *edges: on_tf.extend(edges), dispose=lambda: None)
+    monkeypatch.setattr(go2, "_tf", tfbuffer)
+    monkeypatch.setattr(go2.tf, "publish", on_tf.append)
+    monkeypatch.setattr(go2.odom, "publish", odometry.append)
+    monkeypatch.setattr(go2.world_actions, "publish", lambda action: None)
+    monkeypatch.setattr(webrtc_sim, "world_action", lambda world, command: None)
+    go2._world = _DrivenWorld()
+    asyncio.run(go2._drive())
     assert on_tf == []
     assert len(odometry) == 5
+    static = go2.static_transforms(ts=0.0)
+    moving_children = {edge.child_frame_id for edge in go2.moving_transforms()}
     assert moving_children, "its USD's servos move frames, which tf would have to carry"
-    children = {edge.child_frame_id for edge in static}
-    assert not children & moving_children
-    assert "main/base_link" not in children
-    assert {(edge.frame_id, edge.child_frame_id) for edge in static} == go2.tf_edge_ids
+    assert not {edge.child_frame_id for edge in static} & (moving_children | {"main/base_link"})
+    edges = {(edge.frame_id, edge.child_frame_id) for edge in static}
+    assert edges == go2.tf_edge_ids
+    assert {("main", "main/odom"), ("main/base_link", "main/camera_link")} <= edges
 
 
 @pytest.mark.skipif_no_turbojpeg
 def test_its_camera_sends_jpegs_with_its_lens_stamped_as_the_frame_was_drawn(
-    monkeypatch: pytest.MonkeyPatch,
+    go2: Go2WebRtcSim, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    go2 = Go2WebRtcSim(instance_name="main/go2webrtcsim", attached_to="main")
-    try:
-        images: list[CompressedImage] = []
-        infos: list[CameraInfo] = []
-        monkeypatch.setattr(go2.color_image, "publish", images.append)
-        monkeypatch.setattr(go2.camera_info, "publish", infos.append)
-        info = go2._camera_info()
-        rgb = np.full((info.height, info.width, 3), (200, 40, 10), dtype=np.uint8)
-        go2._publish_frame(info, rgb, 3.0)
-    finally:
-        go2.stop()
+    images: list[Any] = []
+    infos: list[Any] = []
+    monkeypatch.setattr(go2.color_image, "publish", images.append)
+    monkeypatch.setattr(go2.camera_info, "publish", infos.append)
+    info = go2._camera_info()
+    go2._publish_frame(info, np.full((info.height, info.width, 3), (200, 40, 10), np.uint8), 3.0)
     [jpeg] = images
     assert jpeg.format == "jpeg" and jpeg.data[:2] == b"\xff\xd8"
     assert (jpeg.ts, jpeg.frame_id) == (3.0, "main/camera_optical")
-    decoded = jpeg.decode()
-    assert (decoded.width, decoded.height) == (info.width, info.height)
+    assert (jpeg.decode().width, jpeg.decode().height) == (info.width, info.height)
     assert [i.ts for i in infos] == [3.0]
