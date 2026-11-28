@@ -53,8 +53,8 @@ B601_DM_SOURCE = RobotDescriptionSource(
 # the planner's start state out of bounds.
 B601_DM_JOINT2_LIMITS = (-3.14, 0.02)
 B601_DM_ACCELERATION_LIMIT = 0.5
-# Replace the vendor's 50-200 rad/s limits for both joint and Cartesian planning.
-B601_DM_VELOCITY_LIMITS = dict(zip(B601_DM_ARM_JOINTS, (0.2, 0.2, 0.2, 0.8, 0.8, 0.8), strict=True))
+# Replace the vendor's 50-200 rad/s limits for planning and jogging.
+B601_DM_VELOCITY_LIMITS = dict.fromkeys(B601_DM_ARM_JOINTS, 2.0)
 # Lazy: the description repository is fetched on first load, not on import.
 B601_DM_MODEL = (
     RobotModel.from_file(B601_DM_SOURCE / "Rebot_Arm_description/DM/urdf/ReBot_Arm_DM.urdf")

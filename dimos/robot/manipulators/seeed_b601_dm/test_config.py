@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import get_origin, get_type_hints
 from unittest.mock import ANY
 
 import can_motor_control
@@ -26,10 +27,12 @@ import pytest
 
 from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.registry import control_task_registry
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.global_config import global_config
+from dimos.core.stream import In
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
@@ -41,10 +44,14 @@ from dimos.robot.manipulators.seeed_b601_dm.blueprints.basic import (
     seeed_b601_dm_control,
     seeed_b601_dm_planner_coordinator,
 )
+from dimos.robot.manipulators.seeed_b601_dm.blueprints.teleop import (
+    keyboard_teleop_seeed_b601_dm_planner,
+)
 from dimos.robot.manipulators.seeed_b601_dm.config import (
     B601_DM,
     B601_DM_JOINT2_LIMITS,
     B601_DM_MODEL,
+    B601_DM_VELOCITY_LIMITS,
     GRIPPER_CALIBRATION_TRAVEL_RAD,
     GRIPPER_CURRENT,
     b601_dm_gripper_task,
@@ -53,6 +60,7 @@ from dimos.robot.manipulators.seeed_b601_dm.config import (
 from dimos.robot.manipulators.seeed_b601_dm.connection import B601DMConnection
 from dimos.robot.manipulators.seeed_b601_dm.coordinator import SeeedB601DMCoordinator
 from dimos.robot.manipulators.seeed_b601_dm.joints import B601_DM_ARM_JOINTS
+from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 
 def test_connection_requires_an_explicit_selector() -> None:
@@ -191,6 +199,41 @@ def test_gripper_task_uses_the_deployed_joint_name() -> None:
         20,
         {"open_at": "upper"},
     )
+
+
+def test_arm_joints_move_at_up_to_2_rad_s() -> None:
+    assert B601_DM_VELOCITY_LIMITS == dict.fromkeys(B601_DM_ARM_JOINTS, 2.0)
+
+
+def test_keyboard_teleop_planner_jogs_the_tool_link_over_planned_trajectories() -> None:
+    blueprint = keyboard_teleop_seeed_b601_dm_planner.solidify()
+    modules = {atom.module for atom in blueprint.blueprints}
+    tasks = next(
+        atom.kwargs["tasks"]
+        for atom in blueprint.blueprints
+        if issubclass(atom.module, ControlCoordinator)
+    )
+    eef_twist = next(task for task in tasks if task.type == "eef_twist")
+    trajectory = next(task for task in tasks if task.type == "trajectory")
+
+    assert {KeyboardTeleopModule, ManipulationModule, B601DMConnection} <= modules
+    assert eef_twist.joint_names == [f"arm/{name}" for name in B601_DM_ARM_JOINTS]
+    assert eef_twist.params == {"robot_model": B601_DM_PLANNING_MODEL, "target_frame": "end_link"}
+    assert eef_twist.priority > trajectory.priority
+    assert b601_dm_gripper_task() in tasks
+
+
+def test_keyboard_teleop_planner_task_bindings_have_coordinator_inputs() -> None:
+    atom = next(
+        atom
+        for atom in keyboard_teleop_seeed_b601_dm_planner.solidify().blueprints
+        if issubclass(atom.module, ControlCoordinator)
+    )
+    annotations = get_type_hints(atom.module)
+    for task in atom.kwargs["tasks"]:
+        for binding in control_task_registry.bindings_for(task.type).consumes:
+            port = task.stream_bind.get(binding.stream, binding.stream)
+            assert get_origin(annotations.get(port)) is In, (task.name, port)
 
 
 def test_model_plans_arm_joints_to_the_tool_link() -> None:
