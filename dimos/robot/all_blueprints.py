@@ -248,6 +248,7 @@ all_modules = {
     "control-coordinator": "dimos.control.coordinator.ControlCoordinator",
     "cost-mapper": "dimos.mapping.costmapper.CostMapper",
     "damiao-coordinator": "dimos.robot.manipulators.damiao.damiao_blueprint.DamiaoCoordinator",
+    "damiao-motor-command-coordinator": "dimos.robot.manipulators.damiao.damiao_blueprint.DamiaoMotorCommandCoordinator",
     "damiao-teleop-coordinator": "dimos.robot.manipulators.damiao.damiao_blueprint.DamiaoTeleopCoordinator",
     "damiao-twist-coordinator": "dimos.robot.manipulators.damiao.damiao_blueprint.DamiaoTwistCoordinator",
     "dan-holonomic-tc": "dimos.navigation.experimental.dannav.holonomic_tc.module.DanHolonomicTC",

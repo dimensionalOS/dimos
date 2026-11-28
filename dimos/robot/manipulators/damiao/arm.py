@@ -50,6 +50,7 @@ from dimos.control.calibration.spec import (
     motor_rated_torque_nm,
     motor_torque_limit_nm,
 )
+from dimos.control.task import MotorCommand
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.damiao.robot import (
     DamiaoBus,
@@ -205,6 +206,8 @@ class DamiaoArm:
         # Each gripper joint's (closed, open) positions.
         self._travel: dict[str, tuple[float, float]] = {}
         self._targets: dict[str, float] = {}
+        # Arm joint -> its motor command from the last command; absent means the defaults.
+        self._motor_commands: dict[str, MotorCommand] = {}
         self._active = False
         # How each arm joint is held, from the bottom layer up: the bus
         # defaults, a calibration's gains, then live overrides while tuning.
@@ -295,28 +298,60 @@ class DamiaoArm:
         self._active = True
         self._targets = dict(zip(self.joint_names, self._sample().position, strict=True))
 
-    def command(self, targets: Mapping[str, float]) -> None:
-        """Merge position targets by joint name and send one MIT tick."""
+    def command(
+        self,
+        targets: Mapping[str, float],
+        motor_commands: Mapping[str, MotorCommand] | None = None,
+    ) -> None:
+        """Merge position targets by joint name and send one MIT tick.
+
+        Args:
+            targets: Joint name to target position, in rad, or m for a sliding
+                jaw. A joint left out keeps its last target.
+            motor_commands: Arm joint name to all five numbers it is told, for
+                joints not in ``targets``. Replaces what the previous command
+                set: a joint left out, or every joint when None, gets its usual
+                kp and kd (see :meth:`get_gains`), no target speed and no extra
+                torque. An unset position aims the joint where it is measured
+                now, so its spring adds no force.
+        """
+        motor_commands = dict(motor_commands or {})
         unknown = set(targets) - set(self.joint_names)
         if unknown:
             raise ValueError(f"unknown Damiao joints: {sorted(unknown)}")
+        not_arm = set(motor_commands) - set(self._robot.arm_joint_names)
+        if not_arm:
+            raise ValueError(f"only arm joints take a motor command: {sorted(not_arm)}")
+        both = set(motor_commands) & set(targets)
+        if both:
+            raise ValueError(f"joints given both a target and a motor command: {sorted(both)}")
         if self._native is None or not self._active:
             raise RuntimeError("Damiao robot is inactive")
+        measured = dict(zip(self._robot.arm_joint_names, self._arm_positions(), strict=True))
         self._targets.update(targets)
+        self._targets.update(
+            {
+                name: measured[name] if each.position is None else each.position
+                for name, each in motor_commands.items()
+            }
+        )
+        self._motor_commands = motor_commands
         self._send()
 
     def hold(self) -> None:
         """Undo every live change and hold every joint where it is now; the calibration stays.
 
-        Floating joints and gain overrides are dropped, so each joint is held
-        with the calibration's gains, else the bus defaults. The next
-        :meth:`command` moves the arm again.
+        Floating joints, gain overrides and the last motor commands are
+        dropped, so each joint is held with the calibration's gains, else the
+        bus defaults, and gravity torque alone. The next :meth:`command` moves
+        the arm again.
         """
         undone = sorted({*self._floating, *self._gain_overrides})
         if undone:
             logger.info(f"Damiao live gains and floating of {undone} undone")
         self._floating.clear()
         self._gain_overrides.clear()
+        self._motor_commands = {}
         if self._native is None or not self._active:
             return
         self._targets = dict(zip(self.joint_names, self._sample().position, strict=True))
@@ -648,7 +683,17 @@ class DamiaoArm:
             for index, motor in enumerate(bus.arm, start=offset):
                 default = (bus.kp[index - offset], bus.kd[index - offset])
                 kp, kd = self._wire_gains(index, motor.name, default)
-                values.append([kp, kd, positions[index], 0.0, gravity[index]])
+                each = self._motor_commands.get(motor.name, MotorCommand())
+                # The motor applies kp * (q - measured q) + kd * (dq - measured dq) + tau.
+                values.append(
+                    [
+                        kp if each.stiffness is None else each.stiffness,
+                        kd if each.damping is None else each.damping,
+                        positions[index],
+                        each.velocity or 0.0,
+                        gravity[index] + (each.effort or 0.0),
+                    ]
+                )
             rows = np.asarray(values, dtype=np.float64)
             if not np.isfinite(rows).all():
                 raise ValueError(f"arm {bus.name!r} command contains non-finite values")

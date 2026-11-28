@@ -22,9 +22,11 @@ import threading
 import numpy as np
 import pytest
 
+from dimos.control.contract.convert import dynamic_joint_state_from_values
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.damiao import arm as arm_module, connection as common
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
+from dimos.robot.manipulators.damiao.damiao_blueprint import arm_declaration
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 from dimos.utils.testing.waiting import wait_until
 
@@ -71,6 +73,49 @@ def test_measured_hold_replaces_prior_targets_and_next_command_recovers(make_rig
     commands.publish(JointState(name=["arm/joint1"], position=[0.7]))
     np.testing.assert_equal(native.groups["left_arm"].commands[-1][:, 2], [0.7, 0.4])
     assert not module.status().deadman_fired
+
+
+def test_a_motor_command_sets_one_joints_row_until_the_deadman_holds(
+    connection_class, boundary, mocker
+):
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
+    declaration = arm_declaration(connection_class, motor_command=True)
+    module = connection_class(**{**declaration.model_dump(), "deadman_timeout_s": 10})
+    motor = LocalTransport()
+    module.set_transport("position_command", LocalTransport())
+    module.set_transport("motor_command", motor)
+    module.set_transport("joint_state", LocalTransport())
+    native = boundary[0]
+    try:
+        module.start()
+        mocker.patch.object(
+            module._arm._physical, "gravity", return_value=np.array([1.0, 2.0, 3.0])
+        )
+        motor.publish(
+            dynamic_joint_state_from_values(
+                {
+                    "arm/joint1/stiffness": 4.0,
+                    "arm/joint1/effort": 0.5,
+                    "arm/joint2/position": -0.5,
+                },
+                ["arm/joint1", "arm/joint2"],
+            )
+        )
+        # Columns: stiffness, damping, target, target speed, torque. joint1 has
+        # no target, so it is aimed where it is (0.2); joint2 keeps kp and kd.
+        np.testing.assert_equal(
+            native.groups["left_arm"].commands[-1],
+            [[4.0, 5.0, 0.2, 0.0, 1.5], [10.0, 1.5, -0.5, 0.0, 2.0]],
+        )
+        module._on_loop(lambda: module._deadman_expired(module._command_seq))
+        wait_until(lambda: module.status().deadman_fired, timeout=2)
+        np.testing.assert_equal(
+            native.groups["left_arm"].commands[-1],
+            [[80.0, 5.0, 0.2, 0.0, 1.0], [10.0, 1.5, 0.2, 0.0, 2.0]],
+        )
+    finally:
+        module.stop()
 
 
 def test_stop_disables_releases_views_and_is_idempotent(make_rig, boundary):
