@@ -93,7 +93,12 @@ class Depth2DepthCloudConfig(NativeModuleConfig):
 
     @model_validator(mode="after")
     def _tensorrt_on_nvidia(self) -> Depth2DepthCloudConfig:
-        if self.build_command == "nix build -L path:." and has_nvidia_gpu():
+        # An install runs the variant it ships, whatever this machine would ask for.
+        if (
+            self.build_command == "nix build -L path:."
+            and self.prebuilt_executable() is None
+            and has_nvidia_gpu()
+        ):
             self.build_command = "nix build -L path:.#tensorrt"
         return self
 

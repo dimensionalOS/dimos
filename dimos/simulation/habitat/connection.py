@@ -21,7 +21,12 @@ from typing import Any
 
 from pydantic import Field
 
-from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
+from dimos.core.native_module import (
+    LogFormat,
+    NativeModule,
+    NativeModuleConfig,
+    prebuilt_native_dir,
+)
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -35,11 +40,14 @@ from dimos.simulation.habitat.server import HabitatProp
 
 
 def _default_scene_dataset_config(config: dict[str, Any]) -> str:
+    dataset = HM3D_EXAMPLE_DATASET_CONFIG.relative_to(HABITAT_ROOT)
     executable = Path(config["executable"])
     if config["source_dir"] is None:
         executable = executable.absolute()
-    # The installer places data next to habitat-native in both launch modes.
-    return str(executable.parent / HM3D_EXAMPLE_DATASET_CONFIG.relative_to(HABITAT_ROOT))
+    elif prebuilt_native_dir() is not None:
+        # The prebuilt launcher runs from the directory containing its data folder.
+        return str(dataset)
+    return str(executable.parent / dataset)
 
 
 class HabitatConnectionConfig(NativeModuleConfig):

@@ -62,6 +62,9 @@ def prepare_rust_recorder() -> Path:
     config = RustRecorderConfig()
     rust_dir, executable_path = config.resolve_paths()
     executable = Path(executable_path)
+    # An install runs the binary it ships and never builds.
+    if config.prebuilt_executable() is not None:
+        return executable
     if executable.exists() and not global_config.build_native:
         return executable
 

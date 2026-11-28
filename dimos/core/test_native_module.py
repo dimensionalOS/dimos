@@ -42,10 +42,13 @@ from dimos.core.stream import IO, In, Out
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import make_transport, rpc_backend, transport_topic
 from dimos.experimental.memory.rust_recorder import RustRecorderConfig
+from dimos.hardware.sensors.camera.v4l2 import module as v4l2
+from dimos.mapping.dim_slam import dim_slam
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.perception.depth2depth_cloud import module as depth2depth_cloud
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic as ZenohTopic
 from dimos.protocol.service import zenohservice
 from dimos.protocol.service.zenohservice import ZenohConfig
@@ -310,6 +313,80 @@ def test_existing_executable_skips_build(tmp_path: Path, mocker) -> None:
 
 def test_build_native_forces_build(tmp_path: Path, mocker) -> None:
     assert run_build(tmp_path, mocker, build_native=True).exists()
+
+
+def make_prebuilt(native_dir: Path, name: str) -> Path:
+    exe = native_dir / name / "bin" / name
+    exe.parent.mkdir(parents=True)
+    exe.touch()
+    return exe
+
+
+def test_prebuilt_binary_needs_no_checkout_and_no_build(tmp_path: Path, mocker, monkeypatch):
+    monkeypatch.setenv("DIMOS_NATIVE_DIR", str(tmp_path))
+    exe = make_prebuilt(tmp_path, "native")
+    sentinel = tmp_path / "build_ran"
+    mocker.patch(
+        "dimos.core.native_module.get_project_root", side_effect=AssertionError("checkout")
+    )
+    module = StubBuildModule(
+        source_dir="rust",
+        executable="result/bin/native",
+        build_command=f"touch {sentinel}",
+        g=GlobalConfig(build_native=True),
+    )
+    try:
+        module.build()
+        assert module._executable == str(exe)
+        assert module._cwd == str(exe.parent)
+    finally:
+        module.stop()
+    assert not sentinel.exists()
+
+
+def test_missing_prebuilt_binary_names_the_module(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("DIMOS_NATIVE_DIR", str(tmp_path))
+    sentinel = tmp_path / "build_ran"
+    module = StubBuildModule(
+        source_dir="rust", executable="result/bin/native", build_command=f"touch {sentinel}"
+    )
+    try:
+        with pytest.raises(FileNotFoundError, match="'native' has no prebuilt binary"):
+            module.build()
+    finally:
+        module.stop()
+    assert not sentinel.exists()
+
+
+def test_external_binary_ignores_the_prebuilt_directory(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("DIMOS_NATIVE_DIR", str(tmp_path))
+    config = NativeModuleConfig(executable="/provided/bin/native")
+    assert config.resolve_paths() == ("/provided/bin", "/provided/bin/native")
+
+
+def test_install_runs_the_shipped_variant_of_a_module(tmp_path: Path, monkeypatch):
+    # Each of these asks for another build on some machines. Here every machine is one of those.
+    monkeypatch.delenv("DIMOS_NATIVE_DIR", raising=False)
+    monkeypatch.setattr(dim_slam, "sdk_variant", lambda: "x86_64-cuda13")
+    monkeypatch.setattr(depth2depth_cloud, "has_nvidia_gpu", lambda: True)
+    monkeypatch.setattr(v4l2, "Path", lambda _: tmp_path)
+    configs = {
+        "dim_slam": lambda: dim_slam.DimSlamConfig(camera_mode="stereo"),
+        "depth2depth_cloud": depth2depth_cloud.Depth2DepthCloudConfig,
+        "v4l2_camera": v4l2.V4L2CameraConfig,
+    }
+    assert [make().build_command for make in configs.values()] == [
+        "nix build -L path:.#x86_64-cuda13",
+        "nix build -L path:.#tensorrt",
+        "nix build -L path:.#jetson",
+    ]
+
+    monkeypatch.setenv("DIMOS_NATIVE_DIR", str(tmp_path))
+    for name, make in configs.items():
+        exe = make_prebuilt(tmp_path, name)
+        config = make()
+        assert config.build_command == "nix build -L path:."
+        assert config.resolve_paths() == (str(exe.parent), str(exe))
 
 
 def _launch(monkeypatch, transport: TransportBackend, **config_kwargs: Any) -> dict[str, Any]:

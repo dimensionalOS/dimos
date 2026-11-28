@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 import time
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -27,6 +28,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.simulation.habitat.blueprints import habitat_nav
 from dimos.simulation.habitat.connection import HabitatConnection, HabitatConnectionConfig
+from dimos.simulation.habitat.constants import HABITAT_ROOT, HM3D_EXAMPLE_DATASET_CONFIG
 
 
 def environment(**kwargs):
@@ -121,6 +123,19 @@ def test_external_executable_reaches_blueprint_without_source_build(
     expected_scene = {None: str(dataset), "default": "default", "custom": str(custom_dataset)}
     assert config.scene_dataset_config == expected_scene[scene]
     source.assert_not_called()
+
+
+def test_prebuilt_launcher_finds_its_default_scene(tmp_path, monkeypatch):
+    monkeypatch.setenv("DIMOS_NATIVE_DIR", str(tmp_path))
+    launcher = tmp_path / "habitat-native/bin/habitat-native"
+    launcher.parent.mkdir(parents=True)
+    launcher.touch()
+    dataset = launcher.parent / HM3D_EXAMPLE_DATASET_CONFIG.relative_to(HABITAT_ROOT)
+
+    config = HabitatConnectionConfig()
+    cwd, _ = config.resolve_paths()
+
+    assert Path(cwd) / config.to_config_dict()["scene_dataset_config"] == dataset
 
 
 def test_launch_and_cleanup(tmp_path, mocker):
