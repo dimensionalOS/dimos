@@ -21,6 +21,8 @@ from dimos.core.hardware_module import HardwareModule
 from dimos.core.tf_module import TfModule
 
 pytest.importorskip("pxr")
+# Office 555 and the G1 are Git LFS, over the hosted runner's pull cap.
+pytestmark = pytest.mark.self_hosted
 
 
 def test_one_g1_stands_on_office_555s_main_spot_with_its_walker_and_sensors_on_its_mounts() -> None:
