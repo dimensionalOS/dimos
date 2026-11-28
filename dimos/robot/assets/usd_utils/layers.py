@@ -64,6 +64,35 @@ def usd_under_namespace(usd: str, namespace: str, root: Path | str | None = None
     return str(layer.ExportToString())
 
 
+def usd_moved_under(usd: str, namespace: str, under: str) -> str:
+    """A layer namespaced under ``/<namespace>`` (``usd_under_namespace``), with what it holds there moved to under ``/<under>`` instead, every path it states following."""
+    pxr = load_pxr()
+    layer = layer_from(pxr, usd, "a layer", None)
+    holder = layer.GetPrimAtPath(f"/{namespace}") if namespace else layer.pseudoRoot
+    if holder is None:
+        raise ValueError(f"the layer holds nothing under /{namespace}")
+    parent = pxr.Sdf.Path(f"/{under}")
+    # Parked first, so what moves can land under a prim named like a namespace prim it leaves.
+    parked = pxr.Sdf.Path(f"/{_free_root_name(layer, '_dimos_moving')}")
+    moves = {spec.path: parent.AppendChild(spec.name) for spec in holder.nameChildren}
+    pxr.Sdf.CreatePrimInLayer(layer, parked)
+    _apply_moves(pxr, layer, {old: parked.AppendChild(old.name) for old in moves})
+    edit = pxr.Sdf.BatchNamespaceEdit()
+    for spec in list(layer.rootPrims):
+        if spec.path != parked:
+            edit.Add(spec.path, pxr.Sdf.Path.emptyPath)
+    layer.Apply(edit)
+    for prefix in parent.GetPrefixes():
+        pxr.Sdf.CreatePrimInLayer(layer, prefix).specifier = pxr.Sdf.SpecifierDef
+    _apply_moves(pxr, layer, {parked.AppendChild(old.name): new for old, new in moves.items()})
+    edit = pxr.Sdf.BatchNamespaceEdit()
+    edit.Add(parked, pxr.Sdf.Path.emptyPath)
+    layer.Apply(edit)
+    _repath(pxr, layer, moves)
+    layer.defaultPrim = parent.GetPrefixes()[0].name
+    return str(layer.ExportToString())
+
+
 def _apply_moves(pxr: Pxr, layer: Layer, moves: Mapping[Any, Any]) -> None:
     edit = pxr.Sdf.BatchNamespaceEdit()
     for old, new in moves.items():
