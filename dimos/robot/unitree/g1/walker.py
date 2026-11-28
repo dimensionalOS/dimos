@@ -189,6 +189,8 @@ async def wall_ticks(rate_hz: float) -> AsyncIterator[float]:
     period = 1.0 / rate_hz
     due = time.time()
     while True:
+        # Yielding at least once, so a step that is behind never starves the module's input handlers.
+        await asyncio.sleep(0)
         # In short sleeps: macOS lets a background process's sleep overrun by several times its length.
         while (remaining := due - time.time()) > 0:
             await asyncio.sleep(min(max(remaining / 8, 0.0005), 0.5))
