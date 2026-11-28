@@ -14,10 +14,10 @@
 
 """A module whose tf frames are declared in its config, so a blueprint can namespace and check them."""
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from functools import cached_property
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from pydantic import Field, model_validator
 
@@ -95,6 +95,15 @@ class TfModule(Module):
         """Every role -> frame id, local (under the namespace) and global together."""
         return _frame_ids(self.config.tf_frames_local, self.config.tf_frames_global, self.namespace)
 
+    @classmethod
+    def frame_ids_of(cls, atom: "BlueprintAtom") -> dict[str, str]:
+        """A blueprint atom's role -> frame id, as the module it builds will have them (``tf_frames``)."""
+        return _frame_ids(
+            atom.kwargs["tf_frames_local"],
+            atom.kwargs["tf_frames_global"],
+            atom.name.rpartition("/")[0],
+        )
+
     @cached_property
     def frame(self) -> SimpleNamespace:
         """Frame ids by role, local and global together: ``self.frame.body``."""
@@ -102,58 +111,56 @@ class TfModule(Module):
 
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
-        """Refuse a frame with two parents or declared edges that form a cycle; warn on an edge with two owners or several trees. Modules with skip_tf_checks are left out."""
-        publishers: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
+        """Refuse declared edges that close a loop, so there is one path between any two frames; warn on an edge with two owners or several trees. Modules with skip_tf_checks are left out.
+
+        A frame may have several parents: lookups search the tree both ways, so only a loop makes a lookup ambiguous.
+        """
+        owners: dict[tuple[str, str], list[str]] = defaultdict(list)
         for atom in atoms:
             if not _is_checked(atom):
                 continue
-            frames = _frame_ids(
-                atom.kwargs["tf_frames_local"],
-                atom.kwargs["tf_frames_global"],
-                atom.name.rpartition("/")[0],
-            )
+            frames = cast("type[TfModule]", atom.module).frame_ids_of(atom)
             for parent_role, child_role in atom.kwargs["tf_edges"]:
-                publishers[frames[child_role]][frames[parent_role]].append(atom.name)
-        if not publishers:
+                owners[frames[parent_role], frames[child_role]].append(atom.name)
+
+        if not owners:
             return
 
         errors = []
-        for child, parents in sorted(publishers.items()):
-            if len(parents) > 1:
-                listed = ", ".join(
-                    f"{parent} (from {', '.join(names)})"
-                    for parent, names in sorted(parents.items())
+        for (parent, child), names in sorted(owners.items()):
+            if len(names) > 1:
+                logger.warning(
+                    f"tf edge '{parent}' -> '{child}' is declared by several modules "
+                    f"({', '.join(names)}); only one module should own an edge"
                 )
-                errors.append(f"    - '{child}' has several parents: {listed}")
-            for parent, names in parents.items():
-                if len(names) > 1:
-                    logger.warning(
-                        f"tf edge '{parent}' -> '{child}' is declared by several modules "
-                        f"({', '.join(names)}); only one module should own an edge"
-                    )
 
-        # Union-find over the declared edges: one component per tree.
+        # Union-find over the declared edges, undirected: an edge between two frames already joined closes a loop.
         component: dict[str, str] = {}
+        neighbours: dict[str, set[str]] = defaultdict(set)
 
         def root_of(frame: str) -> str:
             while component.setdefault(frame, frame) != frame:
                 frame = component[frame]
             return frame
 
-        for child, parents in publishers.items():
-            for parent in parents:
-                component[root_of(child)] = root_of(parent)
+        for parent, child in sorted(owners):
+            if root_of(parent) == root_of(child):
+                path = _path_between(neighbours, child, parent)
+                errors.append(
+                    f"    - frames {sorted(path)} form a cycle: '{parent}' -> '{child}' closes "
+                    f"the loop {' -> '.join([*path, parent])}"
+                )
+                continue
+            component[root_of(child)] = root_of(parent)
+            neighbours[parent].add(child)
+            neighbours[child].add(parent)
         trees: dict[str, set[str]] = defaultdict(set)
         for frame in list(component):
             trees[root_of(frame)].add(frame)
-        for tree in trees.values():
-            if not tree - publishers.keys():
-                errors.append(f"    - frames {sorted(tree)} form a cycle (none of them is a root)")
 
         if len(trees) > 1:
-            roots = sorted(
-                sorted(tree - publishers.keys()) or sorted(tree)[:1] for tree in trees.values()
-            )
+            children = {child for _, child in owners}
+            roots = sorted(sorted(tree - children) or sorted(tree)[:1] for tree in trees.values())
             # Only a warning: separate robots' odometry stays disconnected until something localizes them.
             undeclared_publishers = sorted(
                 atom.name
@@ -200,6 +207,24 @@ def _frame_ids(local: dict[str, str], shared: dict[str, str], prefix: str) -> di
     if prefix:
         local = {role: f"{prefix}/{frame}" for role, frame in local.items()}
     return {**shared, **local}
+
+
+def _path_between(neighbours: dict[str, set[str]], start: str, end: str) -> list[str]:
+    """The frames from ``start`` to ``end`` along edges already joined (a tree, so the one path)."""
+    came_from: dict[str, str | None] = {start: None}
+    queue = deque([start])
+    while queue:
+        frame = queue.popleft()
+        for neighbour in neighbours[frame]:
+            if neighbour not in came_from:
+                came_from[neighbour] = frame
+                queue.append(neighbour)
+    path: list[str] = []
+    step: str | None = end
+    while step is not None:
+        path.append(step)
+        step = came_from[step]
+    return path
 
 
 def _is_checked(atom: "BlueprintAtom") -> bool:

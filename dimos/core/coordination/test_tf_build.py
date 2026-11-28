@@ -121,19 +121,16 @@ def test_one_tree_passes() -> None:
     _verify(autoconnect(Odom.blueprint(), Lidar.blueprint()))
 
 
-def test_two_parents_is_refused() -> None:
-    with pytest.raises(
-        ValueError, match=r"'base_link' has several parents: odom_frame \(from lidar\), world"
-    ):
-        _verify(
-            autoconnect(
-                Odom.blueprint(),
-                Lidar.blueprint(
-                    tf_frames_local={"body": "base_link", "lidar": "odom_frame"},
-                    tf_edges=[("lidar", "body")],
-                ),
-            )
+def test_two_parents_without_a_loop_pass() -> None:
+    _verify(
+        autoconnect(
+            Odom.blueprint(),
+            Lidar.blueprint(
+                tf_frames_local={"body": "base_link", "lidar": "odom_frame"},
+                tf_edges=[("lidar", "body")],
+            ),
         )
+    )
 
 
 def test_same_edge_from_two_modules_warns(mocker: MockerFixture) -> None:
@@ -152,6 +149,21 @@ def test_cycle_is_refused() -> None:
                     tf_frames_local={"body": "base_link"},
                     tf_frames_global={"world": "lidar"},
                 ),
+            )
+        )
+
+
+def test_a_loop_whose_frames_all_have_a_root_is_refused() -> None:
+    # world -> base_link, world -> odom_frame -> base_link: every frame reaches world, but by two paths.
+    with pytest.raises(ValueError, match="form a cycle"):
+        _verify(
+            autoconnect(
+                Odom.blueprint(),
+                Lidar.blueprint(
+                    tf_frames_local={"body": "base_link", "lidar": "odom_frame"},
+                    tf_edges=[("lidar", "body")],
+                ),
+                BackupOdom.blueprint(tf_frames_local={"body": "odom_frame"}),
             )
         )
 
@@ -182,9 +194,10 @@ def test_build_checks_the_namespaced_tree() -> None:
         Odom.blueprint().namespace("robot0"),
         Odom.blueprint().namespace("robot1"),
         Odom.blueprint(),
-        BackupOdom.blueprint(tf_frames_global={"world": "map"}),
+        # robot0/base_link -> base_link: a second path from world to base_link.
+        BackupOdom.blueprint(tf_frames_global={"world": "robot0/base_link"}),
     ).solidify()
-    with pytest.raises(ValueError, match="'base_link' has several parents"):
+    with pytest.raises(ValueError, match="form a cycle"):
         ModuleCoordinator.build(
             blueprint,
             BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}}),
