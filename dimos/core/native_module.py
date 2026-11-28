@@ -146,6 +146,17 @@ NativeInputPath = Annotated[
 ]
 
 
+def require_readable_input(path: str | None) -> None:
+    """Check a configured input on the worker before preparing its native process."""
+    if path is None:
+        return
+    source = Path(path)
+    if not source.is_file():
+        raise OSError(f"Native input is not a regular file: {source}")
+    with source.open("rb"):
+        pass
+
+
 class NativeModuleConfig(ModuleConfig):
     """Configuration for a native subprocess module."""
 

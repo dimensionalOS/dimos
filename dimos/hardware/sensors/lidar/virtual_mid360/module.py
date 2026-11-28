@@ -37,7 +37,12 @@ from typing import TYPE_CHECKING, Any
 from pydantic import Field
 
 from dimos.core.core import rpc
-from dimos.core.native_module import NativeInputPath, NativeModule, NativeModuleConfig
+from dimos.core.native_module import (
+    NativeInputPath,
+    NativeModule,
+    NativeModuleConfig,
+    require_readable_input,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -178,11 +183,17 @@ class VirtualMid360(NativeModule):
 
     @rpc
     def build(self) -> None:
+        require_readable_input(self.config.pcap)
         if self.config.setup_network:
             self._check_sudo()
         super().build()
         if self.config.setup_network:
             self._setup_virtual_nic()
+
+    @rpc
+    def start(self) -> None:
+        require_readable_input(self.config.pcap)
+        super().start()
 
     @rpc
     def stop(self) -> None:

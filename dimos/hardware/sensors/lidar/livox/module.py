@@ -33,7 +33,12 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import Field, field_validator
 
 from dimos.core.core import rpc
-from dimos.core.native_module import NativeInputPath, NativeModule, NativeModuleConfig
+from dimos.core.native_module import (
+    NativeInputPath,
+    NativeModule,
+    NativeModuleConfig,
+    require_readable_input,
+)
 from dimos.core.stream import Out
 from dimos.hardware.sensors.lidar.livox.net import resolve_host_ip
 from dimos.hardware.sensors.lidar.livox.ports import (
@@ -128,7 +133,13 @@ class Mid360(NativeModule, perception.Lidar, perception.IMU):
     imu: Out[Imu]
 
     @rpc
+    def build(self) -> None:
+        require_readable_input(self.config.pcap)
+        super().build()
+
+    @rpc
     def start(self) -> None:
+        require_readable_input(self.config.pcap)
         self.config.host_ip = _resolved_host_ip(self.config)
         super().start()
 

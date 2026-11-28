@@ -98,7 +98,7 @@ dimos map global --lidar pointlio_lidar --pgo-tol=0 --no-carve
 
 ### Replay a pcap to a module
 
-Run the `mid360-pointlio-replay` blueprint from the directory containing `recordings/`.
+Run the `mid360-pointlio-replay` blueprint from the directory containing `recordings/`. The worker that runs the native driver must be able to read the capture at the resolved absolute path.
 
 ```bash
 DIMOS_MID360_PCAP=recordings/run1.pcap dimos run mid360-pointlio-replay

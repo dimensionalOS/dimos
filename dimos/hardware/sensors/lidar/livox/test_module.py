@@ -20,15 +20,16 @@ import sys
 
 from pydantic import ValidationError
 import pytest
+from pytest_mock import MockerFixture
 
 if sys.version_info >= (3, 11):
     import tomllib
 else:
     import tomli as tomllib
 
-from dimos.core.native_module import NativeModuleConfig
+from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.hardware.sensors.lidar.livox.module import Mid360, Mid360Config, _resolved_host_ip
-from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360Config
+from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360, VirtualMid360Config
 
 _RUST_MANIFEST = Path(__file__).parent / "rust" / "Cargo.toml"
 
@@ -108,3 +109,29 @@ def test_ports_match_registry() -> None:
     manifest = tomllib.loads(_RUST_MANIFEST.read_text())
     registry = manifest["package"]["metadata"]["dimos"]["module"]["mid360"]
     assert set(registry["outputs"]) == ports(Mid360)
+
+
+@pytest.mark.parametrize("module_cls", [Mid360, VirtualMid360])
+@pytest.mark.parametrize("phase", ["build", "start"])
+def test_unavailable_capture_stops_before_preparation(
+    tmp_path: Path,
+    module_cls: type[Mid360] | type[VirtualMid360],
+    phase: str,
+    mocker: MockerFixture,
+) -> None:
+    path = tmp_path / "missing capture.pcap"
+    module = module_cls(pcap=str(path), host_ip="127.0.0.1")
+    native = mocker.patch.object(NativeModule, "_prepare_native", side_effect=AssertionError)
+    sudo = mocker.patch.object(VirtualMid360, "_check_sudo", side_effect=AssertionError)
+    network = mocker.patch.object(VirtualMid360, "_setup_virtual_nic", side_effect=AssertionError)
+    # The controller can serialize this path before the worker provisions it.
+    try:
+        for _ in range(2):
+            with pytest.raises(OSError, match="missing capture"):
+                getattr(module, phase)()
+            path.mkdir(exist_ok=True)  # Try a directory on the second call.
+    finally:
+        module.stop()
+    native.assert_not_called()
+    sudo.assert_not_called()
+    network.assert_not_called()

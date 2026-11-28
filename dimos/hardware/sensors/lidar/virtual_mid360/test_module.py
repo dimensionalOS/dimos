@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+from pathlib import Path
 import subprocess
 from typing import Any
 
@@ -26,9 +27,12 @@ from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360
 
 def test_build_without_a_way_to_sudo_fails_before_any_privileged_command(
     mocker: MockerFixture,
+    tmp_path: Path,
 ) -> None:
     """A Desktop launch: sudo needs a password and there is no terminal to ask on."""
-    virtual = VirtualMid360(pcap="capture.pcap", host_ip="192.168.1.5")
+    capture = tmp_path / "capture.pcap"
+    capture.touch()
+    virtual = VirtualMid360(pcap=str(capture), host_ip="192.168.1.5")
     refused = subprocess.CompletedProcess([], 1, b"", b"sudo: a password is required")
     sudo = mocker.patch.object(virtual_mid360.subprocess, "run", return_value=refused)
     real_open = os.open
