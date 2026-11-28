@@ -202,8 +202,11 @@ class TestStoreBasic:
         # SqliteObservationStore blocks search_text to prevent full table scans
         s = sqlite_session.stream("logs", str)
         s.append("motor fault")
+        missing = s.search_text("missing")
         with pytest.raises(NotImplementedError, match="search_text"):
-            s.search_text("motor").to_list()
+            missing.to_list()
+        with pytest.raises(NotImplementedError, match="search_text"):
+            missing.count()
 
 
 class TestBlobLoading:

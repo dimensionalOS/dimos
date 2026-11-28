@@ -62,12 +62,12 @@ This is the **default fallback**. ObservationStore implementations are free to p
 | Operation      | Python fallback (`StreamQuery.apply`) | Store push-down (example)        |
 |----------------|---------------------------------------|----------------------------------|
 | Filters        | `filter.matches()` predicates         | SQL WHERE clauses                |
-| Text search    | Case-insensitive substring            | FTS5 full-text index             |
+| Text search    | Case-insensitive substring            | Unsupported by the SQLite metadata store|
 | Vector search  | Brute-force cosine similarity         | vec0 / FAISS ANN index           |
 | Ordering       | `sorted()` materialization            | SQL ORDER BY                     |
 | Offset / limit | `islice()`                            | SQL OFFSET / LIMIT               |
 
-`ListObservationStore` delegates entirely to `StreamQuery.apply()`. `SqliteObservationStore` translates filters, ordering, and limit/offset into SQL, applies `.filter(pred)` in Python, and raises `NotImplementedError` on `.search_text()`.
+`ListObservationStore` delegates entirely to `StreamQuery.apply()`. `SqliteObservationStore` pushes supported filters and ordering into SQL. It applies limit and offset in SQL when there are no Python post-filters, or after those filters otherwise. Direct text searches on SQLite metadata raise `NotImplementedError` on iteration and on `.count()`.
 
 Transform-sourced streams (post `.transform()`) always use `StreamQuery.apply()` since there's no index to push down to.
 

@@ -124,6 +124,29 @@ def _compile_filter(f: Filter, stream: str, prefix: str = "") -> tuple[str, list
     return None
 
 
+def _compile_where(
+    query: StreamQuery, table: str, prefix: str = ""
+) -> tuple[str, list[Any], list[Filter]]:
+    if query.search_text is not None:
+        raise NotImplementedError("search_text is not supported by SqliteObservationStore")
+
+    where_parts: list[str] = []
+    params: list[Any] = []
+    python_filters: list[Filter] = []
+
+    for f in query.filters:
+        compiled = _compile_filter(f, table, prefix)
+        if compiled is not None:
+            sql_part, sql_params = compiled
+            where_parts.append(sql_part)
+            params.extend(sql_params)
+        else:
+            python_filters.append(f)
+
+    where = " WHERE " + " AND ".join(where_parts) if where_parts else ""
+    return where, params, python_filters
+
+
 def _compile_query(
     query: StreamQuery,
     table: str,
@@ -141,22 +164,8 @@ def _compile_query(
     else:
         select = f'SELECT id, ts, value, pose_x, pose_y, pose_z, pose_qx, pose_qy, pose_qz, pose_qw, json(tags) FROM "{table}"'
 
-    where_parts: list[str] = []
-    params: list[Any] = []
-    python_filters: list[Filter] = []
-
-    for f in query.filters:
-        compiled = _compile_filter(f, table, prefix)
-        if compiled is not None:
-            sql_part, sql_params = compiled
-            where_parts.append(sql_part)
-            params.extend(sql_params)
-        else:
-            python_filters.append(f)
-
-    sql = select
-    if where_parts:
-        sql += " WHERE " + " AND ".join(where_parts)
+    where, params, python_filters = _compile_where(query, table, prefix)
+    sql = select + where
 
     # ORDER BY
     if query.order_field:
@@ -201,23 +210,8 @@ def _compile_count(
     table: str,
 ) -> tuple[str, list[Any], list[Filter]]:
     """Compile a StreamQuery to a COUNT SQL query."""
-    where_parts: list[str] = []
-    params: list[Any] = []
-    python_filters: list[Filter] = []
-
-    for f in query.filters:
-        compiled = _compile_filter(f, table)
-        if compiled is not None:
-            sql_part, sql_params = compiled
-            where_parts.append(sql_part)
-            params.extend(sql_params)
-        else:
-            python_filters.append(f)
-
-    sql = f'SELECT COUNT(*) FROM "{table}"'
-    if where_parts:
-        sql += " WHERE " + " AND ".join(where_parts)
-
+    where, params, python_filters = _compile_where(query, table)
+    sql = f'SELECT COUNT(*) FROM "{table}"' + where
     return (sql, params, python_filters)
 
 
@@ -425,9 +419,6 @@ class SqliteObservationStore(ObservationStore[T]):
         return getattr(self._tls, "query", None)
 
     def query(self, q: StreamQuery) -> Iterator[Observation[T]]:
-        if q.search_text is not None:
-            raise NotImplementedError("search_text is not supported by SqliteObservationStore")
-
         join = self._join_blobs
         sql, params, python_filters = _compile_query(q, self._name, join_blob=join)
 

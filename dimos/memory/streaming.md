@@ -3,7 +3,7 @@
 Stream methods fall into three categories: **lazy**, **materializing**, and **terminal**. The distinction matters for live (infinite) streams.
 
 `is_live()` walks the source chain to detect live mode — any stream whose ancestor called `.live()` returns `True`.
-All materializing operations and unsafe terminals check this and raise `TypeError` immediately rather than silently hanging.
+Building a query is lazy. On a live transform stream, materializing operations such as `.order_by()` raise `TypeError` when iterated. Unsafe terminal calls such as `.count()` check live mode when called.
 
 ## Lazy (streaming)
 
