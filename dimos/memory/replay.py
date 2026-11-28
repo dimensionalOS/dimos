@@ -232,6 +232,9 @@ class _Ended:
     name: str
 
 
+_END = object()  # a stream's last row has been read
+
+
 @dataclass(frozen=True)
 class _Failed:
     name: str  # the stream that could not be read or decoded
@@ -374,15 +377,17 @@ class Playback:
         """Buffer every pass of the recording. False once stopped or failed."""
         offset = 0.0
         while True:
-            rows: dict[str, Iterator[Any]] = {}
-            heap: list[tuple[float, int, str, Any]] = []
+            rows = [self._rows(name, stream) for name, stream in self._streams.items()]
+            first = last = None
             try:
-                for order, (name, stream) in enumerate(self._streams.items()):
-                    if not self._open(name, stream, order, rows, heap):
+                for ts, name, obs in heapq.merge(*rows, key=lambda row: row[0]):
+                    if isinstance(obs, _Failed):
+                        self._buffer.put(obs)
                         return False
-                first = last = None
-                while heap:
-                    ts, order, name, obs = heapq.heappop(heap)
+                    if obs is _END:
+                        if not self._buffer.put(_Ended(name)):
+                            return False
+                        continue
                     first = ts if first is None else first
                     last = ts
                     try:
@@ -392,55 +397,31 @@ class Playback:
                         return False
                     if not self._buffer.put(_Frame(ts + offset, name, value)):
                         return False
-                    if not self._advance(name, order, rows, heap):
-                        return False
             finally:
-                for iterator in rows.values():
-                    self._close(iterator)
+                for stream_rows in rows:
+                    stream_rows.close()
             if not self._replay.config.loop or first is None or last is None:
                 return True
             offset += last - first + self._replay.config.loop_gap
 
-    def _open(
-        self,
-        name: str,
-        stream: ReplayStream[Any],
-        order: int,
-        rows: dict[str, Iterator[Any]],
-        heap: list[tuple[float, int, str, Any]],
-    ) -> bool:
-        """Push *name*'s first row. False once stopped or failed."""
+    def _rows(self, name: str, stream: ReplayStream[Any]) -> Iterator[tuple[float, str, Any]]:
+        """*name*'s rows in ts order, then _END unless looping; a read error ends it at once."""
         try:
-            rows[name] = iter(stream._base_stream())
+            rows = iter(stream._base_stream())
+            try:
+                ts = float("-inf")
+                for obs in rows:
+                    ts = float(obs.ts)
+                    yield ts, name, obs
+            finally:
+                close = getattr(rows, "close", None)
+                if close is not None:
+                    close()
         except Exception as error:
-            self._buffer.put(_Failed(name, error))
-            return False
-        return self._advance(name, order, rows, heap)
-
-    def _advance(
-        self,
-        name: str,
-        order: int,
-        rows: dict[str, Iterator[Any]],
-        heap: list[tuple[float, int, str, Any]],
-    ) -> bool:
-        """Push *name*'s next row, or end it. False once stopped or failed."""
-        try:
-            obs = next(rows[name])
-        except StopIteration:
-            self._close(rows.pop(name))
-            return self._replay.config.loop or self._buffer.put(_Ended(name))
-        except Exception as error:
-            self._buffer.put(_Failed(name, error))
-            return False
-        heapq.heappush(heap, (float(obs.ts), order, name, obs))
-        return True
-
-    @staticmethod
-    def _close(iterator: Iterator[Any]) -> None:
-        close = getattr(iterator, "close", None)
-        if close is not None:
-            close()
+            yield float("-inf"), name, _Failed(name, error)
+            return
+        if not self._replay.config.loop:
+            yield ts, name, _END
 
     def _publish(self, wall_t0: float) -> None:
         speed = self._replay.config.speed
