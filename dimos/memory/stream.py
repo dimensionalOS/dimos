@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections import namedtuple
+from dataclasses import replace
 from functools import cache
 import sys
 import time
@@ -225,19 +226,9 @@ class Stream(CompositeResource, Generic[T, O]):
             )
 
     def _replace_query(self, **overrides: Any) -> Stream[T, O]:
-        q = self._query
-        new_q = StreamQuery(
-            filters=overrides.get("filters", q.filters),
-            order_field=overrides.get("order_field", q.order_field),
-            order_desc=overrides.get("order_desc", q.order_desc),
-            limit_val=overrides.get("limit_val", q.limit_val),
-            offset_val=overrides.get("offset_val", q.offset_val),
-            live_buffer=overrides.get("live_buffer", q.live_buffer),
-            search_vec=overrides.get("search_vec", q.search_vec),
-            search_k=overrides.get("search_k", q.search_k),
-            search_text=overrides.get("search_text", q.search_text),
+        return Stream(
+            self._source, transform=self._transform, query=replace(self._query, **overrides)
         )
-        return Stream(self._source, transform=self._transform, query=new_q)
 
     def _with_filter(self, f: Filter) -> Stream[T, O]:
         return self._replace_query(filters=(*self._query.filters, f))
@@ -505,7 +496,9 @@ class Stream(CompositeResource, Generic[T, O]):
         """Nearest stored observation within tolerance, preferring the earlier timestamp on ties."""
         if self.is_live():
             raise TypeError(".closest() requires a finite stream")
-        candidates = self.at(timestamp, tolerance)
+        candidates = self._replace_query(
+            filters=(*self._query.filters, AtFilter(timestamp, tolerance)), nearest_to=timestamp
+        )
         best = min(candidates, key=lambda obs: (abs(obs.ts - timestamp), obs.ts), default=None)
         if best is None:
             raise LookupError("No matching observation")

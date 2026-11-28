@@ -15,9 +15,11 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
+from dimos.memory.codecs.pickle import PickleCodec
 from dimos.memory.replay import ReplayStream
 from dimos.memory.store.base import StreamAccessor
 
@@ -164,3 +166,14 @@ def test_closest_frame_within_clip(
     _populate(sqlite_store, "sensor", [11, 10, 12, 13])
     replay = sqlite_store.replay(seek=seek, duration=None if seek is None else 0.1)
     assert replay.streams.sensor.find_closest(target, tolerance) == expected
+
+
+def test_closest_decodes_only_the_winning_eager_blob(sqlite_store: SqliteStore) -> None:
+    camera = sqlite_store.stream("camera", bytes, eager_blobs=True)
+    for ts in (11, 14, 10):
+        camera.append(bytes([ts]), ts=float(ts))
+    with patch.object(
+        PickleCodec, "decode", autospec=True, side_effect=PickleCodec.decode
+    ) as decode:
+        assert camera.closest(10.5, tolerance=5).data == bytes([10])
+        decode.assert_called_once()

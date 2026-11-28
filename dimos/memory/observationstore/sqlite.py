@@ -137,9 +137,14 @@ def _compile_query(
     """
     prefix = "meta." if join_blob else ""
     if join_blob:
-        select = f'SELECT meta.id, meta.ts, meta.value, meta.pose_x, meta.pose_y, meta.pose_z, meta.pose_qx, meta.pose_qy, meta.pose_qz, meta.pose_qw, json(meta.tags), blob.data FROM "{table}" AS meta JOIN "{table}_blob" AS blob ON blob.id = meta.id'
+        source = f'"{table}" AS meta JOIN "{table}_blob" AS blob ON blob.id = meta.id'
+        columns = "meta.id, meta.ts, meta.value, meta.pose_x, meta.pose_y, meta.pose_z, meta.pose_qx, meta.pose_qy, meta.pose_qz, meta.pose_qw, json(meta.tags), blob.data"
     else:
-        select = f'SELECT id, ts, value, pose_x, pose_y, pose_z, pose_qx, pose_qy, pose_qz, pose_qw, json(tags) FROM "{table}"'
+        source = f'"{table}"'
+        columns = (
+            "id, ts, value, pose_x, pose_y, pose_z, pose_qx, pose_qy, pose_qz, pose_qw, json(tags)"
+        )
+    select = f"SELECT {columns} FROM {source}"
 
     where_parts: list[str] = []
     params: list[Any] = []
@@ -154,9 +159,22 @@ def _compile_query(
         else:
             python_filters.append(f)
 
-    sql = select
-    if where_parts:
-        sql += " WHERE " + " AND ".join(where_parts)
+    where = " WHERE " + " AND ".join(where_parts) if where_parts else ""
+    if (
+        query.nearest_to is not None
+        and not python_filters
+        and query.limit_val is None
+        and not query.offset_val
+        and query.order_field in (None, "ts")
+        and query.search_vec is None
+    ):
+        # Rank only ids and timestamps. Fetch the potentially large eager blob once.
+        winner = (
+            f"SELECT {prefix}id FROM {source}{where} "
+            f"ORDER BY ABS({prefix}ts - ?), {prefix}ts, {prefix}id LIMIT 1"
+        )
+        return f"{select} WHERE {prefix}id = ({winner})", [*params, query.nearest_to], []
+    sql = select + where
 
     # ORDER BY
     if query.order_field:

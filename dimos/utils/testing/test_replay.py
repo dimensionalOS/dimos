@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 import re
+from types import SimpleNamespace
 
 import pytest
 from reactivex import operators as ops
@@ -263,3 +265,10 @@ def test_find_closest() -> None:
     # Test with negative seek (before start)
     result = odom_store.find_closest_seek(-1.0)
     assert result is not None  # Should still return closest (first frame)
+
+
+def test_pickle_closest_accepts_out_of_order_timestamps(tmp_path: Path) -> None:
+    store = LegacyPickleStore[SimpleNamespace](tmp_path)
+    for ts in (11.0, 14.0, 10.0):
+        store.save(SimpleNamespace(ts=ts))
+    assert store.find_closest(10.5, tolerance=1.0) == SimpleNamespace(ts=10.0)

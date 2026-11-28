@@ -56,7 +56,7 @@ store.streams.color_image.map(lambda obs: obs.derive(data=obs.data.brightness)).
 # # fmt: off
 # embedded.search(search_vector, k=10) \
 #         .tap(drawing.add) \
-#         .tap(lambda obs: drawing.add(store.streams.lidar.at(obs.ts).first().data)).drain()
+#         .tap(lambda obs: drawing.add(store.streams.lidar.closest(obs.ts).data)).drain()
 # # fmt: on
 
 from dimos.models.vl.moondream import MoondreamVlModel
@@ -81,7 +81,7 @@ drawing.add(mosaic(search_results))
 # fmt: off
 search_results \
         .tap(drawing.add) \
-        .tap(lambda obs: drawing.add(store.streams.lidar.at(obs.ts).first().data)) \
+        .tap(lambda obs: drawing.add(store.streams.lidar.closest(obs.ts).data)) \
         .drain()
 # fmt: on
 
