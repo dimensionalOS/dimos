@@ -89,7 +89,7 @@ def test_a_camera_is_hardware_sending_what_a_real_camera_sends() -> None:
     assert _streams(SimCamera, direction=Out) == {**_streams(SimSensor, direction=Out), **real}
 
 
-def test_a_camera_usd_says_what_it_can_see_from_its_frame() -> None:
+def test_a_camera_usd_says_what_it_sees_from_its_frame_as_wide_as_the_images_it_renders() -> None:
     from pxr import Sdf, Usd, UsdGeom
 
     from dimos.sim2.sensor_usd import camera_usd
@@ -110,10 +110,7 @@ def test_a_camera_usd_says_what_it_can_see_from_its_frame() -> None:
     forward = lens.ComputeLocalToWorldTransform(Usd.TimeCode.Default()).TransformDir((0, 0, -1))
     assert tuple(round(axis, 6) for axis in forward) == (1.0, 0.0, 0.0)
 
-
-def test_a_camera_usd_is_as_wide_as_the_images_its_camera_renders() -> None:
-    from pxr import Sdf, Usd, UsdGeom
-
+    # A camera module's USD is as wide as the images it renders.
     camera = _sensor("camera")
     try:
         usd, config, lens_info = camera.get_usd(), camera.config, camera.lens()
