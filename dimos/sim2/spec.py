@@ -34,6 +34,8 @@ class SimulatedRobot:
     held_until_commanded: bool = False
     # The tf frame the robot reports its odometry in, which sensors riding it map in.
     odom_frame: str | None = None
+    # Free to move on its own (a floating base the world gives it); a robot driven on its own joints off its mount is not.
+    free: bool = True
 
     @property
     def root_body(self) -> str:
