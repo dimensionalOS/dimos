@@ -57,3 +57,25 @@ def test_one_g1_stands_on_office_555s_main_spot_with_its_walker_and_sensors_on_i
         assert streams <= {
             s.name for s in atom.streams if (atom.name, s.name) not in solid.remapping_map
         }
+
+
+def test_three_g1s_stand_on_its_main_left_and_right_spots_and_only_main_takes_cmd_vel() -> None:
+    from dimos.robot.unitree.g1.blueprints.sim.unitree_g1_sim_office_three import (
+        unitree_g1_sim_office_three,
+    )
+
+    solid = unitree_g1_sim_office_three.solidify()
+    atoms = [
+        replace(atom, kwargs={**config_defaults(atom.module), **atom.kwargs})
+        for atom in solid.active_blueprints
+    ]
+    HardwareModule.blueprint_checks(atoms)
+    TfModule.blueprint_checks(atoms)
+    names = {atom.name for atom in atoms}
+    for spot in ("main", "left", "right"):
+        assert {f"{spot}/g1bodysim", f"{spot}/g1walker", f"{spot}/camera/simcamera"} <= names
+    assert "watching/simcamera" in names
+    walkers = {atom.name: atom for atom in atoms if atom.name.endswith("/g1walker")}
+    cmd_vel = {name: solid.remapping_map.get((name, "cmd_vel"), "cmd_vel") for name in walkers}
+    assert cmd_vel["main/g1walker"] == "cmd_vel"
+    assert cmd_vel["left/g1walker"] != "cmd_vel" and cmd_vel["right/g1walker"] != "cmd_vel"
