@@ -33,15 +33,24 @@ from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mou
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.frames import usd_frame_names
 from dimos.robot.assets.usd_utils.layers import usd_under_namespace
-from dimos.sim2.actions import CborKeyValueCommand, JointCommand, read_actions, world_action
-from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.mujoco.backend import MujocoBackend
 from dimos.sim2.mujoco.sim import MujocoSim
 from dimos.sim2.mujoco.world import compile_world
-from dimos.sim2.sim import compose_usds, sim
-from dimos.sim2.spec import ODOM_FRAME, ROBOT, SimulatedRobot
-from dimos.sim2.usd_layer import usd_layer
-from dimos.sim2.world_observations import Entity, WorldMirror, WorldWriter
+from dimos.sim2.scene import toy_robot, usd_layer
+from dimos.sim2.sim import (
+    ODOM_FRAME,
+    ROBOT,
+    CborKeyValueCommand,
+    Entity,
+    JointCommand,
+    SimulatedRobot,
+    WorldMirror,
+    WorldWriter,
+    compose_usds,
+    read_actions,
+    sim,
+    world_action,
+)
 
 # linux-aarch64 has no usd-core wheel, and every scene here is a USD layer.
 pytest.importorskip("pxr")

@@ -20,7 +20,7 @@ from typing import Any
 import mujoco
 
 from dimos.sim2.mujoco.names import resolved, shorten
-from dimos.sim2.spec import SimulatedRobot, validate
+from dimos.sim2.sim import SimulatedRobot, validate
 
 USD_SUFFIXES = frozenset({".usd", ".usda", ".usdc", ".usdz"})
 
@@ -82,7 +82,7 @@ def _drop_spawn_volumes(spec: mujoco.MjSpec, layer: Path) -> None:
     """Leave out the spawn points' volumes: guides for what fits a spot, which neither collide nor render."""
     if layer.suffix.lower() not in USD_SUFFIXES:
         return
-    from dimos.sim2.spawn import spawn_volume_paths
+    from dimos.sim2.scene import spawn_volume_paths
 
     volumes = spawn_volume_paths(layer)
     for geom in [geom for geom in spec.geoms if geom.name in volumes]:
