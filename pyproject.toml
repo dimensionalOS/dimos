@@ -782,6 +782,8 @@ module = [
     "mcap.*",
     "mcap_ros2.*",
     "mujoco",
+    "mujoco.*",
+    "mujoco_playground.*",
     "nav_msgs.*",
     "openevals.*",
     "pinocchio",
