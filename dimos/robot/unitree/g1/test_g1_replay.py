@@ -97,23 +97,25 @@ def test_trajectory_script_uses_coordinator_channels(
 ) -> None:
     from collections.abc import Callable
     import json
+    import runpy
     import sys
     from unittest.mock import Mock
 
+    from dimos.constants import DIMOS_PROJECT_ROOT
     from dimos.core.global_config import global_config
     from dimos.core.transport import LCMTransport, PubSubTransport, ZenohTransport
     from dimos.core.transport_factory import make_transport
     from dimos.msgs.sensor_msgs.JointState import JointState
-    from scripts import g1_replay
 
+    script = runpy.run_path(str(DIMOS_PROJECT_ROOT / "scripts/g1_replay.py"))
     monkeypatch.setattr(global_config, "transport", backend)
     monkeypatch.setattr(global_config, "zenoh_domain", "replay-test")
-    sample = [0.0] * g1_replay.NUM_DOF
+    sample = [0.0] * script["NUM_DOF"]
     path = tmp_path / "sample.json"
     path.write_text(
         json.dumps(
             {
-                "joint_names": g1_replay.CANONICAL_JOINTS,
+                "joint_names": script["CANONICAL_JOINTS"],
                 "samples": [{"position": sample, "ts": 0.0}],
             }
         )
@@ -127,7 +129,7 @@ def test_trajectory_script_uses_coordinator_channels(
         endpoint: PubSubTransport[JointState], callback: Callable[[JointState], None]
     ) -> Callable[[], None]:
         assert endpoint.channel == state.channel and type(endpoint) is type(state)
-        callback(g1_replay.make_joint_state(sample))
+        callback(script["make_joint_state"](sample))
         return lambda: None
 
     def publish(endpoint: PubSubTransport[JointState], message: JointState) -> None:
@@ -139,5 +141,5 @@ def test_trajectory_script_uses_coordinator_channels(
         monkeypatch.setattr(transport, "publish", publish)
         monkeypatch.setattr(transport, "stop", Mock())
 
-    g1_replay.main()
+    script["main"]()
     assert received == [sample, sample]  # Initial pose, then the single trajectory sample.
